@@ -1,0 +1,6 @@
+/target/
+/esp/
+*.fd
+*.img
+*.iso
+.DS_Store

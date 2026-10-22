@@ -1,0 +1,40 @@
+name: Kernel source validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+          components: rustfmt
+      - name: Host unit tests
+        run: cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames
+      - name: UEFI cross-build
+        run: cargo build -p sorveth-boot --release --target x86_64-unknown-uefi
+      - name: Native ABI layout test
+        run: ./scripts/check-layout.sh
+      - name: Rust source parsing and formatting (CI checkout only)
+        run: cargo fmt --all -- --check
+      - name: Package UEFI executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: sorveth-uefi-x86_64
+          path: target/x86_64-unknown-uefi/release/sorveth-boot.efi
+          if-no-files-found: error
+
+  qemu-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Install QEMU and OVMF firmware
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Native post-firmware boot smoke test
+        run: ./scripts/smoke-qemu.sh

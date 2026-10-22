@@ -1,0 +1,18 @@
+[package]
+name = "sorveth-boot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sorveth-boot"
+path = "src/main.rs"
+test = false
+bench = false
+
+[features]
+qemu-smoke = ["sorveth-core/qemu-smoke"]
+
+[dependencies]
+sorveth-abi = { path = "../sorveth-abi" }
+sorveth-core = { path = "../sorveth-core" }

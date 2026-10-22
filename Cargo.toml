@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sorveth-abi",
+  "crates/sorveth-cap",
+  "crates/sorveth-memory",
+  "crates/sorveth-frames",
+  "crates/sorveth-core",
+  "crates/sorveth-boot",
+]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-only"
+version = "0.1.0"
