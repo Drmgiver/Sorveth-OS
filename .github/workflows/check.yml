@@ -37,4 +37,13 @@ jobs:
       - name: Install QEMU and OVMF firmware
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf
       - name: Native post-firmware boot smoke test
+        env:
+          SORVETH_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/sorveth-qemu
         run: ./scripts/smoke-qemu.sh
+      - name: Preserve boot diagnostics (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sorveth-qemu-diagnostics
+          path: ${{ runner.temp }}/sorveth-qemu/
+          if-no-files-found: warn
