@@ -30,7 +30,25 @@ cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames
 cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-smoke
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# CI can set this to retain the evidence needed to debug a failed boot.
+# Logs are copied on success and failure before temporary files are removed.
+ARTIFACT_DIR="${SORVETH_QEMU_ARTIFACT_DIR:-}"
+if [[ -n "$ARTIFACT_DIR" ]]; then
+  mkdir -p "$ARTIFACT_DIR"
+fi
+save_diagnostics() {
+  local result=$?
+  if [[ -n "$ARTIFACT_DIR" ]]; then
+    for name in serial.log qemu.out qemu.err; do
+      if [[ -f "$TMP/$name" ]]; then
+        cp "$TMP/$name" "$ARTIFACT_DIR/$name"
+      fi
+    done
+    printf 'smoke-script-exit=%s\n' "$result" > "$ARTIFACT_DIR/result.txt"
+  fi
+  rm -rf "$TMP"
+}
+trap save_diagnostics EXIT
 mkdir -p "$TMP/esp/EFI/BOOT"
 cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$VARS" "$TMP/OVMF_VARS.fd"
