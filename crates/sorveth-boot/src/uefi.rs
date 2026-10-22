@@ -77,9 +77,8 @@ pub struct BootServices {
     _allocate_pages: usize,
     _free_pages: usize,
     // Pointer #4 / offset 56.
-    pub get_memory_map: extern "efiapi" fn(
-        *mut usize, *mut u8, *mut usize, *mut usize, *mut u32
-    ) -> Status,
+    pub get_memory_map:
+        extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> Status,
     _allocate_pool: usize, // #5
     _free_pool: usize,     // #6
     _unused_7_through_25: [usize; 19],
@@ -87,9 +86,7 @@ pub struct BootServices {
     pub exit_boot_services: extern "efiapi" fn(*mut c_void, usize) -> Status,
     _unused_27_through_36: [usize; 10],
     // Pointer #37 / offset 320.
-    pub locate_protocol: extern "efiapi" fn(
-        *const Guid, *mut c_void, *mut *mut c_void
-    ) -> Status,
+    pub locate_protocol: extern "efiapi" fn(*const Guid, *mut c_void, *mut *mut c_void) -> Status,
 }
 
 #[repr(C)]
@@ -112,7 +109,9 @@ pub struct SystemTable {
 /// UEFI text output is for loader diagnostics ONLY (before ExitBootServices).
 pub unsafe fn write_line(st: *mut SystemTable, message: &str) {
     let console = (*st).con_out;
-    if console.is_null() { return; }
+    if console.is_null() {
+        return;
+    }
     let mut buf = [0u16; 128];
     let mut used = 0usize;
     for ch in message.bytes().chain([b'\r', b'\n']) {

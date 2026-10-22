@@ -8,8 +8,8 @@ mod serial;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
-use sorveth_memory::MemoryMap;
 use sorveth_frames::FrameAllocator;
+use sorveth_memory::MemoryMap;
 
 /// Never returns, and never calls firmware boot services.
 pub fn kernel_main(boot: &BootInfo) -> ! {
@@ -57,8 +57,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         }
     };
     let distinct_frames = match (frames.allocate(1), frames.allocate(1)) {
-        (Ok(first), Ok(second)) =>
-            first.end_exclusive() <= second.start || second.end_exclusive() <= first.start,
+        (Ok(first), Ok(second)) => {
+            first.end_exclusive() <= second.start || second.end_exclusive() <= first.start
+        }
         _ => false,
     };
     if !distinct_frames {
@@ -75,8 +76,12 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         Ok(root) => caps.authorize(root, Rights::WRITE).is_ok(),
         Err(_) => false,
     };
-    if probe_ok { serial::write_line("Capability table: initialized"); }
-    else { serial::write_line("FATAL: capability table unavailable"); halt_forever(); }
+    if probe_ok {
+        serial::write_line("Capability table: initialized");
+    } else {
+        serial::write_line("FATAL: capability table unavailable");
+        halt_forever();
+    }
 
     if boot.framebuffer.is_usable() {
         screen::paint(&boot.framebuffer);
@@ -99,7 +104,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
 fn halt_forever() -> ! {
     loop {
         #[cfg(target_arch = "x86_64")]
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack, preserves_flags)); }
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
         #[cfg(not(target_arch = "x86_64"))]
         core::hint::spin_loop();
     }

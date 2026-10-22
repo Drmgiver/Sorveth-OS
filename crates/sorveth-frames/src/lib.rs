@@ -34,10 +34,15 @@ pub enum Error {
 }
 
 #[derive(Clone, Copy)]
-struct Region { start: u64, end: u64 }
+struct Region {
+    start: u64,
+    end: u64,
+}
 impl Region {
     const EMPTY: Self = Self { start: 0, end: 0 };
-    fn pages(self) -> u64 { (self.end - self.start) / PAGE_BYTES }
+    fn pages(self) -> u64 {
+        (self.end - self.start) / PAGE_BYTES
+    }
     fn intersects(self, other: Region) -> bool {
         self.start < other.end && other.start < self.end
     }
@@ -67,13 +72,16 @@ impl<const N: usize> FrameAllocator<N> {
                 continue;
             }
             let end = entry.physical_end().map_err(Error::InvalidMap)?;
-            if result.used == N { return Err(Error::TooManyRegions); }
+            if result.used == N {
+                return Err(Error::TooManyRegions);
+            }
             result.regions[result.used] = Region {
                 start: entry.physical_start,
                 end,
             };
             result.used += 1;
-            result.available_pages = result.available_pages
+            result.available_pages = result
+                .available_pages
                 .checked_add(entry.number_of_pages)
                 .ok_or(Error::InvalidRange)?;
         }
@@ -114,15 +122,21 @@ impl<const N: usize> FrameAllocator<N> {
         Ok(result)
     }
 
-    pub fn available_pages(&self) -> u64 { self.available_pages }
-    pub fn region_count(&self) -> usize { self.used }
+    pub fn available_pages(&self) -> u64 {
+        self.available_pages
+    }
+    pub fn region_count(&self) -> usize {
+        self.used
+    }
 
     /// Prevent future allocation of a physical range. This must complete
     /// before the first frame allocation to avoid reserving an in-use page.
     /// A reservation may overlap gaps; only conventional pages are removed.
     /// On failure the available regions remain unmodified.
     pub fn reserve(&mut self, start: u64, pages: u64) -> Result<(), Error> {
-        if self.allocations_started { return Err(Error::ReservationsClosed); }
+        if self.allocations_started {
+            return Err(Error::ReservationsClosed);
+        }
         if pages == 0 || start % PAGE_BYTES != 0 {
             return Err(Error::InvalidRange);
         }
@@ -136,7 +150,9 @@ impl<const N: usize> FrameAllocator<N> {
                 splits += 1;
             }
         }
-        if splits > N - self.used { return Err(Error::TooManyRegions); }
+        if splits > N - self.used {
+            return Err(Error::TooManyRegions);
+        }
 
         let mut index = 0;
         while index < self.used {
@@ -161,7 +177,10 @@ impl<const N: usize> FrameAllocator<N> {
                 self.regions[index].end = overlap_start;
             } else {
                 self.regions[index].end = overlap_start;
-                self.regions[self.used] = Region { start: overlap_end, end: r.end };
+                self.regions[self.used] = Region {
+                    start: overlap_end,
+                    end: r.end,
+                };
                 self.used += 1;
             }
             index += 1;
@@ -173,7 +192,9 @@ impl<const N: usize> FrameAllocator<N> {
     /// All allocations are page-aligned and permanently removed from this
     /// prototype planner's free ranges. A future manager must also zero pages.
     pub fn allocate(&mut self, pages: u64) -> Result<PhysSpan, Error> {
-        if pages == 0 { return Err(Error::InvalidRange); }
+        if pages == 0 {
+            return Err(Error::InvalidRange);
+        }
         for index in 0..self.used {
             let range = self.regions[index];
             if range.pages() >= pages {
@@ -222,7 +243,13 @@ mod tests {
         let mut a = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
         assert_eq!(a.available_pages(), 6);
         let first = a.allocate(3).unwrap();
-        assert_eq!(first, PhysSpan { start: 0x1000, pages: 3 });
+        assert_eq!(
+            first,
+            PhysSpan {
+                start: 0x1000,
+                pages: 3
+            }
+        );
         assert_eq!(first.end_exclusive(), 0x4000);
         assert_eq!(a.allocate(2).unwrap().start, 0x9000);
         assert_eq!(a.allocate(1).unwrap().start, 0x4000);
@@ -277,12 +304,16 @@ mod tests {
     fn overlapping_firmware_descriptors_are_rejected() {
         let mut data = desc(7, 0x1000, 4);
         data.extend_from_slice(&desc(11, 0x3000, 1));
-        assert!(matches!(FrameAllocator::<4>::from_map(&map(&data)),
-            Err(Error::OverlappingFirmwareRegions)));
+        assert!(matches!(
+            FrameAllocator::<4>::from_map(&map(&data)),
+            Err(Error::OverlappingFirmwareRegions)
+        ));
         let mut data = desc(7, 0x1000, 4);
         data.extend_from_slice(&desc(7, 0x4000, 3));
-        assert!(matches!(FrameAllocator::<4>::from_map(&map(&data)),
-            Err(Error::OverlappingFirmwareRegions)));
+        assert!(matches!(
+            FrameAllocator::<4>::from_map(&map(&data)),
+            Err(Error::OverlappingFirmwareRegions)
+        ));
     }
 
     #[test]

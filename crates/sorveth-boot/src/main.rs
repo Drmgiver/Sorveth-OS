@@ -6,8 +6,8 @@
 
 mod uefi;
 
-use sorveth_abi::{BootInfo, FramebufferInfo, BOOT_PROTOCOL_VERSION};
 use core::{ffi::c_void, ptr};
+use sorveth_abi::{BootInfo, FramebufferInfo, BOOT_PROTOCOL_VERSION};
 use uefi::{BootServices, Status, SystemTable};
 
 const MAP_BUFFER_CAPACITY: usize = 128 * 1024;
@@ -16,17 +16,16 @@ struct MapBuffer([u8; MAP_BUFFER_CAPACITY]);
 static mut MEMORY_MAP: MapBuffer = MapBuffer([0u8; MAP_BUFFER_CAPACITY]);
 
 #[no_mangle]
-pub extern "efiapi" fn efi_main(image_handle: *mut c_void, system_table: *mut SystemTable)
-    -> Status
-{
+pub extern "efiapi" fn efi_main(
+    image_handle: *mut c_void,
+    system_table: *mut SystemTable,
+) -> Status {
     if system_table.is_null() || image_handle.is_null() {
         return uefi::EFI_INVALID_PARAMETER;
     }
     unsafe {
         let st = &*system_table;
-        if st.header.signature != uefi::EFI_SYSTEM_TABLE_SIGNATURE
-            || st.boot_services.is_null()
-        {
+        if st.header.signature != uefi::EFI_SYSTEM_TABLE_SIGNATURE || st.boot_services.is_null() {
             return uefi::EFI_INVALID_PARAMETER;
         }
         let bs = &*st.boot_services;
@@ -50,9 +49,15 @@ pub extern "efiapi" fn efi_main(image_handle: *mut c_void, system_table: *mut Sy
             let mut descriptor_version = 0u32;
             let buffer = ptr::addr_of_mut!(MEMORY_MAP.0).cast::<u8>();
             let status = (bs.get_memory_map)(
-                &mut size, buffer, &mut key, &mut descriptor_size, &mut descriptor_version
+                &mut size,
+                buffer,
+                &mut key,
+                &mut descriptor_size,
+                &mut descriptor_version,
             );
-            if status != uefi::EFI_SUCCESS { return status; }
+            if status != uefi::EFI_SUCCESS {
+                return status;
+            }
             let info = BootInfo {
                 protocol_version: BOOT_PROTOCOL_VERSION,
                 reserved: 0,
@@ -84,7 +89,9 @@ unsafe fn detect_framebuffer(bs: &BootServices) -> FramebufferInfo {
         return FramebufferInfo::unavailable();
     }
     let gop = &*(interface.cast::<uefi::Gop>());
-    if gop.mode.is_null() { return FramebufferInfo::unavailable(); }
+    if gop.mode.is_null() {
+        return FramebufferInfo::unavailable();
+    }
     let mode = &*gop.mode;
     if mode.info.is_null() || mode.size_of_info < core::mem::size_of::<uefi::GopModeInfo>() {
         return FramebufferInfo::unavailable();
@@ -98,10 +105,16 @@ unsafe fn detect_framebuffer(bs: &BootServices) -> FramebufferInfo {
         pixels_per_scanline: mi.pixels_per_scanline,
         pixel_format: mi.pixel_format,
     };
-    if fb.is_usable() { fb } else { FramebufferInfo::unavailable() }
+    if fb.is_usable() {
+        fb
+    } else {
+        FramebufferInfo::unavailable()
+    }
 }
 
 #[panic_handler]
 fn panic(_panic: &core::panic::PanicInfo<'_>) -> ! {
-    loop { core::hint::spin_loop(); }
+    loop {
+        core::hint::spin_loop();
+    }
 }

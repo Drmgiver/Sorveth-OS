@@ -44,7 +44,9 @@ impl FramebufferInfo {
         {
             return false;
         }
-        if self.address.checked_add(self.size_bytes).is_none() { return false; }
+        if self.address.checked_add(self.size_bytes).is_none() {
+            return false;
+        }
         let final_pixel = (self.height as u64 - 1)
             .checked_mul(self.pixels_per_scanline as u64)
             .and_then(|v| v.checked_add(self.width as u64));

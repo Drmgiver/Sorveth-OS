@@ -33,9 +33,13 @@ pub struct MemoryDescriptor {
 
 impl MemoryDescriptor {
     pub fn physical_end(self) -> Result<u64, MapError> {
-        let length = self.number_of_pages.checked_mul(PAGE_BYTES)
+        let length = self
+            .number_of_pages
+            .checked_mul(PAGE_BYTES)
             .ok_or(MapError::AddressOverflow)?;
-        self.physical_start.checked_add(length).ok_or(MapError::AddressOverflow)
+        self.physical_start
+            .checked_add(length)
+            .ok_or(MapError::AddressOverflow)
     }
 
     pub const fn immediately_allocatable(self) -> bool {
@@ -79,9 +83,12 @@ fn parse(src: &[u8]) -> MemoryDescriptor {
 
 impl<'a> MemoryMap<'a> {
     pub fn from_bytes(bytes: &'a [u8], stride: usize) -> Result<Self, MapError> {
-        if stride < MIN_DESCRIPTOR_BYTES || stride > MAX_DESCRIPTOR_BYTES
-            || bytes.is_empty() || bytes.len() > MAX_MAP_BYTES
-            || bytes.len() % stride != 0 {
+        if stride < MIN_DESCRIPTOR_BYTES
+            || stride > MAX_DESCRIPTOR_BYTES
+            || bytes.is_empty()
+            || bytes.len() > MAX_MAP_BYTES
+            || bytes.len() % stride != 0
+        {
             return Err(MapError::InvalidMetadata);
         }
         Ok(Self { bytes, stride })
@@ -95,16 +102,21 @@ impl<'a> MemoryMap<'a> {
     /// for the borrow lifetime. Firmware-derived metadata is not a substitute
     /// for checking the validity and lifetime of the underlying mapping.
     pub unsafe fn from_boot_info(info: &'a BootInfo) -> Result<Self, MapError> {
-        if !info.is_valid() || info.memory_descriptor_version != EFI_MEMORY_DESCRIPTOR_VERSION
-            || info.memory_map_address & 7 != 0 {
+        if !info.is_valid()
+            || info.memory_descriptor_version != EFI_MEMORY_DESCRIPTOR_VERSION
+            || info.memory_map_address & 7 != 0
+        {
             return Err(MapError::InvalidMetadata);
         }
         let size = usize::try_from(info.memory_map_size).map_err(|_| MapError::InvalidMetadata)?;
-        let stride = usize::try_from(info.memory_descriptor_size)
-            .map_err(|_| MapError::InvalidMetadata)?;
-        if size > MAX_MAP_BYTES || stride < MIN_DESCRIPTOR_BYTES
-            || stride > MAX_DESCRIPTOR_BYTES || size == 0
-            || info.memory_map_address.checked_add(size as u64).is_none() {
+        let stride =
+            usize::try_from(info.memory_descriptor_size).map_err(|_| MapError::InvalidMetadata)?;
+        if size > MAX_MAP_BYTES
+            || stride < MIN_DESCRIPTOR_BYTES
+            || stride > MAX_DESCRIPTOR_BYTES
+            || size == 0
+            || info.memory_map_address.checked_add(size as u64).is_none()
+        {
             return Err(MapError::InvalidMetadata);
         }
         let bytes = core::slice::from_raw_parts(info.memory_map_address as *const u8, size);
@@ -124,20 +136,28 @@ impl<'a> MemoryMap<'a> {
             highest_physical_end: 0,
         };
         for desc in self.descriptors() {
-            summary.descriptors = summary.descriptors.checked_add(1)
+            summary.descriptors = summary
+                .descriptors
+                .checked_add(1)
                 .ok_or(MapError::CountOverflow)?;
             if desc.physical_start % PAGE_BYTES != 0 {
                 return Err(MapError::MisalignedRegion);
             }
             let end = desc.physical_end()?;
-            if end < desc.physical_start { return Err(MapError::AddressOverflow); }
+            if end < desc.physical_start {
+                return Err(MapError::AddressOverflow);
+            }
             summary.highest_physical_end = summary.highest_physical_end.max(end);
             if desc.immediately_allocatable() {
-                summary.conventional_pages = summary.conventional_pages
-                    .checked_add(desc.number_of_pages).ok_or(MapError::CountOverflow)?;
+                summary.conventional_pages = summary
+                    .conventional_pages
+                    .checked_add(desc.number_of_pages)
+                    .ok_or(MapError::CountOverflow)?;
             }
         }
-        if summary.descriptors == 0 { return Err(MapError::InvalidDescriptor); }
+        if summary.descriptors == 0 {
+            return Err(MapError::InvalidDescriptor);
+        }
         Ok(summary)
     }
 }
@@ -173,7 +193,11 @@ mod tests {
     #[test]
     fn variable_stride_preserves_descriptor_fields() {
         let data = descriptor(7, 0x2000, 2, 64);
-        let d = MemoryMap::from_bytes(&data, 64).unwrap().descriptors().next().unwrap();
+        let d = MemoryMap::from_bytes(&data, 64)
+            .unwrap()
+            .descriptors()
+            .next()
+            .unwrap();
         assert_eq!(d.physical_start, 0x2000);
         assert_eq!(d.physical_end(), Ok(0x4000));
         assert!(d.immediately_allocatable());
@@ -181,22 +205,42 @@ mod tests {
 
     #[test]
     fn rejects_malformed_descriptor_frames() {
-        assert!(matches!(MemoryMap::from_bytes(&[0; 40], 0), Err(MapError::InvalidMetadata)));
-        assert!(matches!(MemoryMap::from_bytes(&[0; 41], 40), Err(MapError::InvalidMetadata)));
-        assert!(matches!(MemoryMap::from_bytes(&[], 48), Err(MapError::InvalidMetadata)));
-        assert!(matches!(MemoryMap::from_bytes(&[0; 40], 39), Err(MapError::InvalidMetadata)));
+        assert!(matches!(
+            MemoryMap::from_bytes(&[0; 40], 0),
+            Err(MapError::InvalidMetadata)
+        ));
+        assert!(matches!(
+            MemoryMap::from_bytes(&[0; 41], 40),
+            Err(MapError::InvalidMetadata)
+        ));
+        assert!(matches!(
+            MemoryMap::from_bytes(&[], 48),
+            Err(MapError::InvalidMetadata)
+        ));
+        assert!(matches!(
+            MemoryMap::from_bytes(&[0; 40], 39),
+            Err(MapError::InvalidMetadata)
+        ));
     }
 
     #[test]
     fn rejects_misalignment_and_overflow() {
         let unaligned = descriptor(7, 0x1001, 1, 40);
-        assert_eq!(MemoryMap::from_bytes(&unaligned, 40).unwrap().summarize(),
-            Err(MapError::MisalignedRegion));
+        assert_eq!(
+            MemoryMap::from_bytes(&unaligned, 40).unwrap().summarize(),
+            Err(MapError::MisalignedRegion)
+        );
         let overflowing = descriptor(7, 0xffff_ffff_ffff_f000, 2, 40);
-        assert_eq!(MemoryMap::from_bytes(&overflowing, 40).unwrap().summarize(),
-            Err(MapError::AddressOverflow));
+        assert_eq!(
+            MemoryMap::from_bytes(&overflowing, 40).unwrap().summarize(),
+            Err(MapError::AddressOverflow)
+        );
         let page_overflow = descriptor(7, 0x1000, u64::MAX, 40);
-        assert_eq!(MemoryMap::from_bytes(&page_overflow, 40).unwrap().summarize(),
-            Err(MapError::AddressOverflow));
+        assert_eq!(
+            MemoryMap::from_bytes(&page_overflow, 40)
+                .unwrap()
+                .summarize(),
+            Err(MapError::AddressOverflow)
+        );
     }
 }

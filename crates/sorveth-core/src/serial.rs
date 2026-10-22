@@ -21,7 +21,7 @@ mod uart {
         unsafe {
             out(COM1 + 1, 0x00); // disable interrupts
             out(COM1 + 3, 0x80); // DLAB
-            out(COM1, 0x03);     // divisor 3: 38400 baud
+            out(COM1, 0x03); // divisor 3: 38400 baud
             out(COM1 + 1, 0x00);
             out(COM1 + 3, 0x03); // 8N1
             out(COM1 + 2, 0xC7); // enable FIFO
@@ -33,7 +33,9 @@ mod uart {
         let mut attempts = 0;
         while attempts < 100_000 {
             if unsafe { input(COM1 + 5) } & 0x20 != 0 {
-                unsafe { out(COM1, byte); }
+                unsafe {
+                    out(COM1, byte);
+                }
                 return;
             }
             attempts += 1;
@@ -48,8 +50,11 @@ pub fn init() {
 pub fn write_line(msg: &str) {
     #[cfg(target_arch = "x86_64")]
     {
-        for byte in msg.bytes() { uart::put(byte); }
-        uart::put(b'\r'); uart::put(b'\n');
+        for byte in msg.bytes() {
+            uart::put(byte);
+        }
+        uart::put(b'\r');
+        uart::put(b'\n');
     }
     #[cfg(not(target_arch = "x86_64"))]
     let _ = msg;
