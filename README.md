@@ -37,8 +37,9 @@ resource editing, a desktop, or AI.
   non-persistent diagnostic, not a production memory manager or new page tables.
 - `crates/sorveth-boot`: small x86-64 UEFI loader. Obtains GOP and the final memory map,
   calls `ExitBootServices`, then transfers control to Sorveth Core.
-- `crates/sorveth-core`: freestanding Rust kernel entry, x86 serial trace and direct
-  framebuffer splash. After handoff it makes no firmware boot-service calls.
+- `crates/sorveth-core`: freestanding Rust kernel entry, serial diagnostic monitor,
+  and direct framebuffer splash. After handoff it makes no firmware boot-service
+  calls. The monitor is a privileged bootstrap tool, not a userspace terminal.
 - `docs`: implementation decisions, architecture, security rules, roadmap.
 - `scripts`: local build, checks, and QEMU boot command.
 - `.github/workflows`: cross-build and host tests for a future dedicated repository.
@@ -54,14 +55,17 @@ rustup target add x86_64-unknown-uefi
 ./scripts/run-qemu.sh
 ```
 
-For a fully automated milestone gate on a host with the toolchain installed,
-run `./scripts/smoke-qemu.sh`. This builds a dedicated smoke-test EFI image,
-checks serial markers emitted *after* firmware exit, and requires the QEMU
-`isa-debug-exit` device to return success. The GitHub Actions workflow runs this test on pushes. Each smoke-test run
-preserves serial and QEMU diagnostics in the `sorveth-qemu-diagnostics` Actions
-artifact, including when boot fails. Locally, set `SORVETH_QEMU_ARTIFACT_DIR`
-to an output directory to keep the same evidence. Until a real run passes,
-boot success must not be claimed.
+The CI acceptance tests run on GitHub Actions:
+- `./scripts/smoke-qemu.sh` builds an instrumented EFI image, verifies serial
+  markers emitted after UEFI ExitBootServices, and requires a test-only QEMU
+  debug-exit status.
+- `bash scripts/smoke-monitor-qemu.sh` builds the *normal* EFI image, boots it
+  in QEMU, sends commands over a serial socket, and validates their answers.
+- Rust unit tests cover the capability system, memory parser, frame planner,
+  and kernel monitor line editor. Successful commits and passing CI are tracked
+  separately; inspect the current Actions run before declaring a milestone.
+The `sorveth-qemu-diagnostics` artifact saves emulator logs on failures.
+To preserve logs locally, set `SORVETH_QEMU_ARTIFACT_DIR` to a directory.
 
 The QEMU script detects commonly installed OVMF images; override with
 `OVMF_CODE=/path/to/OVMF_CODE.fd` and `OVMF_VARS=/path/to/OVMF_VARS.fd` as needed.
@@ -81,20 +85,32 @@ Capability table: initialized
 SORVETH CORE ONLINE / end of milestone 0
 ```
 
-If GOP supports RGB/BGR 32-bit linear framebuffer access, the display should show
-a Sorveth OS startup splash after the firmware handoff. The CPU deliberately halts
-when this smoke test finishes; it is not a working desktop.
+On a normal boot, Sorveth then enters its **interactive serial kernel monitor**:
+```text
+Sorveth bootstrap monitor v0.1
+Type help for available commands.
+sorveth> help
+Commands: help status memory caps halt
+sorveth> 
+```
+The `status`, `memory`, and `caps` commands inspect bootstrap state; `halt`
+halts the CPU. Input is line-buffered, supports backspace and CR/LF, and rejects
+overlong commands. QEMU's `-serial stdio` connects the prompt to a terminal.
+The special first-boot smoke-test binary deliberately exits QEMU instead.
+
+A supported GOP framebuffer receives a basic startup splash. Neither the splash
+nor this privileged monitor is a desktop, user process, or proper terminal.
 
 ## Test status (2026-10-22)
 
-- **Passed:** C/x86-64 UEFI ABI layout reference test (`./scripts/check-layout.sh`).
-- **Authored but not executed:** Rust capability, memory-parser, frame-planner and boot-protocol unit tests; a bootstrap physical-frame diagnostic; an automated QEMU/OVMF smoke test with a test-only debug-exit device.
-- **Not yet verified:** Rust cross-build, QEMU/OVMF boot and on-screen splash; the automated boot test cannot run in the current environment.
-- **Reason:** The authoring environment lacks Rust/cargo and QEMU, with no network
-  package access. Do not report M0 as boot-tested until both pass.
-- **Not implemented:** production/installed physical or virtual memory manager, own page tables, user processes, actual
-  kernel-enforced capability isolation, services, filesystems, networking, desktop,
-  AI, and general-purpose application support.
+- **Verified by GitHub Actions:** Rust host tests, UEFI x86-64 cross-build,
+  ABI layout checks, firmware handoff and basic QEMU kernel boot.
+- **Under verification:** Interactive serial monitor in a normal QEMU boot,
+  with actual command injection and response assertions.
+- **Still not implemented:** Persistent frame ownership, independent page
+  tables, privilege isolation, userspace, scheduler, IPC, filesystems, drivers,
+  networking, a working desktop and Sorveth Mind. Emulator success does not
+  establish compatibility with physical hardware.
 
 See the authoritative [Sorveth Product Constitution](docs/SORVETH_VISION.md),
 [implementation roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md)
