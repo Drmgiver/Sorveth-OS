@@ -3,6 +3,7 @@
 //! Sorveth Core: first freestanding kernel execution after ExitBootServices.
 //! Boot milestone only; paging, protection rings, tasks and IPC are NOT ready.
 
+mod monitor;
 mod screen;
 mod serial;
 
@@ -34,15 +35,16 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
             halt_forever();
         }
     };
-    match map.summarize() {
+    let memory_summary = match map.summarize() {
         Ok(summary) if summary.conventional_pages >= 2 => {
             serial::write_line("UEFI physical memory map: validated");
+            summary
         }
         _ => {
             serial::write_line("FATAL: physical memory map invalid or insufficient");
             halt_forever();
         }
-    }
+    };
 
     // Bootstrap exercise: audit physical-frame ownership against the firmware
     // map. No frame is mapped, accessed, zeroed, or given to untrusted code.
@@ -97,7 +99,11 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         core::arch::asm!("out dx, al", in("dx") 0xf4u16, in("al") 0x10u8,
             options(nomem, nostack, preserves_flags));
     }
-    halt_forever()
+    #[cfg(feature = "qemu-smoke")]
+    halt_forever();
+
+    #[cfg(not(feature = "qemu-smoke"))]
+    monitor::run(memory_summary, frames.available_pages())
 }
 
 #[inline(never)]
