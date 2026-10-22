@@ -1,8 +1,8 @@
 //! Sorveth bootstrap monitor: a polling, allocation-free kernel diagnostic CLI.
 //! NOT a userspace shell or a replacement for process isolation.
 
-use sorveth_memory::MapSummary;
 use crate::{halt_forever, serial};
+use sorveth_memory::MapSummary;
 
 const INPUT_LIMIT: usize = 64;
 
