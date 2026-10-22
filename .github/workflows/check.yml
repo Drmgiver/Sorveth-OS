@@ -13,7 +13,7 @@ jobs:
           targets: x86_64-unknown-uefi
           components: rustfmt
       - name: Host unit tests
-        run: cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames
+        run: cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-core
       - name: UEFI cross-build
         run: cargo build -p sorveth-boot --release --target x86_64-unknown-uefi
       - name: Native ABI layout test
@@ -40,6 +40,10 @@ jobs:
         env:
           SORVETH_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/sorveth-qemu
         run: ./scripts/smoke-qemu.sh
+      - name: Interactive kernel monitor smoke test
+        env:
+          SORVETH_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/sorveth-qemu
+        run: bash scripts/smoke-monitor-qemu.sh
       - name: Preserve boot diagnostics (including failures)
         if: always()
         uses: actions/upload-artifact@v4
