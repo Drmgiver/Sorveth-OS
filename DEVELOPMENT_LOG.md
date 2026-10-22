@@ -94,3 +94,19 @@
 - Confirmed the separate `Drmgiver/Sorveth-OS` GitHub repository exists.
 - Adopted GNU GPL v3.0 to match the owner-selected public repository license; corrected the old initial MIT-licensed template.
 - Updated CI formatting to check formatting without modifying the checkout.
+ 
+## 2026-10-22 — Verified QEMU boot and interactive CLI
+
+- Published the independent GPLv3 project at Drmgiver/Sorveth-OS.
+- Automated GitHub Actions verified unit tests, UEFI x86-64 cross-build,
+  x86-64 ABI checks, formatting, and post-ExitBootServices kernel execution.
+- Fixed the formatting-only CI errors after reading actual runner logs.
+- Implemented a no-heap polling COM1 kernel monitor with help, status, memory,
+  caps and halt commands; unit-tested its line editing and input limits.
+- Added an emulator integration test that sends real serial commands into the
+  *normal* Sorveth kernel and verifies the replies.
+- Evidence: https://github.com/Drmgiver/Sorveth-OS/actions/runs/39874178796
+  Both CI jobs passed, including separate firmware boot and interactive input.
+- This is a **privileged bootstrap monitor**, not an isolated user shell.
+  Native physical-memory mappings, scheduler, IPC, ring-3 execution, drivers,
+  filesystem and desktop remain unimplemented. No physical-hardware test.
