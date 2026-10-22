@@ -28,6 +28,14 @@ mod uart {
             out(COM1 + 4, 0x0B); // modem control
         }
     }
+    pub fn try_read() -> Option<u8> {
+        if unsafe { input(COM1 + 5) } & 0x01 != 0 {
+            Some(unsafe { input(COM1) })
+        } else {
+            None
+        }
+    }
+
     pub fn put(byte: u8) {
         // Bounded wait: kernel must never hang solely due to missing UART.
         let mut attempts = 0;
@@ -47,15 +55,44 @@ pub fn init() {
     #[cfg(target_arch = "x86_64")]
     uart::init();
 }
-pub fn write_line(msg: &str) {
+pub fn put(byte: u8) {
     #[cfg(target_arch = "x86_64")]
-    {
-        for byte in msg.bytes() {
-            uart::put(byte);
-        }
-        uart::put(b'\r');
-        uart::put(b'\n');
-    }
+    uart::put(byte);
     #[cfg(not(target_arch = "x86_64"))]
-    let _ = msg;
+    let _ = byte;
+}
+
+pub fn try_read() -> Option<u8> {
+    #[cfg(target_arch = "x86_64")]
+    return uart::try_read();
+    #[cfg(not(target_arch = "x86_64"))]
+    None
+}
+
+pub fn write(msg: &str) {
+    for byte in msg.bytes() {
+        put(byte);
+    }
+}
+
+pub fn write_line(msg: &str) {
+    write(msg);
+    put(b'\r');
+    put(b'\n');
+}
+
+pub fn write_u64(mut number: u64) {
+    let mut digits = [0u8; 20];
+    let mut position = digits.len();
+    loop {
+        position -= 1;
+        digits[position] = (number % 10) as u8 + b'0';
+        number /= 10;
+        if number == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[position..] {
+        put(digit);
+    }
 }
