@@ -57,8 +57,10 @@ rustup target add x86_64-unknown-uefi
 For a fully automated milestone gate on a host with the toolchain installed,
 run `./scripts/smoke-qemu.sh`. This builds a dedicated smoke-test EFI image,
 checks serial markers emitted *after* firmware exit, and requires the QEMU
-`isa-debug-exit` device to return success. The GitHub Actions workflow will
-run this test once this repository is hosted on GitHub. Until it actually passes,
+`isa-debug-exit` device to return success. The GitHub Actions workflow runs this test on pushes. Each smoke-test run
+preserves serial and QEMU diagnostics in the `sorveth-qemu-diagnostics` Actions
+artifact, including when boot fails. Locally, set `SORVETH_QEMU_ARTIFACT_DIR`
+to an output directory to keep the same evidence. Until a real run passes,
 boot success must not be claimed.
 
 The QEMU script detects commonly installed OVMF images; override with
