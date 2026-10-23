@@ -1,0 +1,123 @@
+//! Dedicated Sorveth bootstrap kernel stack (M1-E).
+//!
+//! This is a permanent, statically allocated stack in the loader image, not
+//! a protected/guarded per-task stack. The firmware mapping of this memory
+//! is still inherited. After leaving the EFI entry stack, this trampoline
+//! must never return to it. Interrupts stay masked.
+
+use sorveth_memory::MapSummary;
+
+#[cfg(target_arch = "x86_64")]
+use core::{arch::asm, ptr};
+
+#[cfg(target_arch = "x86_64")]
+const STACK_BYTES: usize = 128 * 1024;
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(4096))]
+struct KernelStack([u8; STACK_BYTES]);
+
+#[cfg(target_arch = "x86_64")]
+static mut KERNEL_STACK: KernelStack = KernelStack([0; STACK_BYTES]);
+
+#[cfg(target_arch = "x86_64")]
+static mut SAVED_MEMORY: MapSummary = MapSummary {
+    descriptors: 0,
+    conventional_pages: 0,
+    highest_physical_end: 0,
+};
+
+/// Transfer to the Sorveth-owned stack, preserving the memory-map summary.
+/// The EFI loader's stack is never reused by this kernel entry afterward.
+pub fn enter(memory: MapSummary) -> ! {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        ptr::write_volatile(ptr::addr_of_mut!(SAVED_MEMORY), memory);
+        let base = ptr::addr_of_mut!(KERNEL_STACK).cast::<u8>() as u64;
+        let top = base + STACK_BYTES as u64;
+        // Win64/efiapi requires 16-byte stack alignment at the call site
+        // and 32 bytes of shadow space. CALL then pushes the return address.
+        // Continuation is diverging and cannot return to the EFI stack.
+        asm!(
+            "mov rsp, {stack_top}",
+            "and rsp, -16",
+            "sub rsp, 32",
+            "call {entry}",
+            "ud2",
+            stack_top = in(reg) top,
+            entry = sym continue_on_owned_stack,
+            options(noreturn),
+        );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = memory;
+        crate::halt_forever()
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+extern "efiapi" fn continue_on_owned_stack() -> ! {
+    let base = ptr::addr_of!(KERNEL_STACK) as u64;
+    let end = base + STACK_BYTES as u64;
+    let rsp: u64;
+    unsafe {
+        asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+    }
+    if !(base < rsp && rsp < end) {
+        crate::serial::write_line("FATAL: Sorveth kernel stack transfer failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("Sorveth dedicated kernel stack: active");
+    let summary = unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_MEMORY)) };
+
+    // The controlled #PF must now be serviced on Sorveth's own stack too.
+    #[cfg(feature = "qemu-fault")]
+    {
+        let address = match crate::root::deliberate_fault_address() {
+            Some(address) => address,
+            None => {
+                crate::serial::write_line("FATAL: missing unmapped test address");
+                crate::halt_forever();
+            }
+        };
+        unsafe {
+            ptr::read_volatile(address as *const u64);
+        }
+        crate::serial::write_line("FATAL: intentional page fault returned unexpectedly");
+        crate::halt_forever();
+    }
+
+    crate::serial::write_line("SORVETH CORE ONLINE / end of milestone 0");
+
+    #[cfg(feature = "qemu-smoke")]
+    {
+        unsafe {
+            asm!(
+                "out dx, al",
+                in("dx") 0xf4u16,
+                in("al") 0x10u8,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+        crate::halt_forever();
+    }
+
+    #[cfg(not(any(feature = "qemu-smoke", feature = "qemu-fault")))]
+    crate::monitor::run(summary, &crate::FRAME_POOL);
+
+    #[cfg(feature = "qemu-fault")]
+    crate::halt_forever()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stack_is_larger_than_initial_64k_and_page_aligned() {
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(super::STACK_BYTES >= 128 * 1024);
+            assert_eq!(core::mem::align_of::<super::KernelStack>(), 4096);
+        }
+    }
+}
