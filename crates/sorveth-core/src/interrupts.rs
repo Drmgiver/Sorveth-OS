@@ -212,7 +212,10 @@ pub fn enable_fault_stacks() -> bool {
         }
         let selector = IDT[14].selector;
         IDT[14].ist = 1;
-        let mut df = Gate::new(sorveth_exception_double_fault_entry as usize as u64, selector);
+        let mut df = Gate::new(
+            sorveth_exception_double_fault_entry as usize as u64,
+            selector,
+        );
         df.ist = 2;
         IDT[8] = df;
         true

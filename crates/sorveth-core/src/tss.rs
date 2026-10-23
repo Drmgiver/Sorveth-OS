@@ -195,9 +195,7 @@ mod tests {
             assert_eq!((low >> 40) & 0xff, 0x89);
             assert_eq!(low & 0xffff, 103);
             assert_eq!(
-                (low >> 16 & 0x00ff_ffff)
-                    | (((low >> 56) & 0xff) << 24)
-                    | (high << 32),
+                (low >> 16 & 0x00ff_ffff) | (((low >> 56) & 0xff) << 24) | (high << 32),
                 base
             );
         }
