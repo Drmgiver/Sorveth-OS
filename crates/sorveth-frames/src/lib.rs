@@ -188,6 +188,23 @@ impl<const N: usize> FrameAllocator<N> {
         Ok(())
     }
 
+
+    /// Reserve all physical pages touched by an arbitrary byte range.
+    /// Unlike reserve(), this accepts unaligned buffer addresses and lengths.
+    /// Refuses wraparound rather than silently leaving a tail unprotected.
+    pub fn reserve_bytes(&mut self, start: u64, bytes: u64) -> Result<(), Error> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        let end = start.checked_add(bytes).ok_or(Error::InvalidRange)?;
+        let rounded_end = end
+            .checked_add(PAGE_BYTES - 1)
+            .ok_or(Error::InvalidRange)?
+            & !(PAGE_BYTES - 1);
+        let aligned_start = start & !(PAGE_BYTES - 1);
+        self.reserve(aligned_start, (rounded_end - aligned_start) / PAGE_BYTES)
+    }
+
     /// Hand out one contiguous physical span, without mapping or touching it.
     /// All allocations are page-aligned and permanently removed from this
     /// prototype planner's free ranges. A future manager must also zero pages.
@@ -213,6 +230,108 @@ impl<const N: usize> FrameAllocator<N> {
             }
         }
         Err(Error::OutOfMemory)
+    }
+}
+
+
+/// A page claim means *ownership*, not that the bytes are mapped or zeroed.
+/// No reclaimed pages are admitted, so claims remain irreversible in M1-A.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolStatus {
+    pub available_pages: u64,
+    pub regions: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolError {
+    NotInstalled,
+    AlreadyInstalled,
+    Allocation(Error),
+}
+
+/// A single persistent, statically allocated frame ledger.
+/// The atomic guard serializes access if other CPUs are introduced.
+/// Locking is non-reentrant; do not invoke callbacks or halt while holding it.
+pub struct FramePool<const N: usize> {
+    locked: core::sync::atomic::AtomicBool,
+    state: core::cell::UnsafeCell<Option<FrameAllocator<N>>>,
+}
+
+// Safety: all access to UnsafeCell is mediated by the acquire/release spinlock.
+// FrameAllocator only stores integers and has no references to firmware buffers.
+unsafe impl<const N: usize> Sync for FramePool<N> {}
+
+struct PoolGuard<'a, const N: usize> {
+    pool: &'a FramePool<N>,
+}
+
+impl<const N: usize> PoolGuard<'_, N> {
+    fn state(&mut self) -> &mut Option<FrameAllocator<N>> {
+        // Safety: only a successful atomic lock acquisition creates a guard.
+        unsafe { &mut *self.pool.state.get() }
+    }
+}
+
+impl<const N: usize> Drop for PoolGuard<'_, N> {
+    fn drop(&mut self) {
+        use core::sync::atomic::Ordering;
+        self.pool.locked.store(false, Ordering::Release);
+    }
+}
+
+impl<const N: usize> FramePool<N> {
+    pub const fn new() -> Self {
+        Self {
+            locked: core::sync::atomic::AtomicBool::new(false),
+            state: core::cell::UnsafeCell::new(None),
+        }
+    }
+
+    fn lock(&self) -> PoolGuard<'_, N> {
+        use core::sync::atomic::Ordering;
+        while self
+            .locked
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        PoolGuard { pool: self }
+    }
+
+    /// Transfers ownership of the prepared allocator into the permanent pool.
+    /// Rejects accidental reinitialization; never resets existing claims.
+    pub fn install(&self, allocator: FrameAllocator<N>) -> Result<(), PoolError> {
+        let mut guard = self.lock();
+        let slot = guard.state();
+        if slot.is_some() {
+            return Err(PoolError::AlreadyInstalled);
+        }
+        *slot = Some(allocator);
+        Ok(())
+    }
+
+    pub fn status(&self) -> Result<PoolStatus, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_ref().ok_or(PoolError::NotInstalled)?;
+        Ok(PoolStatus {
+            available_pages: allocator.available_pages(),
+            regions: allocator.region_count(),
+        })
+    }
+
+    /// Claims a frame span without mapping or clearing it. Do not dereference
+    /// the returned physical address until paging and zeroing are implemented.
+    pub fn claim_unmapped(&self, pages: u64) -> Result<PhysSpan, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator.allocate(pages).map_err(PoolError::Allocation)
+    }
+}
+
+impl<const N: usize> Default for FramePool<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -298,6 +417,43 @@ mod tests {
         assert_eq!(a.allocate(1).unwrap().start, 0x1000);
         assert_eq!(a.allocate(1).unwrap().start, 0x3000);
         assert_eq!(a.allocate(1), Err(Error::OutOfMemory));
+    }
+
+    #[test]
+    fn byte_reservations_include_partial_pages_and_fail_closed() {
+        let data = desc(7, 0x1000, 6);
+        let mut a = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        a.reserve_bytes(0x2001, 4096).unwrap();
+        assert_eq!(a.available_pages(), 4);
+        assert_eq!(a.allocate(2).unwrap().start, 0x4000);
+        assert_eq!(a.allocate(1).unwrap().start, 0x1000);
+        assert_eq!(a.allocate(1).unwrap().start, 0x6000);
+        assert_eq!(a.allocate(1), Err(Error::OutOfMemory));
+
+        let mut b = FrameAllocator::<2>::from_map(&map(&data)).unwrap();
+        assert_eq!(b.reserve_bytes(u64::MAX - 3, 8), Err(Error::InvalidRange));
+        assert_eq!(b.available_pages(), 6);
+        b.reserve_bytes(0x1000, 0).unwrap();
+        assert_eq!(b.available_pages(), 6);
+    }
+
+    #[test]
+    fn persistent_pool_tracks_claims_and_cannot_be_reinitialized() {
+        let data = desc(7, 0x1000, 5);
+        let pool = FramePool::<4>::new();
+        assert_eq!(pool.status(), Err(PoolError::NotInstalled));
+        assert_eq!(pool.claim_unmapped(1), Err(PoolError::NotInstalled));
+
+        let mut planner = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        planner.reserve_bytes(0x1000, 4096).unwrap();
+        pool.install(planner).unwrap();
+        assert_eq!(pool.status().unwrap().available_pages, 4);
+        assert_eq!(pool.install(FrameAllocator::<4>::from_map(&map(&data)).unwrap()),
+                   Err(PoolError::AlreadyInstalled));
+        assert_eq!(pool.claim_unmapped(2).unwrap().start, 0x2000);
+        assert_eq!(pool.claim_unmapped(2).unwrap().start, 0x4000);
+        assert_eq!(pool.status().unwrap().available_pages, 0);
+        assert_eq!(pool.claim_unmapped(1), Err(PoolError::Allocation(Error::OutOfMemory)));
     }
 
     #[test]

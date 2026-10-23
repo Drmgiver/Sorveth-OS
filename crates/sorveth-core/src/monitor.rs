@@ -2,6 +2,7 @@
 //! NOT a userspace shell or a replacement for process isolation.
 
 use crate::{halt_forever, serial};
+use sorveth_frames::FramePool;
 use sorveth_memory::MapSummary;
 
 const INPUT_LIMIT: usize = 64;
@@ -112,7 +113,7 @@ fn prompt() {
     serial::write("sorveth> ");
 }
 
-fn execute(command: Command, memory: MapSummary, free_pages: u64) {
+fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
     match command {
         Command::Help => serial::write_line("Commands: help status memory caps halt"),
         Command::Status => {
@@ -128,7 +129,10 @@ fn execute(command: Command, memory: MapSummary, free_pages: u64) {
             serial::write_u64(memory.conventional_pages);
             serial::write_line("");
             serial::write("Unclaimed planner pages: ");
-            serial::write_u64(free_pages);
+            match pool.status() {
+                Ok(status) => serial::write_u64(status.available_pages),
+                Err(_) => serial::write("UNAVAILABLE"),
+            }
             serial::write_line("");
             serial::write_line("Physical allocation is diagnostic only; paging not installed");
         }
@@ -145,7 +149,7 @@ fn execute(command: Command, memory: MapSummary, free_pages: u64) {
 }
 
 /// Owns COM1 while no userspace service exists; busy-polling is temporary.
-pub fn run(memory: MapSummary, free_pages: u64) -> ! {
+pub fn run(memory: MapSummary, pool: &FramePool<256>) -> ! {
     let mut editor = LineEditor::new();
     serial::write_line("Sorveth bootstrap monitor v0.1");
     serial::write_line("Type help for available commands.");
@@ -159,7 +163,7 @@ pub fn run(memory: MapSummary, free_pages: u64) -> ! {
                 Event::Bell => serial::put(0x07),
                 Event::Submit(command) => {
                     serial::write_line("");
-                    execute(command, memory, free_pages);
+                    execute(command, memory, pool);
                     prompt();
                 }
             }

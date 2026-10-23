@@ -9,8 +9,10 @@ mod serial;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
-use sorveth_frames::FrameAllocator;
+use sorveth_frames::{FrameAllocator, FramePool};
 use sorveth_memory::MemoryMap;
+
+static FRAME_POOL: FramePool<256> = FramePool::new();
 
 /// Never returns, and never calls firmware boot services.
 pub fn kernel_main(boot: &BootInfo) -> ! {
@@ -46,11 +48,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         }
     };
 
-    // Bootstrap exercise: audit physical-frame ownership against the firmware
-    // map. No frame is mapped, accessed, zeroed, or given to untrusted code.
-    // All loader/kernel/boot-services allocations are deliberately excluded:
-    // this early allocator only accepts conventional memory descriptors.
-    // This is NOT yet the installed persistent kernel memory manager.
+    // M1-A: retain an immutable-ownership *ledger* for conventional pages.
+    // Never reclaim loader/kernel/runtime allocations from UEFI at this stage;
+    // no physical page is dereferenced, mapped or treated as zeroed.
     let mut frames = match FrameAllocator::<256>::from_map(&map) {
         Ok(frames) => frames,
         Err(_) => {
@@ -58,17 +58,31 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
             halt_forever();
         }
     };
-    let distinct_frames = match (frames.allocate(1), frames.allocate(1)) {
-        (Ok(first), Ok(second)) => {
-            first.end_exclusive() <= second.start || second.end_exclusive() <= first.start
-        }
-        _ => false,
+
+    // Additional guard rails: even on a misclassified firmware map, no claim
+    // may intersect the loader's descriptor buffer, BootInfo, or display.
+    let map_buffer = frames.reserve_bytes(boot.memory_map_address, boot.memory_map_size);
+    let boot_info = frames.reserve_bytes(
+        boot as *const BootInfo as u64,
+        core::mem::size_of::<BootInfo>() as u64,
+    );
+    let display = if boot.framebuffer.is_usable() {
+        frames.reserve_bytes(boot.framebuffer.address, boot.framebuffer.size_bytes)
+    } else {
+        Ok(())
     };
-    if !distinct_frames {
-        serial::write_line("FATAL: physical frame ownership test failed");
+    if map_buffer.is_err() || boot_info.is_err() || display.is_err()
+        || frames.available_pages() < 2
+    {
+        serial::write_line("FATAL: physical frame reservations could not be secured");
+        halt_forever();
+    }
+    if FRAME_POOL.install(frames).is_err() {
+        serial::write_line("FATAL: physical frame ledger initialized twice");
         halt_forever();
     }
     serial::write_line("Physical frame planner: validated (no mappings written)");
+    serial::write_line("Persistent physical frame ledger: installed (unmapped)");
 
     // This is the first isolated *data structure*, not process isolation.
     // The kernel remains privileged; untrusted code is not yet executing.
@@ -103,7 +117,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     halt_forever();
 
     #[cfg(not(feature = "qemu-smoke"))]
-    monitor::run(memory_summary, frames.available_pages())
+    monitor::run(memory_summary, &FRAME_POOL)
 }
 
 #[inline(never)]

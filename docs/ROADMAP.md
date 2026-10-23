@@ -7,7 +7,7 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-A | Source bootstrap | UEFI loader, freestanding kernel, ABI, capability prototype, memory map validation, host tests | Verified in CI |
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
-| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | Frame planner prototyped; installed memory/CPU pending |
+| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A: persistent conventional-page ledger and boot reservations in progress; page mappings/CPU pending |
 | M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | Pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
@@ -42,3 +42,13 @@ Known hazards: raw UEFI ABI layouts require audits; identity framebuffer mapping
 only a bootstrap assumption; fixed map buffers can be too small on some machines;
 no memory allocator or real CPU protection exists yet. Early code is emulator-only,
 not suitable for bare-metal use or handling personal data.
+
+
+## M1-A — Physical frame ledger boundaries
+
+The first retained ledger accepts only UEFI ConventionalMemory, explicitly excludes
+the boot descriptor buffer, BootInfo, and visible framebuffer ranges, and cannot
+be reset after installation. All claims are one-way and are **not yet usable RAM**
+without an owned mapping and zeroing. No firmware runtime, loader or device memory
+is reclaimed. Native drivers, userspace memory, paging and page reclamation remain
+blocked until later acceptance tests prove isolation and controlled ownership.
