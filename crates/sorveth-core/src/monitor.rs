@@ -1,7 +1,7 @@
 //! Sorveth bootstrap monitor: a polling, allocation-free kernel diagnostic CLI.
 //! NOT a userspace shell or a replacement for process isolation.
 
-use crate::{halt_forever, serial};
+use crate::{halt_forever, root, serial};
 use sorveth_frames::FramePool;
 use sorveth_memory::MapSummary;
 
@@ -12,6 +12,7 @@ enum Command {
     Help,
     Status,
     Memory,
+    Paging,
     Capabilities,
     Halt,
     Unknown,
@@ -100,6 +101,8 @@ fn parse(bytes: &[u8]) -> Command {
         Command::Status
     } else if line.eq_ignore_ascii_case("memory") {
         Command::Memory
+    } else if line.eq_ignore_ascii_case("paging") {
+        Command::Paging
     } else if line.eq_ignore_ascii_case("caps") {
         Command::Capabilities
     } else if line.eq_ignore_ascii_case("halt") {
@@ -115,7 +118,7 @@ fn prompt() {
 
 fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
     match command {
-        Command::Help => serial::write_line("Commands: help status memory caps halt"),
+        Command::Help => serial::write_line("Commands: help status memory paging caps halt"),
         Command::Status => {
             serial::write_line("Kernel: bootstrap monitor; no userspace or scheduler");
             serial::write_line("Firmware boot services: exited");
@@ -134,7 +137,15 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
                 Err(_) => serial::write("UNAVAILABLE"),
             }
             serial::write_line("");
-            serial::write_line("Physical allocation is diagnostic only; paging not installed");
+            serial::write_line("Claims remain unmapped; lower page tables are inherited");
+        }
+        Command::Paging => {
+            if root::active() {
+                serial::write_line("Page table root: Sorveth PML4 active");
+                serial::write_line("Lower mappings: inherited from firmware (not isolated)");
+            } else {
+                serial::write_line("Page table root: not installed");
+            }
         }
         Command::Capabilities => {
             serial::write_line("Capability table: initialized; no isolated tasks yet");
@@ -194,6 +205,7 @@ mod tests {
         assert_eq!(submit(&mut editor, b" status "), Command::Status);
         assert_eq!(submit(&mut editor, b"memory"), Command::Memory);
         assert_eq!(submit(&mut editor, b"caps"), Command::Capabilities);
+        assert_eq!(submit(&mut editor, b"paging"), Command::Paging);
         assert_eq!(submit(&mut editor, b"halt"), Command::Halt);
         assert_eq!(submit(&mut editor, b"memory anything"), Command::Unknown);
     }
