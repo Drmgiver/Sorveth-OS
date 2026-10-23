@@ -31,15 +31,19 @@ resource editing, a desktop, or AI.
   generations to reject stale handles, and recursive descendant revocation.
 - `crates/sorveth-memory`: allocation-free, checked UEFI memory-descriptor reader and
   conventional-page summary.
-- `crates/sorveth-frames`: no-heap physical-frame ownership planner with checked
-  reservations, overlap rejection and contiguous allocation. Early kernel entry
-  now audits the map and proves two disjoint frame claims; this remains a
-  non-persistent diagnostic, not a production memory manager or new page tables.
+- `crates/sorveth-frames`: a permanent locked ledger for conventional-memory
+  physical frame claims, with checked reservations and overlap rejection. Its
+  physical claims are unmapped until an address is explicitly installed.
+- `crates/sorveth-paging`: no-heap 4 KiB mapping policy (W^X, canonicality,
+  privilege separation, overlap validation) and read-only CPU paging audit.
 - `crates/sorveth-boot`: small x86-64 UEFI loader. Obtains GOP and the final memory map,
   calls `ExitBootServices`, then transfers control to Sorveth Core.
 - `crates/sorveth-core`: freestanding Rust kernel entry, serial diagnostic monitor,
-  owned top-level x86-64 PML4 transition, and direct framebuffer splash. After handoff it makes no firmware boot-service
-  calls. The monitor is a privileged bootstrap tool, not a userspace terminal.
+  owned top-level x86-64 PML4 transition, and direct framebuffer splash.
+  Sorveth builds one private PDPT/PD/PT subtree and maps a claimed, zeroed
+  supervisor-only NX scratch page. Most inherited firmware mappings remain
+  shared. After handoff it makes no firmware boot-service calls. The monitor
+  is a privileged bootstrap tool, not a userspace terminal.
 - `docs`: implementation decisions, architecture, security rules, roadmap.
 - `scripts`: local build, checks, and QEMU boot command.
 - `.github/workflows`: cross-build and host tests for a future dedicated repository.
@@ -81,6 +85,9 @@ Native kernel execution: EFI boot services exited
 Boot protocol v1: OK
 UEFI physical memory map: validated
 Physical frame planner: validated (no mappings written)
+Persistent physical frame ledger: installed (unmapped)
+Sorveth PML4 root: active (firmware lower levels shared)
+Sorveth private supervisor NX mapping: verified
 Capability table: initialized
 SORVETH CORE ONLINE / end of milestone 0
 ```
@@ -95,8 +102,10 @@ sorveth>
 ```
 The `status`, `memory`, `paging`, and `caps` commands inspect bootstrap
 state; `halt` halts the CPU. Sorveth now creates and switches to a distinct
-PML4 root, but the subordinate firmware paging tables are still shared. This
-is **not** independent kernel-owned address-space isolation. Input is line-buffered, supports backspace and CR/LF, and rejects
+PML4 root and a single private high-half supervisor mapping. Most of the
+subordinate firmware paging tables are still shared, so this is **not** an
+isolated address space. Input is line-buffered, supports backspace and CR/LF,
+and rejects
 overlong commands. QEMU's `-serial stdio` connects the prompt to a terminal.
 The special first-boot smoke-test binary deliberately exits QEMU instead.
 
@@ -105,14 +114,17 @@ nor this privileged monitor is a desktop, user process, or proper terminal.
 
 ## Test status (2026-10-22)
 
-- **Verified by GitHub Actions:** Rust host tests, UEFI x86-64 cross-build,
-  ABI layout checks, firmware handoff and basic QEMU kernel boot.
-- **Under verification:** Interactive serial monitor in a normal QEMU boot,
-  with actual command injection and response assertions.
-- **Still not implemented:** Persistent frame ownership, independent page
-  tables, privilege isolation, userspace, scheduler, IPC, filesystems, drivers,
-  networking, a working desktop and Sorveth Mind. Emulator success does not
-  establish compatibility with physical hardware.
+- **Verified in GitHub Actions:** Rust tests, UEFI cross-build, ABI offsets,
+  rustfmt, native post-firmware QEMU boot and an interactive monitor session.
+- **Verified hardware transition in QEMU:** a new Sorveth PML4 root was
+  loaded through CR3, and a separate 4 KiB supervisor-only NX mapping was
+  exercised by writing through the new high virtual address and reading back
+  the claimed physical page. This uses an OVMF-provided identity mapping
+  to access paging structures during bootstrap.
+- **Not implemented:** fully private address spaces, page faults/IDT, proper
+  kernel stacks, user-mode tasks, scheduler, IPC, native driver services,
+  filesystem, networking, desktop, and Sorveth Mind. Physical machines have
+  not been tested; this bootstrap is **QEMU-only**.
 
 See the authoritative [Sorveth Product Constitution](docs/SORVETH_VISION.md),
 [implementation roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md)

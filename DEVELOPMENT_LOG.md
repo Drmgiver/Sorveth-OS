@@ -127,3 +127,25 @@
 - Next: zero and map claimed page-table frames, build a minimal safe
   Sorveth-owned root, retain firmware handoff essentials, and perform a
   carefully validated CR3 transition in QEMU. No hardware testing yet.
+
+## 2026-10-22 — M1-B2: CR3 ownership and first live private mapping
+
+- Authored and boot-tested a distinct 4-KiB-aligned Sorveth PML4 root.
+  Validated the inherited OVMF identity mapping, copied the 512 original
+  entries, switched CR3, read it back, and retained the interactive monitor.
+- Added three aligned, private paging-structure pages (PDPT, PD, PT) in an
+  unused supervisor-space slot. Claimed a conventional physical frame from
+  the permanent frame ledger, verified its bootstrap identity mapping,
+  zeroed it, and installed a supervisor-only NX mapping through the subtree.
+- Enabled EFER.NXE on CPUID-supported x86-64 and tested a real read/write
+  through Sorveth's high virtual address to the claimed physical frame.
+- Expanded both QEMU test paths and the interactive `paging` command
+  to require evidence produced *after* the CR3 switch and private mapping.
+- Successfully exercised the live mapping and interactive QEMU monitor in
+  GitHub Actions run 39882574952. Build formatting required an additional
+  correction; verification of the fully corrected run must be checked
+  separately.
+- Limitations: other lower-level tables remain shared with firmware, so
+  this is not an isolated address space, secure heap allocator or complete
+  virtual memory manager. No exception handler, user mode, or real-hardware
+  boot exists yet.

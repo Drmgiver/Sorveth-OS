@@ -7,7 +7,7 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-A | Source bootstrap | UEFI loader, freestanding kernel, ABI, capability prototype, memory map validation, host tests | Verified in CI |
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
-| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A/B1 verified; M1-B2 owned PML4 root under verification, firmware leaf mappings remain shared |
+| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A/B1/B2 boot tests verified in QEMU; most firmware leaf mappings still shared, IDT/process isolation pending |
 | M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | Pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
@@ -17,13 +17,14 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 
 ## Next implementation sequence
 
-1. Install a persistent frame allocator with verified lifetime and explicit
-   reservations for loader, kernel, runtime, framebuffer and device memory.
-2. Establish owned kernel stack/page-table mappings and validate page faults.
-3. Install an x86-64 IDT and controlled exception diagnostics, then timers.
-4. Implement the first user-mode task, basic scheduling and system calls.
-5. Implement capability-checked IPC and move services out of ring 0.
-6. Preserve automated QEMU boot and interactive-monitor acceptance tests.
+1. Extend the private mapping proof into safely managed physical/virtual
+   memory; remove assumptions that a firmware identity map is available.
+2. Install the x86-64 IDT and deterministic exception/page-fault diagnostics.
+3. Establish a dedicated kernel stack, replace inherited firmware mappings,
+   and validate controlled mapping changes and TLB invalidation.
+4. Implement a ring-3 user task and basic scheduling/system calls.
+5. Add capability-checked IPC and move services outside ring 0.
+6. Preserve QEMU boot and real interactive monitor acceptance at every step.
 
 M0 evidence: [passing GitHub Actions run 39874178796](https://github.com/Drmgiver/Sorveth-OS/actions/runs/39874178796).
 The framebuffer has not been visually validated, and there has been no
@@ -78,14 +79,13 @@ changes CR3, reads it back and logs the result **after** the transition.
 The monitor's `paging` command reports this state. Automated QEMU tests
 must confirm the post-switch marker and interactive command responses.
 
-**Scope restriction:** this is a new Sorveth-owned *top-level* table only.
-All subordinate page tables and memory permissions are still inherited,
-shared and firmware-defined. No copied private lower levels, NXE enforcement,
-ring-3 isolation, page fault handlers, RAM zeroing, or safe physical-hardware
-boot is claimed. The bootstrap currently assumes an OVMF/QEMU identity map
-for reading page table frames. The next phase must eliminate that reliance
-with a tested physical-memory access window and privately owned subtrees,
-then install controlled exceptions before widening hardware support.
+**Scope restriction:** the initial PML4 switch preserves the inherited
+firmware mappings. The next section documents one independently created
+high-half mapping with Sorveth-owned lower-level tables. All *other*
+lower-level mappings remain firmware-owned and shared. No ring-3 isolation,
+page fault handler, general RAM mapping facility, or safe physical-hardware
+boot is claimed. The QEMU bootstrap still uses the OVMF identity map to
+access and initialize physical paging frames.
 
 ### M1-B2 private 4-KiB mapping acceptance
 
