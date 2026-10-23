@@ -59,6 +59,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Breakpoint handler did not return correctly")
     if b"Sorveth dynamic private pages: 2 additional mappings verified" not in transcript:
         raise AssertionError("Dynamic supervisor page mapper did not complete")
+    if b"Sorveth dedicated kernel stack: active" not in transcript:
+        raise AssertionError("Kernel did not transfer to its own stack")
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),

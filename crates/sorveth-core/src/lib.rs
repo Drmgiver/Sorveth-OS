@@ -8,6 +8,7 @@ mod monitor;
 mod root;
 mod screen;
 mod serial;
+mod stack;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
@@ -128,24 +129,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         }
     }
 
-    // Dedicated QEMU image exercises an expected page fault in the empty
-    // second PTE of Sorveth's private high-half mapping. Normal boots never
-    // intentionally fault, and the handler never resumes a fatal exception.
-    #[cfg(feature = "qemu-fault")]
-    {
-        let address = match root::deliberate_fault_address() {
-            Some(address) => address,
-            None => {
-                serial::write_line("FATAL: missing unmapped test address");
-                halt_forever();
-            }
-        };
-        unsafe {
-            core::ptr::read_volatile(address as *const u64);
-        }
-        serial::write_line("FATAL: intentional page fault returned unexpectedly");
-        halt_forever();
-    }
+    // Fault-probe execution is deferred until the owned-stack continuation.
 
     // This is the first isolated *data structure*, not process isolation.
     // The kernel remains privileged; untrusted code is not yet executing.
@@ -168,19 +152,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     } else {
         serial::write_line("Native framebuffer: unsupported or unavailable");
     }
-    serial::write_line("SORVETH CORE ONLINE / end of milestone 0");
-    // Only the dedicated CI smoke image signals the QEMU debug-exit device.
-    // A normal kernel image does not use this emulator-only port.
-    #[cfg(all(target_arch = "x86_64", feature = "qemu-smoke"))]
-    unsafe {
-        core::arch::asm!("out dx, al", in("dx") 0xf4u16, in("al") 0x10u8,
-            options(nomem, nostack, preserves_flags));
-    }
-    #[cfg(feature = "qemu-smoke")]
-    halt_forever();
-
-    #[cfg(not(feature = "qemu-smoke"))]
-    monitor::run(memory_summary, &FRAME_POOL)
+    // Never return into UEFI's stack. Both QEMU modes and the interactive
+    // monitor execute on Sorveth's own statically retained kernel stack.
+    stack::enter(memory_summary)
 }
 
 #[inline(never)]

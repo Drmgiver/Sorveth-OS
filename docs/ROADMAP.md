@@ -135,3 +135,16 @@ private pages. Both normal and fault-test QEMU boots verify the marker.
 This is **not** a production heap or general virtual-memory manager: it still
 requires the inherited OVMF identity mapping to initialize physical pages.
 There is no reclamation, sharing, SMP serialization or user-mode access yet.
+
+## M1-E — Dedicated kernel execution stack
+
+The bootstrap kernel now switches irrevocably from the UEFI-provided stack to
+a statically retained, 128 KiB, 4 KiB-aligned Sorveth-owned stack. The handoff
+sets x64 calling-convention alignment and shadow space, then invokes a
+non-returning kernel continuation. It reads RSP to verify the new stack bounds.
+Normal QEMU boot, the interactive monitor, and the page-fault test all require
+proof after the transition; deliberate faults run on the new stack.
+
+Limitations: this is one global bootstrap stack inside the EFI image, without
+guard pages, per-thread stacks, privilege switching, or IST/double-fault
+protection. It is not a general-purpose scheduler stack.
