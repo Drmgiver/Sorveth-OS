@@ -127,7 +127,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
                 halt_forever();
             }
         };
-        unsafe { core::ptr::read_volatile(address as *const u64); }
+        unsafe {
+            core::ptr::read_volatile(address as *const u64);
+        }
         serial::write_line("FATAL: intentional page fault returned unexpectedly");
         halt_forever();
     }
