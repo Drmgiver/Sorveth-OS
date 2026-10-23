@@ -7,7 +7,9 @@
 //! these functions with a serialized mutable mailbox reference.
 //! Messages contain owned fixed-size bytes, never pointers or borrowed data.
 
-use sorveth_cap::{CapabilitySpace, Error as CapabilityError, Handle, ObjectId, ObjectKind, Rights};
+use sorveth_cap::{
+    CapabilitySpace, Error as CapabilityError, Handle, ObjectId, ObjectKind, Rights,
+};
 
 pub const MAX_PAYLOAD: usize = 48;
 
@@ -186,14 +188,17 @@ mod tests {
         let (caps, _, tx, rx) = setup();
         let mut box_ = Mailbox::<2>::new(ObjectId(71)).unwrap();
         assert_eq!(box_.receive(&caps, rx), Err(Error::Empty));
-        box_.send(&caps, tx, Message::from_bytes(1, b"A").unwrap()).unwrap();
-        box_.send(&caps, tx, Message::from_bytes(2, b"B").unwrap()).unwrap();
+        box_.send(&caps, tx, Message::from_bytes(1, b"A").unwrap())
+            .unwrap();
+        box_.send(&caps, tx, Message::from_bytes(2, b"B").unwrap())
+            .unwrap();
         assert_eq!(
             box_.send(&caps, tx, Message::from_bytes(3, b"C").unwrap()),
             Err(Error::Full)
         );
         assert_eq!(box_.receive(&caps, rx).unwrap().bytes(), b"A");
-        box_.send(&caps, tx, Message::from_bytes(3, b"C").unwrap()).unwrap();
+        box_.send(&caps, tx, Message::from_bytes(3, b"C").unwrap())
+            .unwrap();
         assert_eq!(box_.receive(&caps, rx).unwrap().tag, 2);
         assert_eq!(box_.receive(&caps, rx).unwrap().tag, 3);
         assert_eq!(box_.len(), 0);
@@ -255,7 +260,13 @@ mod tests {
         let msg = Message::from_bytes(22, b"ok").unwrap();
         assert_eq!(msg.bytes(), b"ok");
         assert!(msg.payload[2..].iter().all(|&b| b == 0));
-        assert!(matches!(Mailbox::<0>::new(ObjectId(1)), Err(Error::ZeroCapacity)));
-        assert!(matches!(Mailbox::<2>::new(ObjectId(0)), Err(Error::InvalidEndpoint)));
+        assert!(matches!(
+            Mailbox::<0>::new(ObjectId(1)),
+            Err(Error::ZeroCapacity)
+        ));
+        assert!(matches!(
+            Mailbox::<2>::new(ObjectId(0)),
+            Err(Error::InvalidEndpoint)
+        ));
     }
 }
