@@ -14,6 +14,7 @@ mod tss;
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
 use sorveth_frames::{FrameAllocator, FramePool};
+use sorveth_ipc::{Mailbox, Message};
 use sorveth_memory::MemoryMap;
 use sorveth_paging::audit_inherited;
 
@@ -151,6 +152,36 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         serial::write_line("FATAL: capability table unavailable");
         halt_forever();
     }
+
+    // M2-A: kernel-internal IPC endpoint proof. No process or syscall has
+    // access to these Rust objects yet; all authority checks are kernel-side.
+    let ipc_ok = (|| {
+        let root = caps
+            .grant_root(
+                ObjectId(2),
+                ObjectKind::Endpoint,
+                Rights::SEND | Rights::READ | Rights::DERIVE,
+            )
+            .ok()?;
+        let send = caps.derive(root, Rights::SEND).ok()?;
+        let recv = caps.derive(root, Rights::READ).ok()?;
+        let mut endpoint = Mailbox::<4>::new(ObjectId(2)).ok()?;
+        let msg = Message::from_bytes(0x534f, b"Sorveth").ok()?;
+        endpoint.send(&caps, send, msg).ok()?;
+        let delivered = endpoint.receive(&caps, recv).ok()?;
+        caps.revoke(root).ok()?;
+        Some(
+            delivered == msg
+                && endpoint.receive(&caps, recv).is_err()
+                && endpoint.send(&caps, send, msg).is_err(),
+        )
+    })()
+    .unwrap_or(false);
+    if !ipc_ok {
+        serial::write_line("FATAL: kernel IPC authorization test failed");
+        halt_forever();
+    }
+    serial::write_line("Sorveth IPC: capability-checked mailbox and revocation validated");
 
     if boot.framebuffer.is_usable() {
         screen::paint(&boot.framebuffer);

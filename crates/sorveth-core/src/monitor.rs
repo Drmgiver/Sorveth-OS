@@ -123,6 +123,7 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
             serial::write_line("Kernel: bootstrap monitor; no userspace or scheduler");
             serial::write_line("Firmware boot services: exited");
             serial::write_line("Native serial console: online");
+            serial::write_line("IPC: kernel prototype only; user processes pending");
         }
         Command::Memory => {
             serial::write("Memory descriptors: ");

@@ -14,3 +14,4 @@ sorveth-cap = { path = "../sorveth-cap" }
 sorveth-memory = { path = "../sorveth-memory" }
 sorveth-frames = { path = "../sorveth-frames" }
 sorveth-paging = { path = "../sorveth-paging" }
+sorveth-ipc = { path = "../sorveth-ipc" }

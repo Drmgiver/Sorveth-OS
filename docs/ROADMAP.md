@@ -162,3 +162,21 @@ This is early QEMU-only exception isolation: GDT code/data descriptors remain
 inherited, both emergency stacks are statically allocated and unguarded,
 and interrupt masking continues. No scheduler, IRQ dispatch, TSS RSP0 for
 ring-3 privilege transitions, or recoverable page-fault process exists.
+
+## M2-A — Internal capability-gated IPC queue
+
+A `sorveth-ipc` no_std crate implements fixed-size endpoints with bounded
+message payloads, FIFO delivery, backpressure, optional irreversible close,
+and separate SEND/READ/MANAGE authorization via the capability table.
+Handles for another endpoint or object kind cannot access the queue.
+Derived handles respect attenuated rights; revoked and stale handles fail
+before mutating queue state. Rust regression tests cover overflow, wraparound,
+authorization, payload limits, revocation and endpoint closure.
+
+The trusted kernel boot now creates an endpoint, derives SEND/READ handles,
+roundtrips an owned message, revokes its root authority and verifies that
+the now-stale handles are rejected; QEMU smoke tests require the marker.
+
+**Important limit:** no userspace address space, syscall dispatcher, blocking
+wait queues or scheduler exists yet, so this is not enforceable cross-process
+IPC. It is the narrow transport and authorization primitive to build upon.
