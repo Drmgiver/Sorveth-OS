@@ -4,6 +4,7 @@
 //! Boot milestone only; paging, protection rings, tasks and IPC are NOT ready.
 
 mod monitor;
+mod root;
 mod screen;
 mod serial;
 
@@ -30,10 +31,13 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
 
     // Read the firmware-provided CPU paging configuration. Do not edit CR3
     // or dereference inherited page-table pointers at this stage.
-    if audit_inherited().is_err() {
-        serial::write_line("FATAL: unsupported inherited x86 paging state");
-        halt_forever();
-    }
+    let inherited = match audit_inherited() {
+        Ok(paging) => paging,
+        Err(_) => {
+            serial::write_line("FATAL: unsupported inherited x86 paging state");
+            halt_forever();
+        }
+    };
     serial::write_line("Inherited x86 paging: validated (read-only)");
 
     // The loader owns the memory-map backing buffer, and its static storage
@@ -91,6 +95,15 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     serial::write_line("Physical frame planner: validated (no mappings written)");
     serial::write_line("Persistent physical frame ledger: installed (unmapped)");
+
+    // M1-B2: change only the top-level PML4 root. The firmware-provided
+    // lower tables remain shared; do not reclaim or rewrite any of them.
+    // QEMU acceptance tests must see serial output AFTER this CR3 write.
+    if unsafe { root::install(inherited.root_physical) }.is_err() {
+        serial::write_line("FATAL: owned PML4 root transition failed");
+        halt_forever();
+    }
+    serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
 
     // This is the first isolated *data structure*, not process isolation.
     // The kernel remains privileged; untrusted code is not yet executing.
