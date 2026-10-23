@@ -115,7 +115,6 @@ unsafe fn inherited_translate(root: u64, address: u64) -> Option<u64> {
     })
 }
 
-
 #[cfg(target_arch = "x86_64")]
 unsafe fn enable_nxe() -> bool {
     // NX PTEs are legal only if CPUID advertises NX and IA32_EFER.NXE is set.
@@ -201,16 +200,19 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
                 return Err(Error::PrivateTablesNotIdentityMapped);
             }
         }
-        let slot = match (256usize..512).rev().find(|&index| {
-            ptr::read_volatile(source.add(index)) & PRESENT == 0
-        }) {
+        let slot = match (256usize..512)
+            .rev()
+            .find(|&index| ptr::read_volatile(source.add(index)) & PRESENT == 0)
+        {
             Some(index) => index,
             None => return Err(Error::NoFreeVirtualSlot),
         };
         // Claim an actual *conventional* frame from the locked ownership
         // ledger. The original firmware mapping must identity-map it before
         // we can safely clear its contents at this stage.
-        let scratch = pool.claim_unmapped(1).map_err(|_| Error::FrameUnavailable)?;
+        let scratch = pool
+            .claim_unmapped(1)
+            .map_err(|_| Error::FrameUnavailable)?;
         if inherited_translate(inherited_root, scratch.start) != Some(scratch.start) {
             return Err(Error::TestFrameNotIdentityMapped);
         }
@@ -224,10 +226,7 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
 
         ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE);
         ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE);
-        ptr::write_volatile(
-            pt as *mut u64,
-            scratch.start | PRESENT | WRITE | NO_EXECUTE,
-        );
+        ptr::write_volatile(pt as *mut u64, scratch.start | PRESENT | WRITE | NO_EXECUTE);
         ptr::write_volatile(dest.add(slot), pdpt | PRESENT | WRITE);
         let high_address = 0xffff_0000_0000_0000u64 | ((slot as u64) << 39);
 
@@ -249,7 +248,8 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         }
         if translate(fresh_root, high_address, |phys| {
             Some(ptr::read_volatile(phys as *const u64))
-        }) != Some(scratch.start) {
+        }) != Some(scratch.start)
+        {
             return Err(Error::VerificationFailed);
         }
         ACTIVE_ROOT.store(fresh_root, Ordering::Release);
