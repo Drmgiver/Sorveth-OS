@@ -110,3 +110,20 @@
 - This is a **privileged bootstrap monitor**, not an isolated user shell.
   Native physical-memory mappings, scheduler, IPC, ring-3 execution, drivers,
   filesystem and desktop remain unimplemented. No physical-hardware test.
+
+## 2026-10-22 — M1-B phase 1: paging policy and inherited CPU audit
+
+- Added GPLv3 `sorveth-paging` no_std crate with allocation-free 4 KiB
+  mapping plans, virtual/physical overlap rejection, physical alias rejection,
+  W^X validation, canonical address checks, kernel/user address separation,
+  and PTE encoding for *future* installers.
+- Added an x86-64 privileged read-only CR0/CR3/CR4 audit. It validates
+  inherited four-level paging after UEFI ExitBootServices, without changing
+  live mappings, dereferencing firmware tables, or switching CR3.
+- Wired it into early kernel boot. Both emulator acceptance tests require
+  the paging audit marker. Added host unit tests and format checks in CI.
+- Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/39881282684
+  Both CI jobs passed; this is **not** a claim of kernel-owned page tables.
+- Next: zero and map claimed page-table frames, build a minimal safe
+  Sorveth-owned root, retain firmware handoff essentials, and perform a
+  carefully validated CR3 transition in QEMU. No hardware testing yet.

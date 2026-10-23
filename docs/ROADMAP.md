@@ -7,7 +7,7 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-A | Source bootstrap | UEFI loader, freestanding kernel, ABI, capability prototype, memory map validation, host tests | Verified in CI |
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
-| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A: persistent conventional-page ledger and boot reservations in progress; page mappings/CPU pending |
+| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A ledger and M1-B1 paging-policy/CR3 audit verified in QEMU; owned mappings/CPU pending |
 | M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | Pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
@@ -63,3 +63,8 @@ paging configuration on actual QEMU boots. It **does not** inspect or replace
 firmware page tables, change CR3, allocate or zero page-table frames, enable
 NXE or enforce new hardware protections. Sorveth-owned tables and tested
 CR3 transitions remain the next phase of M1-B.
+
+**M1-B phase 1 acceptance:** [GitHub Actions run 39881282684](https://github.com/Drmgiver/Sorveth-OS/actions/runs/39881282684)
+passed host Rust unit tests, UEFI build, ABI checks, rustfmt, post-firmware
+native boot, and the interactive monitor test with the inherited paging audit.
+This does not establish owned page-table installation or physical hardware support.
