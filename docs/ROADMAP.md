@@ -102,3 +102,22 @@ test requires the post-switch proof and the interactive paging command.
 general-purpose virtual-memory allocator. The rest of the inherited tables
 are shared; hardware page faults and fully isolated processes are still
 unimplemented. No physical hardware boot is authorized.
+
+
+## M1-C — Owned x86-64 synchronous-exception table
+
+Sorveth installs a 256-entry interrupt descriptor table (IDT), with a
+tested reversible breakpoint (#BP) handler and fatal page-fault (#PF) and
+general-protection (#GP) reporters. The breakpoint wrapper preserves the
+volatile registers, meets the UEFI x64 ABI stack/shadow-space requirements,
+and returns using IRETQ. The read-only kernel console survives the test.
+
+A dedicated QEMU fault-test image can read the deliberately *unmapped*
+second page of the private high-half page table. The #PF handler prints
+the fault address and error code before issuing QEMU's test-only success
+exit, without resuming a faulting instruction. This is never done in a
+normal boot.
+
+Only synchronous faults are supported: hardware IRQs stay masked (CLI),
+IST/TSS dedicated exception stacks, robust double-fault handling, timers,
+SMP, unprivileged ring-3 tasks and recoverable page faults remain pending.

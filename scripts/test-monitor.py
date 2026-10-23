@@ -55,6 +55,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Kernel did not continue after switching its PML4 root")
     if b"Sorveth private supervisor NX mapping: verified" not in transcript:
         raise AssertionError("Private high-half mapping was not verified")
+    if b"Sorveth IDT: installed; breakpoint roundtrip verified" not in transcript:
+        raise AssertionError("Breakpoint handler did not return correctly")
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),

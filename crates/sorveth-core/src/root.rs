@@ -44,6 +44,8 @@ static mut SORVETH_PD: RootPage = RootPage([0; 512]);
 static mut SORVETH_PT: RootPage = RootPage([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static ACTIVE_ROOT: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static UNMAPPED_TEST: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "x86_64")]
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
@@ -252,6 +254,9 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         {
             return Err(Error::VerificationFailed);
         }
+        // PT index 1 is untouched (non-present). Retain this canonical
+        // address solely for a controlled fault-handler acceptance test.
+        UNMAPPED_TEST.store(high_address + 4096, Ordering::Release);
         ACTIVE_ROOT.store(fresh_root, Ordering::Release);
         Ok(())
     }
@@ -260,6 +265,23 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         let _ = inherited_root;
         let _ = pool;
         Err(Error::UnsupportedArchitecture)
+    }
+}
+
+#[cfg(feature = "qemu-fault")]
+pub fn deliberate_fault_address() -> Option<u64> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let address = UNMAPPED_TEST.load(Ordering::Acquire);
+        if address == 0 {
+            None
+        } else {
+            Some(address)
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
     }
 }
 

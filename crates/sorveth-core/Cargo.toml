@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 qemu-smoke = []
+qemu-fault = []
 
 [dependencies]
 sorveth-abi = { path = "../sorveth-abi" }

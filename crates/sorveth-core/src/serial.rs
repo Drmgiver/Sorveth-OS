@@ -81,6 +81,19 @@ pub fn write_line(msg: &str) {
     put(b'\n');
 }
 
+pub fn write_hex_u64(value: u64) {
+    write("0x");
+    for shift in (0..16).rev() {
+        let nibble = ((value >> (shift * 4)) & 15) as u8;
+        let byte = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
+        put(byte);
+    }
+}
+
 pub fn write_u64(mut number: u64) {
     let mut digits = [0u8; 20];
     let mut position = digits.len();

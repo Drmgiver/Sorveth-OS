@@ -3,6 +3,7 @@
 //! Sorveth Core: first freestanding kernel execution after ExitBootServices.
 //! Boot milestone only; paging, protection rings, tasks and IPC are NOT ready.
 
+mod interrupts;
 mod monitor;
 mod root;
 mod screen;
@@ -105,6 +106,31 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
     serial::write_line("Sorveth private supervisor NX mapping: verified");
+
+    // M1-C: first owned x86 IDT. Keep maskable interrupts disabled until
+    // timer/IRQ delivery and proper alternate fault stacks are implemented.
+    if interrupts::install().is_err() || !interrupts::breakpoint_roundtrip() {
+        serial::write_line("FATAL: x86 IDT breakpoint return failed");
+        halt_forever();
+    }
+    serial::write_line("Sorveth IDT: installed; breakpoint roundtrip verified");
+
+    // Dedicated QEMU image exercises an expected page fault in the empty
+    // second PTE of Sorveth's private high-half mapping. Normal boots never
+    // intentionally fault, and the handler never resumes a fatal exception.
+    #[cfg(feature = "qemu-fault")]
+    {
+        let address = match root::deliberate_fault_address() {
+            Some(address) => address,
+            None => {
+                serial::write_line("FATAL: missing unmapped test address");
+                halt_forever();
+            }
+        };
+        unsafe { core::ptr::read_volatile(address as *const u64); }
+        serial::write_line("FATAL: intentional page fault returned unexpectedly");
+        halt_forever();
+    }
 
     // This is the first isolated *data structure*, not process isolation.
     // The kernel remains privileged; untrusted code is not yet executing.

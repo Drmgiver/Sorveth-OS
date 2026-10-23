@@ -78,6 +78,7 @@ for marker in \
   'Persistent physical frame ledger: installed (unmapped)' \
   'Sorveth PML4 root: active (firmware lower levels shared)' \
   'Sorveth private supervisor NX mapping: verified' \
+  'Sorveth IDT: installed; breakpoint roundtrip verified' \
   'Capability table: initialized' \
   'SORVETH CORE ONLINE / end of milestone 0'; do
   if ! grep -Fq "$marker" "$TMP/serial.log"; then

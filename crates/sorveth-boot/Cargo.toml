@@ -12,6 +12,7 @@ bench = false
 
 [features]
 qemu-smoke = ["sorveth-core/qemu-smoke"]
+qemu-fault = ["sorveth-core/qemu-fault"]
 
 [dependencies]
 sorveth-abi = { path = "../sorveth-abi" }
