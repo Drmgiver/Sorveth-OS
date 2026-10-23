@@ -39,7 +39,7 @@ fi
 save_diagnostics() {
   local result=$?
   if [[ -n "$ARTIFACT_DIR" ]]; then
-    for name in serial.log qemu.out qemu.err; do
+    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err; do
       if [[ -f "$TMP/$name" ]]; then
         cp "$TMP/$name" "$ARTIFACT_DIR/$name"
       fi
@@ -87,3 +87,41 @@ for marker in \
   fi
 done
 echo 'PASS: kernel executed after ExitBootServices, validated memory map, and exited QEMU cleanly.'
+
+# M1-C acceptance: use a separate EFI image to deliberately fault on the
+# absent second page of Sorveth's own high-half mapping. The serial fault
+# handler must report the #PF and issue QEMU's debug exit (status 33).
+# Normal kernel and production builds never trigger this test.
+cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-fault
+cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
+cp "$VARS" "$TMP/OVMF_VARS.fd"
+set +e
+timeout --signal=TERM --kill-after=5s 55s qemu-system-x86_64 \
+  -machine q35 -m 512M -no-reboot -display none \
+  -drive "if=pflash,format=raw,readonly=on,file=$CODE" \
+  -drive "if=pflash,format=raw,file=$TMP/OVMF_VARS.fd" \
+  -drive "if=ide,format=raw,file=fat:rw:$TMP/esp" \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -serial "file:$TMP/fault-serial.log" -monitor none -net none \
+  >"$TMP/fault-qemu.out" 2>"$TMP/fault-qemu.err"
+FAULT_STATUS=$?
+set -e
+cat "$TMP/fault-serial.log" 2>/dev/null || true
+if [[ "$FAULT_STATUS" -ne 33 ]]; then
+  echo "QEMU fault test failed: expected debug-exit status 33, observed $FAULT_STATUS" >&2
+  cat "$TMP/fault-qemu.err" >&2 || true
+  exit 1
+fi
+for marker in \
+  'Sorveth IDT: installed; breakpoint roundtrip verified' \
+  'SORVETH EXCEPTION: PAGE FAULT' \
+  'Fault address (CR2): 0x' \
+  'Page fault error code: 0x' \
+  'SORVETH CONTROLLED PAGE FAULT: verified'; do
+  if ! grep -Fq "$marker" "$TMP/fault-serial.log"; then
+    echo "QEMU fault test failed: missing marker: $marker" >&2
+    exit 1
+  fi
+done
+echo 'PASS: private unmapped page generated an x86 #PF and Sorveth logged and handled it.'
+
