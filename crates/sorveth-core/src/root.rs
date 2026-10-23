@@ -47,9 +47,7 @@ fn translate<F>(root: u64, virtual_address: u64, mut read: F) -> Option<u64>
 where
     F: FnMut(u64) -> Option<u64>,
 {
-    if !(virtual_address < 0x0000_8000_0000_0000
-        || virtual_address >= 0xffff_8000_0000_0000)
-    {
+    if !(virtual_address < 0x0000_8000_0000_0000 || virtual_address >= 0xffff_8000_0000_0000) {
         return None;
     }
     if root == 0 || root & 4095 != 0 {
