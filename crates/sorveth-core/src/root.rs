@@ -3,10 +3,10 @@
 //! Only supported for the x86-64 UEFI identity-mapped QEMU bootstrap.
 //! The backing page is 4096-byte aligned and permanently retained in the
 //! loader image. CR3 is changed only after translation/identity checks.
-//! All lower paging levels continue to belong to firmware, so this is NOT
-//! a complete independent address space or user isolation.
+//! One independent high-half supervisor NX page is mapped through private
+//! PDPT/PD/PT tables; the remaining lower levels still belong to firmware.
+//! This is NOT yet a complete independent address space or user isolation.
 
-#[cfg(target_arch = "x86_64")]
 use sorveth_frames::FramePool;
 
 #[cfg(target_arch = "x86_64")]

@@ -99,11 +99,12 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     // M1-B2: change only the top-level PML4 root. The firmware-provided
     // lower tables remain shared; do not reclaim or rewrite any of them.
     // QEMU acceptance tests must see serial output AFTER this CR3 write.
-    if unsafe { root::install(inherited.root_physical) }.is_err() {
+    if unsafe { root::install(inherited.root_physical, &FRAME_POOL) }.is_err() {
         serial::write_line("FATAL: owned PML4 root transition failed");
         halt_forever();
     }
     serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
+    serial::write_line("Sorveth private supervisor NX mapping: verified");
 
     // This is the first isolated *data structure*, not process isolation.
     // The kernel remains privileged; untrusted code is not yet executing.

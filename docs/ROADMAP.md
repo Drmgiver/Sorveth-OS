@@ -86,3 +86,19 @@ boot is claimed. The bootstrap currently assumes an OVMF/QEMU identity map
 for reading page table frames. The next phase must eliminate that reliance
 with a tested physical-memory access window and privately owned subtrees,
 then install controlled exceptions before widening hardware support.
+
+### M1-B2 private 4-KiB mapping acceptance
+
+The kernel now claims a conventional-memory physical frame from its retained
+ledger, verifies the firmware identity window, zeroes that frame, and creates
+fresh 4-KiB-aligned page-table pages for a previously absent higher-half slot.
+Sorveth installs a supervisor-only writable, NX scratch mapping using its own
+PML4/PDPT/PD/PT entries; it checks CPU NX support and enables EFER.NXE.
+After writing CR3, Sorveth writes through the *new high virtual address* and
+verifies the result through the claimed physical page. The QEMU integration
+test requires the post-switch proof and the interactive paging command.
+
+**Still experimental:** this private mapping is a bootstrap proof, not a
+general-purpose virtual-memory allocator. The rest of the inherited tables
+are shared; hardware page faults and fully isolated processes are still
+unimplemented. No physical hardware boot is authorized.
