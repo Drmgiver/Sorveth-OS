@@ -71,8 +71,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     } else {
         Ok(())
     };
-    if map_buffer.is_err() || boot_info.is_err() || display.is_err()
-        || frames.available_pages() < 2
+    if map_buffer.is_err() || boot_info.is_err() || display.is_err() || frames.available_pages() < 2
     {
         serial::write_line("FATAL: physical frame reservations could not be secured");
         halt_forever();

@@ -188,7 +188,6 @@ impl<const N: usize> FrameAllocator<N> {
         Ok(())
     }
 
-
     /// Reserve all physical pages touched by an arbitrary byte range.
     /// Unlike reserve(), this accepts unaligned buffer addresses and lengths.
     /// Refuses wraparound rather than silently leaving a tail unprotected.
@@ -197,10 +196,8 @@ impl<const N: usize> FrameAllocator<N> {
             return Ok(());
         }
         let end = start.checked_add(bytes).ok_or(Error::InvalidRange)?;
-        let rounded_end = end
-            .checked_add(PAGE_BYTES - 1)
-            .ok_or(Error::InvalidRange)?
-            & !(PAGE_BYTES - 1);
+        let rounded_end =
+            end.checked_add(PAGE_BYTES - 1).ok_or(Error::InvalidRange)? & !(PAGE_BYTES - 1);
         let aligned_start = start & !(PAGE_BYTES - 1);
         self.reserve(aligned_start, (rounded_end - aligned_start) / PAGE_BYTES)
     }
@@ -232,7 +229,6 @@ impl<const N: usize> FrameAllocator<N> {
         Err(Error::OutOfMemory)
     }
 }
-
 
 /// A page claim means *ownership*, not that the bytes are mapped or zeroed.
 /// No reclaimed pages are admitted, so claims remain irreversible in M1-A.
@@ -448,12 +444,17 @@ mod tests {
         planner.reserve_bytes(0x1000, 4096).unwrap();
         pool.install(planner).unwrap();
         assert_eq!(pool.status().unwrap().available_pages, 4);
-        assert_eq!(pool.install(FrameAllocator::<4>::from_map(&map(&data)).unwrap()),
-                   Err(PoolError::AlreadyInstalled));
+        assert_eq!(
+            pool.install(FrameAllocator::<4>::from_map(&map(&data)).unwrap()),
+            Err(PoolError::AlreadyInstalled)
+        );
         assert_eq!(pool.claim_unmapped(2).unwrap().start, 0x2000);
         assert_eq!(pool.claim_unmapped(2).unwrap().start, 0x4000);
         assert_eq!(pool.status().unwrap().available_pages, 0);
-        assert_eq!(pool.claim_unmapped(1), Err(PoolError::Allocation(Error::OutOfMemory)));
+        assert_eq!(
+            pool.claim_unmapped(1),
+            Err(PoolError::Allocation(Error::OutOfMemory))
+        );
     }
 
     #[test]
