@@ -7,7 +7,7 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-A | Source bootstrap | UEFI loader, freestanding kernel, ABI, capability prototype, memory map validation, host tests | Verified in CI |
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
-| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A ledger and M1-B1 paging-policy/CR3 audit verified in QEMU; owned mappings/CPU pending |
+| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A/B1 verified; M1-B2 owned PML4 root under verification, firmware leaf mappings remain shared |
 | M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | Pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
@@ -68,3 +68,21 @@ CR3 transitions remain the next phase of M1-B.
 passed host Rust unit tests, UEFI build, ABI checks, rustfmt, post-firmware
 native boot, and the interactive monitor test with the inherited paging audit.
 This does not establish owned page-table installation or physical hardware support.
+
+## M1-B, phase 2 — Sorveth top-level PML4 and CR3 transition
+
+Sorveth now builds a distinct, page-aligned PML4 root from the inherited UEFI
+PML4 entries. The transition checks identity translation for the current
+firmware root and Sorveth's page, copies all 512 entries, checks the clone,
+changes CR3, reads it back and logs the result **after** the transition.
+The monitor's `paging` command reports this state. Automated QEMU tests
+must confirm the post-switch marker and interactive command responses.
+
+**Scope restriction:** this is a new Sorveth-owned *top-level* table only.
+All subordinate page tables and memory permissions are still inherited,
+shared and firmware-defined. No copied private lower levels, NXE enforcement,
+ring-3 isolation, page fault handlers, RAM zeroing, or safe physical-hardware
+boot is claimed. The bootstrap currently assumes an OVMF/QEMU identity map
+for reading page table frames. The next phase must eliminate that reliance
+with a tested physical-memory access window and privately owned subtrees,
+then install controlled exceptions before widening hardware support.

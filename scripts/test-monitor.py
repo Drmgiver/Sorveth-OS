@@ -51,10 +51,13 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Inherited paging audit did not pass")
     if b"Persistent physical frame ledger: installed (unmapped)" not in transcript:
         raise AssertionError("Persistent physical frame ledger did not initialize")
+    if b"Sorveth PML4 root: active (firmware lower levels shared)" not in transcript:
+        raise AssertionError("Kernel did not continue after switching its PML4 root")
     tests = [
-        (b"help\r", b"Commands: help status memory caps halt"),
+        (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),
-        (b"memory\r", b"Physical allocation is diagnostic only; paging not installed"),
+        (b"memory\r", b"Claims remain unmapped; lower page tables are inherited"),
+        (b"paging\r", b"Lower mappings: inherited from firmware (not isolated)"),
         (b"caps\r", b"Capability table: initialized; no isolated tasks yet"),
         (b"not-a-command\r", b"Unknown command; enter help"),
     ]

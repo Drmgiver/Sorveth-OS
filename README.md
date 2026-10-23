@@ -38,7 +38,7 @@ resource editing, a desktop, or AI.
 - `crates/sorveth-boot`: small x86-64 UEFI loader. Obtains GOP and the final memory map,
   calls `ExitBootServices`, then transfers control to Sorveth Core.
 - `crates/sorveth-core`: freestanding Rust kernel entry, serial diagnostic monitor,
-  and direct framebuffer splash. After handoff it makes no firmware boot-service
+  owned top-level x86-64 PML4 transition, and direct framebuffer splash. After handoff it makes no firmware boot-service
   calls. The monitor is a privileged bootstrap tool, not a userspace terminal.
 - `docs`: implementation decisions, architecture, security rules, roadmap.
 - `scripts`: local build, checks, and QEMU boot command.
@@ -90,11 +90,13 @@ On a normal boot, Sorveth then enters its **interactive serial kernel monitor**:
 Sorveth bootstrap monitor v0.1
 Type help for available commands.
 sorveth> help
-Commands: help status memory caps halt
+Commands: help status memory paging caps halt
 sorveth> 
 ```
-The `status`, `memory`, and `caps` commands inspect bootstrap state; `halt`
-halts the CPU. Input is line-buffered, supports backspace and CR/LF, and rejects
+The `status`, `memory`, `paging`, and `caps` commands inspect bootstrap
+state; `halt` halts the CPU. Sorveth now creates and switches to a distinct
+PML4 root, but the subordinate firmware paging tables are still shared. This
+is **not** independent kernel-owned address-space isolation. Input is line-buffered, supports backspace and CR/LF, and rejects
 overlong commands. QEMU's `-serial stdio` connects the prompt to a terminal.
 The special first-boot smoke-test binary deliberately exits QEMU instead.
 

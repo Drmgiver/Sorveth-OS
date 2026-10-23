@@ -76,6 +76,7 @@ for marker in \
   'UEFI physical memory map: validated' \
   'Physical frame planner: validated (no mappings written)' \
   'Persistent physical frame ledger: installed (unmapped)' \
+  'Sorveth PML4 root: active (firmware lower levels shared)' \
   'Capability table: initialized' \
   'SORVETH CORE ONLINE / end of milestone 0'; do
   if ! grep -Fq "$marker" "$TMP/serial.log"; then
