@@ -7,6 +7,9 @@
 //! a complete independent address space or user isolation.
 
 #[cfg(target_arch = "x86_64")]
+use sorveth_frames::FramePool;
+
+#[cfg(target_arch = "x86_64")]
 use core::{
     ptr,
     sync::atomic::{compiler_fence, AtomicU64, Ordering},
@@ -20,6 +23,11 @@ pub enum Error {
     InvalidRoot,
     RootAlreadyInstalled,
     VerificationFailed,
+    NoFreeVirtualSlot,
+    PrivateTablesNotIdentityMapped,
+    TestFrameNotIdentityMapped,
+    FrameUnavailable,
+    NxUnsupported,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -29,6 +37,12 @@ struct RootPage([u64; 512]);
 #[cfg(target_arch = "x86_64")]
 static mut SORVETH_ROOT: RootPage = RootPage([0; 512]);
 #[cfg(target_arch = "x86_64")]
+static mut SORVETH_PDPT: RootPage = RootPage([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut SORVETH_PD: RootPage = RootPage([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut SORVETH_PT: RootPage = RootPage([0; 512]);
+#[cfg(target_arch = "x86_64")]
 static ACTIVE_ROOT: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "x86_64")]
@@ -37,6 +51,12 @@ const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const PRESENT: u64 = 1;
 #[cfg(target_arch = "x86_64")]
 const HUGE: u64 = 1 << 7;
+#[cfg(target_arch = "x86_64")]
+const WRITE: u64 = 1 << 1;
+#[cfg(target_arch = "x86_64")]
+const NO_EXECUTE: u64 = 1 << 63;
+#[cfg(target_arch = "x86_64")]
+const TEST_WORD: u64 = 0x53_4f_52_56_45_54_48_21; // "SORVETH!"
 
 /// Resolve a canonical x86-64 virtual address using 4-level paging.
 /// The closure receives *physical* addresses of page-table entries; it must
@@ -95,6 +115,47 @@ unsafe fn inherited_translate(root: u64, address: u64) -> Option<u64> {
     })
 }
 
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn enable_nxe() -> bool {
+    // NX PTEs are legal only if CPUID advertises NX and IA32_EFER.NXE is set.
+    // Changing EFER is restricted to this privileged x86-64 QEMU bootstrap.
+    if core::arch::x86_64::__cpuid(0x8000_0000).eax < 0x8000_0001
+        || core::arch::x86_64::__cpuid(0x8000_0001).edx & (1 << 20) == 0
+    {
+        return false;
+    }
+    let low: u32;
+    let high: u32;
+    core::arch::asm!(
+        "rdmsr",
+        in("ecx") 0xc000_0080u32,
+        out("eax") low,
+        out("edx") high,
+        options(nomem, nostack, preserves_flags),
+    );
+    if low & (1 << 11) == 0 {
+        core::arch::asm!(
+            "wrmsr",
+            in("ecx") 0xc000_0080u32,
+            in("eax") (low | (1 << 11)),
+            in("edx") high,
+            options(nostack, preserves_flags),
+        );
+    }
+    let verified: u32;
+    let high_again: u32;
+    core::arch::asm!(
+        "rdmsr",
+        in("ecx") 0xc000_0080u32,
+        out("eax") verified,
+        out("edx") high_again,
+        options(nomem, nostack, preserves_flags),
+    );
+    let _ = high_again;
+    verified & (1 << 11) != 0
+}
+
 /// Activate a distinct PML4 page retaining every firmware leaf mapping.
 ///
 /// # Safety
@@ -102,7 +163,7 @@ unsafe fn inherited_translate(root: u64, address: u64) -> Option<u64> {
 /// with x86-64 4-level paging and OVMF's identity map of physical table RAM.
 /// This procedure checks both the old and new root's identity mapping,
 /// but cannot recover from an inaccessible inherited CR3 page. QEMU only.
-pub unsafe fn install(inherited_root: u64) -> Result<(), Error> {
+pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if ACTIVE_ROOT.load(Ordering::Acquire) != 0 {
@@ -129,14 +190,66 @@ pub unsafe fn install(inherited_root: u64) -> Result<(), Error> {
                 return Err(Error::VerificationFailed);
             }
         }
+        // Install the first Sorveth-owned *subtree* in an otherwise unused
+        // upper-half PML4 slot. Neither the new table pages nor the scratch
+        // page are released: this is a permanent bootstrap test mapping.
+        let pdpt = ptr::addr_of_mut!(SORVETH_PDPT).cast::<u64>() as u64;
+        let pd = ptr::addr_of_mut!(SORVETH_PD).cast::<u64>() as u64;
+        let pt = ptr::addr_of_mut!(SORVETH_PT).cast::<u64>() as u64;
+        for table in [pdpt, pd, pt] {
+            if table & 4095 != 0 || inherited_translate(inherited_root, table) != Some(table) {
+                return Err(Error::PrivateTablesNotIdentityMapped);
+            }
+        }
+        let slot = match (256usize..512).rev().find(|&index| {
+            ptr::read_volatile(source.add(index)) & PRESENT == 0
+        }) {
+            Some(index) => index,
+            None => return Err(Error::NoFreeVirtualSlot),
+        };
+        // Claim an actual *conventional* frame from the locked ownership
+        // ledger. The original firmware mapping must identity-map it before
+        // we can safely clear its contents at this stage.
+        let scratch = pool.claim_unmapped(1).map_err(|_| Error::FrameUnavailable)?;
+        if inherited_translate(inherited_root, scratch.start) != Some(scratch.start) {
+            return Err(Error::TestFrameNotIdentityMapped);
+        }
+        if !enable_nxe() {
+            return Err(Error::NxUnsupported);
+        }
+        ptr::write_bytes(scratch.start as *mut u8, 0, 4096);
+        ptr::write_bytes(pdpt as *mut u8, 0, 4096);
+        ptr::write_bytes(pd as *mut u8, 0, 4096);
+        ptr::write_bytes(pt as *mut u8, 0, 4096);
+
+        ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE);
+        ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE);
+        ptr::write_volatile(
+            pt as *mut u64,
+            scratch.start | PRESENT | WRITE | NO_EXECUTE,
+        );
+        ptr::write_volatile(dest.add(slot), pdpt | PRESENT | WRITE);
+        let high_address = 0xffff_0000_0000_0000u64 | ((slot as u64) << 39);
+
         compiler_fence(Ordering::SeqCst);
-        // Switching the top-level root flushes non-global TLB entries. All
-        // existing mappings are retained by the copied PML4 entries.
+        // PML4 reload flushes non-global entries. The previous mappings
+        // remain intact and a private supervisor-only NX page is added.
         core::arch::asm!("mov cr3, {}", in(reg) fresh_root, options(nostack, preserves_flags));
         compiler_fence(Ordering::SeqCst);
         let observed: u64;
         core::arch::asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         if observed & ADDRESS_MASK != fresh_root {
+            return Err(Error::VerificationFailed);
+        }
+        // Prove the high-half address really resolves through Sorveth-owned
+        // PML4/PDPT/PD/PT frames, to the claimed physical scratch frame.
+        ptr::write_volatile(high_address as *mut u64, TEST_WORD);
+        if ptr::read_volatile(scratch.start as *const u64) != TEST_WORD {
+            return Err(Error::VerificationFailed);
+        }
+        if translate(fresh_root, high_address, |phys| {
+            Some(ptr::read_volatile(phys as *const u64))
+        }) != Some(scratch.start) {
             return Err(Error::VerificationFailed);
         }
         ACTIVE_ROOT.store(fresh_root, Ordering::Release);
@@ -145,6 +258,7 @@ pub unsafe fn install(inherited_root: u64) -> Result<(), Error> {
     #[cfg(not(target_arch = "x86_64"))]
     {
         let _ = inherited_root;
+        let _ = pool;
         Err(Error::UnsupportedArchitecture)
     }
 }
