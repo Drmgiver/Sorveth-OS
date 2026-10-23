@@ -12,3 +12,4 @@ sorveth-abi = { path = "../sorveth-abi" }
 sorveth-cap = { path = "../sorveth-cap" }
 sorveth-memory = { path = "../sorveth-memory" }
 sorveth-frames = { path = "../sorveth-frames" }
+sorveth-paging = { path = "../sorveth-paging" }

@@ -47,6 +47,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
             )
 
     expect_prompt(b"Sorveth bootstrap monitor v0.1")
+    if b"Inherited x86 paging: validated (read-only)" not in transcript:
+        raise AssertionError("Inherited paging audit did not pass")
     if b"Persistent physical frame ledger: installed (unmapped)" not in transcript:
         raise AssertionError("Persistent physical frame ledger did not initialize")
     tests = [

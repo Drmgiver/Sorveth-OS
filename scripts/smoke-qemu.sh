@@ -26,7 +26,7 @@ if [[ ! -f "$CODE" || ! -f "$VARS" ]]; then
   exit 1
 fi
 
-cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames
+cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging
 cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-smoke
 
 TMP="$(mktemp -d)"
@@ -72,6 +72,7 @@ fi
 for marker in \
   'Native kernel execution: EFI boot services exited' \
   'Boot protocol v1: OK' \
+  'Inherited x86 paging: validated (read-only)' \
   'UEFI physical memory map: validated' \
   'Physical frame planner: validated (no mappings written)' \
   'Persistent physical frame ledger: installed (unmapped)' \

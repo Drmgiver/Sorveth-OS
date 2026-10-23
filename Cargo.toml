@@ -5,6 +5,7 @@ members = [
   "crates/sorveth-cap",
   "crates/sorveth-memory",
   "crates/sorveth-frames",
+  "crates/sorveth-paging",
   "crates/sorveth-core",
   "crates/sorveth-boot",
 ]

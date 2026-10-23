@@ -11,6 +11,7 @@ use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
 use sorveth_frames::{FrameAllocator, FramePool};
 use sorveth_memory::MemoryMap;
+use sorveth_paging::audit_inherited;
 
 static FRAME_POOL: FramePool<256> = FramePool::new();
 
@@ -26,6 +27,14 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         halt_forever();
     }
     serial::write_line("Boot protocol v1: OK");
+
+    // Read the firmware-provided CPU paging configuration. Do not edit CR3
+    // or dereference inherited page-table pointers at this stage.
+    if audit_inherited().is_err() {
+        serial::write_line("FATAL: unsupported inherited x86 paging state");
+        halt_forever();
+    }
+    serial::write_line("Inherited x86 paging: validated (read-only)");
 
     // The loader owns the memory-map backing buffer, and its static storage
     // remains mapped after firmware boot services have exited. Never allocate

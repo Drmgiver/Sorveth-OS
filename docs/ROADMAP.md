@@ -52,3 +52,14 @@ be reset after installation. All claims are one-way and are **not yet usable RAM
 without an owned mapping and zeroing. No firmware runtime, loader or device memory
 is reclaimed. Native drivers, userspace memory, paging and page reclamation remain
 blocked until later acceptance tests prove isolation and controlled ownership.
+
+## M1-B, phase 1 — Paging policy and firmware CR3 audit
+
+Sorveth's allocation-free `sorveth-paging` module plans 4 KiB kernel/user
+mappings, rejects writable+executable pages, noncanonical addresses,
+inappropriate privilege halves, overlaps, and unapproved physical aliases.
+A privileged read-only CR0/CR3/CR4 audit verifies the inherited four-level
+paging configuration on actual QEMU boots. It **does not** inspect or replace
+firmware page tables, change CR3, allocate or zero page-table frames, enable
+NXE or enforce new hardware protections. Sorveth-owned tables and tested
+CR3 transitions remain the next phase of M1-B.
