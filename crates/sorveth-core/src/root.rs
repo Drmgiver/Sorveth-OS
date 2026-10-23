@@ -304,7 +304,9 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         // Physical memory is accessible through OVMF's identity map here.
         // Zero before exposing the page at its new virtual address.
         ptr::write_bytes(physical as *mut u8, 0, 4096);
-        let pte = ptr::addr_of_mut!(SORVETH_PT).cast::<u64>().add(slot as usize);
+        let pte = ptr::addr_of_mut!(SORVETH_PT)
+            .cast::<u64>()
+            .add(slot as usize);
         if ptr::read_volatile(pte) != 0 {
             return Err(Error::VerificationFailed);
         }
