@@ -65,6 +65,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Kernel did not transfer to its own stack")
     if b"Sorveth IPC: capability-checked mailbox and revocation validated" not in transcript:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
+    if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:
+        raise AssertionError("Task registry round-robin and stale ID checks failed")
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),

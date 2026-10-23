@@ -17,6 +17,7 @@ use sorveth_frames::{FrameAllocator, FramePool};
 use sorveth_ipc::{Mailbox, Message};
 use sorveth_memory::MemoryMap;
 use sorveth_paging::audit_inherited;
+use sorveth_task::Scheduler;
 
 static FRAME_POOL: FramePool<256> = FramePool::new();
 
@@ -182,6 +183,36 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         halt_forever();
     }
     serial::write_line("Sorveth IPC: capability-checked mailbox and revocation validated");
+
+    // M2-B bookkeeping only: select runnable task identities. There are no
+    // saved CPU contexts or unprivileged task address spaces yet.
+    let mut scheduler = Scheduler::<4>::new();
+    let task_probe_ok = (|| {
+        let first = scheduler.spawn(ObjectId(100)).ok()?;
+        let second = scheduler.spawn(ObjectId(200)).ok()?;
+        if scheduler.select_next() != Some(first)
+            || scheduler.select_next() != Some(second)
+        {
+            return None;
+        }
+        scheduler.block(first).ok()?;
+        if scheduler.select_next() != Some(second) {
+            return None;
+        }
+        scheduler.wake(first).ok()?;
+        scheduler.exit(second).ok()?;
+        Some(
+            scheduler.select_next() == Some(first)
+                && scheduler.inspect(second).is_err()
+                && scheduler.len() == 1,
+        )
+    })()
+    .unwrap_or(false);
+    if !task_probe_ok {
+        serial::write_line("FATAL: task registry selection test failed");
+        halt_forever();
+    }
+    serial::write_line("Sorveth task registry: fair selection and stale IDs validated");
 
     if boot.framebuffer.is_usable() {
         screen::paint(&boot.framebuffer);

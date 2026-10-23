@@ -124,6 +124,7 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
             serial::write_line("Firmware boot services: exited");
             serial::write_line("Native serial console: online");
             serial::write_line("IPC: kernel prototype only; user processes pending");
+            serial::write_line("Task scheduling: metadata only; no context switching");
         }
         Command::Memory => {
             serial::write("Memory descriptors: ");

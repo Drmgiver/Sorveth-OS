@@ -180,3 +180,16 @@ the now-stale handles are rejected; QEMU smoke tests require the marker.
 **Important limit:** no userspace address space, syscall dispatcher, blocking
 wait queues or scheduler exists yet, so this is not enforceable cross-process
 IPC. It is the narrow transport and authorization primitive to build upon.
+
+## M2-B — Generation-safe task registry and runnable selection
+
+A `sorveth-task` no_std crate now tracks bounded task identities, runnable
+and blocked states, fair circular selection, explicit wake/block transitions,
+and generation changes on task exit. Host tests require fairness, stale ID
+rejection, no scheduling of blocked slots, duplicate-object prevention,
+and exhaustion behavior. The trusted kernel bootstrap exercises the registry
+with two simulated tasks and publishes a serial marker in QEMU.
+
+**Not yet multitasking:** no task has registers, a private stack, a page
+table, CPU execution, timers or syscalls. The scheduler chooses *identities*,
+not an actual process to run. This is groundwork for a future switcher.
