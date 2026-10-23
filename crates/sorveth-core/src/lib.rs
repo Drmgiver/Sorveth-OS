@@ -9,6 +9,7 @@ mod root;
 mod screen;
 mod serial;
 mod stack;
+mod tss;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
@@ -110,11 +111,16 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
 
     // M1-C: first owned x86 IDT. Keep maskable interrupts disabled until
     // timer/IRQ delivery and proper alternate fault stacks are implemented.
-    if interrupts::install().is_err() || !interrupts::breakpoint_roundtrip() {
-        serial::write_line("FATAL: x86 IDT breakpoint return failed");
+    if interrupts::install().is_err()
+        || unsafe { tss::install() }.is_err()
+        || !interrupts::enable_fault_stacks()
+        || !interrupts::breakpoint_roundtrip()
+    {
+        serial::write_line("FATAL: x86 exception/TSS initialization failed");
         halt_forever();
     }
     serial::write_line("Sorveth IDT: installed; breakpoint roundtrip verified");
+    serial::write_line("Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed");
 
     // Exercise two distinct supervisor NX mappings after the IDT is active.
     let first_page = root::claim_kernel_scratch(&FRAME_POOL);

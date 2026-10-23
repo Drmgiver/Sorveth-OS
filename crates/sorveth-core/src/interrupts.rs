@@ -134,6 +134,26 @@ sorveth_exception_general_protection_entry:
 2:
     hlt
     jmp 2b
+
+.global sorveth_exception_double_fault_entry
+sorveth_exception_double_fault_entry:
+    push rbx
+    push rax
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+    mov rbx, rsp
+    mov rcx, [rbx + 64]
+    and rsp, -16
+    sub rsp, 32
+    call sorveth_exception_double_fault_rust
+    cli
+3:
+    hlt
+    jmp 3b
 "#
 );
 
@@ -142,6 +162,7 @@ extern "C" {
     fn sorveth_exception_breakpoint_entry();
     fn sorveth_exception_page_fault_entry();
     fn sorveth_exception_general_protection_entry();
+    fn sorveth_exception_double_fault_entry();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,6 +201,28 @@ pub fn install() -> Result<(), Error> {
     }
 }
 
+/// Once TR holds Sorveth's own TSS, direct #PF to IST1 and #DF to IST2.
+/// The current IDT lives in permanent statically allocated kernel memory.
+/// IRQs are still disabled; no user/kernel transitions occur.
+pub fn enable_fault_stacks() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        if !crate::tss::ready() {
+            return false;
+        }
+        let selector = IDT[14].selector;
+        IDT[14].ist = 1;
+        let mut df = Gate::new(sorveth_exception_double_fault_entry as usize as u64, selector);
+        df.ist = 2;
+        IDT[8] = df;
+        true
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 pub fn breakpoint_roundtrip() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
@@ -205,6 +248,12 @@ pub extern "efiapi" fn sorveth_exception_breakpoint_rust() {
 #[no_mangle]
 pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u64) -> ! {
     crate::serial::write_line("SORVETH EXCEPTION: PAGE FAULT");
+    if crate::tss::running_on_page_fault_ist() {
+        crate::serial::write_line("Sorveth page fault IST1: active");
+    } else {
+        crate::serial::write_line("FATAL: page fault did not enter emergency IST1 stack");
+        halt_fault();
+    }
     crate::serial::write("Fault address (CR2): ");
     crate::serial::write_hex_u64(address);
     crate::serial::write_line("");
@@ -233,6 +282,16 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
 pub extern "efiapi" fn sorveth_exception_general_protection_rust(error: u64) -> ! {
     crate::serial::write_line("SORVETH EXCEPTION: GENERAL PROTECTION");
     crate::serial::write("GP error code: ");
+    crate::serial::write_hex_u64(error);
+    crate::serial::write_line("");
+    halt_fault()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub extern "efiapi" fn sorveth_exception_double_fault_rust(error: u64) -> ! {
+    crate::serial::write_line("SORVETH EXCEPTION: DOUBLE FAULT");
+    crate::serial::write("Double-fault error code: ");
     crate::serial::write_hex_u64(error);
     crate::serial::write_line("");
     halt_fault()

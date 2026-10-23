@@ -79,6 +79,7 @@ for marker in \
   'Sorveth PML4 root: active (firmware lower levels shared)' \
   'Sorveth private supervisor NX mapping: verified' \
   'Sorveth IDT: installed; breakpoint roundtrip verified' \
+  'Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed' \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
   'Sorveth dedicated kernel stack: active' \
   'Capability table: initialized' \
@@ -119,6 +120,7 @@ for marker in \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
   'Sorveth dedicated kernel stack: active' \
   'SORVETH EXCEPTION: PAGE FAULT' \
+  'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
   'Page fault error code: 0x' \
   'SORVETH CONTROLLED PAGE FAULT: verified'; do

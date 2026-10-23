@@ -148,3 +148,17 @@ proof after the transition; deliberate faults run on the new stack.
 Limitations: this is one global bootstrap stack inside the EFI image, without
 guard pages, per-thread stacks, privilege switching, or IST/double-fault
 protection. It is not a general-purpose scheduler stack.
+
+## M1-F — Emergency exception stacks with TSS/IST
+
+Sorveth now copies the inherited GDT descriptors into permanent kernel-owned
+memory, appends a 64-bit TSS descriptor, loads GDTR and TR, then routes page
+faults to a separate IST1 stack and double faults to IST2. This reserves two
+32 KiB emergency stacks outside the ordinary 128 KiB kernel execution stack.
+The QEMU page-fault image verifies that the page-fault callback's RSP is
+inside IST1, before printing CR2/error-code diagnostics and the test marker.
+
+This is early QEMU-only exception isolation: GDT code/data descriptors remain
+inherited, both emergency stacks are statically allocated and unguarded,
+and interrupt masking continues. No scheduler, IRQ dispatch, TSS RSP0 for
+ring-3 privilege transitions, or recoverable page-fault process exists.

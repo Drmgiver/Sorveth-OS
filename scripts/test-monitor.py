@@ -57,6 +57,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Private high-half mapping was not verified")
     if b"Sorveth IDT: installed; breakpoint roundtrip verified" not in transcript:
         raise AssertionError("Breakpoint handler did not return correctly")
+    if b"Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed" not in transcript:
+        raise AssertionError("TSS/IST emergency fault stacks did not initialize")
     if b"Sorveth dynamic private pages: 2 additional mappings verified" not in transcript:
         raise AssertionError("Dynamic supervisor page mapper did not complete")
     if b"Sorveth dedicated kernel stack: active" not in transcript:
