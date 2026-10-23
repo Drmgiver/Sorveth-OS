@@ -28,6 +28,8 @@ pub enum Error {
     TestFrameNotIdentityMapped,
     FrameUnavailable,
     NxUnsupported,
+    RootNotInstalled,
+    ScratchAddressUnavailable,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -46,6 +48,10 @@ static mut SORVETH_PT: RootPage = RootPage([0; 512]);
 static ACTIVE_ROOT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static UNMAPPED_TEST: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static PRIVATE_BASE: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static NEXT_PRIVATE_PAGE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_arch = "x86_64")]
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
@@ -257,6 +263,8 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         // PT index 1 is untouched (non-present). Retain this canonical
         // address solely for a controlled fault-handler acceptance test.
         UNMAPPED_TEST.store(high_address + 4096, Ordering::Release);
+        PRIVATE_BASE.store(high_address, Ordering::Release);
+        NEXT_PRIVATE_PAGE.store(2, Ordering::Release);
         ACTIVE_ROOT.store(fresh_root, Ordering::Release);
         Ok(())
     }
@@ -265,6 +273,86 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         let _ = inherited_root;
         let _ = pool;
         Err(Error::UnsupportedArchitecture)
+    }
+}
+
+/// Claim, zero, and map one additional supervisor-only NX 4 KiB page inside
+/// Sorveth's private 2 MiB upper-half bootstrap window. Slot one is reserved
+/// as an intentionally absent page for the controlled #PF acceptance test.
+///
+/// This is **not** a general heap: only one CPU may call it, the inherited
+/// firmware identity map must still cover the physical frame, and pages are
+/// never reclaimed. A future mapper will remove these constraints.
+pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        if !active() {
+            return Err(Error::RootNotInstalled);
+        }
+        let slot = NEXT_PRIVATE_PAGE.load(Ordering::Acquire);
+        if !(2..512).contains(&slot) {
+            return Err(Error::NoFreeVirtualSlot);
+        }
+        let physical = pool
+            .claim_unmapped(1)
+            .map_err(|_| Error::FrameUnavailable)?
+            .start;
+        let root = ACTIVE_ROOT.load(Ordering::Acquire);
+        if inherited_translate(root, physical) != Some(physical) {
+            return Err(Error::TestFrameNotIdentityMapped);
+        }
+        // Physical memory is accessible through OVMF's identity map here.
+        // Zero before exposing the page at its new virtual address.
+        ptr::write_bytes(physical as *mut u8, 0, 4096);
+        let pte = ptr::addr_of_mut!(SORVETH_PT).cast::<u64>().add(slot as usize);
+        if ptr::read_volatile(pte) != 0 {
+            return Err(Error::VerificationFailed);
+        }
+        ptr::write_volatile(pte, physical | PRESENT | WRITE | NO_EXECUTE);
+        let virtual_address = PRIVATE_BASE
+            .load(Ordering::Acquire)
+            .checked_add(slot * 4096)
+            .ok_or(Error::ScratchAddressUnavailable)?;
+        core::arch::asm!(
+            "invlpg [{}]",
+            in(reg) virtual_address,
+            options(nostack, preserves_flags),
+        );
+        // A distinct address and a distinct physical claim are required.
+        const SENTINEL: u64 = 0x53_4f_52_56_4d_41_50_21;
+        ptr::write_volatile(virtual_address as *mut u64, SENTINEL ^ slot);
+        if ptr::read_volatile(physical as *const u64) != (SENTINEL ^ slot)
+            || translate(root, virtual_address, |address| {
+                Some(ptr::read_volatile(address as *const u64))
+            }) != Some(physical)
+        {
+            return Err(Error::VerificationFailed);
+        }
+        NEXT_PRIVATE_PAGE.store(slot + 1, Ordering::Release);
+        Ok(virtual_address)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::UnsupportedArchitecture)
+    }
+}
+
+/// Number of 4 KiB Sorveth-owned mappings in the initial private PT.
+/// Excludes the deliberately missing fault-test page at index 1.
+pub fn private_pages() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let next = NEXT_PRIVATE_PAGE.load(Ordering::Acquire);
+        if next >= 2 {
+            next - 1
+        } else {
+            0
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        0
     }
 }
 
