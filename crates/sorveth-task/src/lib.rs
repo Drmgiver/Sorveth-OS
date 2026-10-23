@@ -90,9 +90,11 @@ impl<const N: usize> Scheduler<N> {
         if object.0 == 0 {
             return Err(Error::InvalidObject);
         }
-        if self.slots.iter().any(|slot| {
-            slot.task.map(|task| task.object == object).unwrap_or(false)
-        }) {
+        if self
+            .slots
+            .iter()
+            .any(|slot| slot.task.map(|task| task.object == object).unwrap_or(false))
+        {
             return Err(Error::DuplicateObject);
         }
         for (index, slot) in self.slots.iter_mut().enumerate() {
@@ -104,7 +106,10 @@ impl<const N: usize> Scheduler<N> {
                     slot: index as u32,
                     generation: slot.generation,
                 };
-                slot.task = Some(Task { object, state: State::Ready });
+                slot.task = Some(Task {
+                    object,
+                    state: State::Ready,
+                });
                 self.count += 1;
                 return Ok(id);
             }
@@ -156,7 +161,13 @@ impl<const N: usize> Scheduler<N> {
         for offset in 0..N {
             let index = (self.cursor + offset) % N;
             let slot = self.slots[index];
-            if matches!(slot.task, Some(Task { state: State::Ready, .. })) {
+            if matches!(
+                slot.task,
+                Some(Task {
+                    state: State::Ready,
+                    ..
+                })
+            ) {
                 self.cursor = (index + 1) % N;
                 return Some(TaskId {
                     slot: index as u32,
@@ -231,6 +242,9 @@ mod tests {
         scheduler.exit(first).unwrap();
         assert_eq!(scheduler.len(), 0);
         assert_eq!(Scheduler::<0>::new().select_next(), None);
-        assert_eq!(Scheduler::<0>::new().spawn(ObjectId(1)), Err(Error::NoCapacity));
+        assert_eq!(
+            Scheduler::<0>::new().spawn(ObjectId(1)),
+            Err(Error::NoCapacity)
+        );
     }
 }

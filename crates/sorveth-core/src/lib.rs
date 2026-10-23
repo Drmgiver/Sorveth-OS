@@ -190,9 +190,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     let task_probe_ok = (|| {
         let first = scheduler.spawn(ObjectId(100)).ok()?;
         let second = scheduler.spawn(ObjectId(200)).ok()?;
-        if scheduler.select_next() != Some(first)
-            || scheduler.select_next() != Some(second)
-        {
+        if scheduler.select_next() != Some(first) || scheduler.select_next() != Some(second) {
             return None;
         }
         scheduler.block(first).ok()?;
