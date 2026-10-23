@@ -47,6 +47,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
             )
 
     expect_prompt(b"Sorveth bootstrap monitor v0.1")
+    if b"Persistent physical frame ledger: installed (unmapped)" not in transcript:
+        raise AssertionError("Persistent physical frame ledger did not initialize")
     tests = [
         (b"help\r", b"Commands: help status memory caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),
