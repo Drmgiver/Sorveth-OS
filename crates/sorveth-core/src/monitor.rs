@@ -144,6 +144,9 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
                 serial::write_line("Page table root: Sorveth PML4 active");
                 serial::write_line("Lower mappings: mostly inherited (not isolated)");
                 serial::write_line("Private supervisor NX scratch mapping: verified");
+                serial::write("Sorveth private mapped pages: ");
+                serial::write_u64(root::private_pages());
+                serial::write_line("");
             } else {
                 serial::write_line("Page table root: not installed");
             }

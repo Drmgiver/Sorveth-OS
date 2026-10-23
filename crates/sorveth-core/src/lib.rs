@@ -115,6 +115,19 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     serial::write_line("Sorveth IDT: installed; breakpoint roundtrip verified");
 
+    // Exercise two distinct supervisor NX mappings after the IDT is active.
+    let first_page = root::claim_kernel_scratch(&FRAME_POOL);
+    let second_page = root::claim_kernel_scratch(&FRAME_POOL);
+    match (first_page, second_page) {
+        (Ok(first), Ok(second)) if first != second && root::private_pages() == 3 => {
+            serial::write_line("Sorveth dynamic private pages: 2 additional mappings verified");
+        }
+        _ => {
+            serial::write_line("FATAL: private page allocator did not pass validation");
+            halt_forever();
+        }
+    }
+
     // Dedicated QEMU image exercises an expected page fault in the empty
     // second PTE of Sorveth's private high-half mapping. Normal boots never
     // intentionally fault, and the handler never resumes a fatal exception.

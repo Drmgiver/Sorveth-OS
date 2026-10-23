@@ -57,11 +57,13 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Private high-half mapping was not verified")
     if b"Sorveth IDT: installed; breakpoint roundtrip verified" not in transcript:
         raise AssertionError("Breakpoint handler did not return correctly")
+    if b"Sorveth dynamic private pages: 2 additional mappings verified" not in transcript:
+        raise AssertionError("Dynamic supervisor page mapper did not complete")
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),
         (b"memory\r", b"Claims remain unmapped; lower page tables are inherited"),
-        (b"paging\r", b"Private supervisor NX scratch mapping: verified"),
+        (b"paging\r", b"Sorveth private mapped pages: 3"),
         (b"caps\r", b"Capability table: initialized; no isolated tasks yet"),
         (b"not-a-command\r", b"Unknown command; enter help"),
     ]

@@ -121,3 +121,17 @@ normal boot.
 Only synchronous faults are supported: hardware IRQs stay masked (CLI),
 IST/TSS dedicated exception stacks, robust double-fault handling, timers,
 SMP, unprivileged ring-3 tasks and recoverable page faults remain pending.
+
+## M1-D — Restricted private kernel page allocation
+
+A monotonic bootstrap mapper now claims and zeroes two additional conventional
+frames from the permanent frame ledger. It installs supervisor-only NX PTEs in
+Sorveth's private page table, invalidates TLB translations with INVLPG,
+and verifies access through the high virtual addresses against their physical
+frames. The first page is the original bootstrap proof, index 1 stays
+unmapped for controlled fault testing, and the monitor reports three mapped
+private pages. Both normal and fault-test QEMU boots verify the marker.
+
+This is **not** a production heap or general virtual-memory manager: it still
+requires the inherited OVMF identity mapping to initialize physical pages.
+There is no reclamation, sharing, SMP serialization or user-mode access yet.

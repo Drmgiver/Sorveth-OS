@@ -79,6 +79,7 @@ for marker in \
   'Sorveth PML4 root: active (firmware lower levels shared)' \
   'Sorveth private supervisor NX mapping: verified' \
   'Sorveth IDT: installed; breakpoint roundtrip verified' \
+  'Sorveth dynamic private pages: 2 additional mappings verified' \
   'Capability table: initialized' \
   'SORVETH CORE ONLINE / end of milestone 0'; do
   if ! grep -Fq "$marker" "$TMP/serial.log"; then
@@ -114,6 +115,7 @@ if [[ "$FAULT_STATUS" -ne 33 ]]; then
 fi
 for marker in \
   'Sorveth IDT: installed; breakpoint roundtrip verified' \
+  'Sorveth dynamic private pages: 2 additional mappings verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Fault address (CR2): 0x' \
   'Page fault error code: 0x' \
