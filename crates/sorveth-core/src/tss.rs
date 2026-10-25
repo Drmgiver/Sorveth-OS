@@ -3,7 +3,8 @@
 //! Copy the currently active flat UEFI GDT into Sorveth-owned storage,
 //! append a 64-bit available-TSS descriptor, load GDTR/TR, and configure
 //! IST1 for page faults and IST2 for double faults. Interrupts remain masked.
-//! No context switching or ring-3 stacks are implemented.
+//! A test-only ring-3 trap stack and segment selectors can be installed
+//! for a controlled QEMU privilege-transition probe.
 
 #[cfg(target_arch = "x86_64")]
 use core::{
@@ -11,6 +12,9 @@ use core::{
     ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+use core::sync::atomic::AtomicU16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -47,6 +51,13 @@ struct EmergencyStack([u8; 32 * 1024]);
 static mut PAGE_FAULT_STACK: EmergencyStack = EmergencyStack([0; 32 * 1024]);
 #[cfg(target_arch = "x86_64")]
 static mut DOUBLE_FAULT_STACK: EmergencyStack = EmergencyStack([0; 32 * 1024]);
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+static mut USER_TRAP_STACK: EmergencyStack = EmergencyStack([0; 32 * 1024]);
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+static USER_CS: AtomicU16 = AtomicU16::new(0);
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+static USER_SS: AtomicU16 = AtomicU16::new(0);
 
 #[cfg(target_arch = "x86_64")]
 #[repr(C, align(16))]
@@ -96,7 +107,8 @@ pub unsafe fn install() -> Result<(), Error> {
         if old_base == 0
             || old_size < 24
             || old_size % 8 != 0
-            || old_size + 16 > core::mem::size_of::<OwnedGdt>()
+            || old_size + if cfg!(feature = "qemu-user") { 32 } else { 16 }
+                > core::mem::size_of::<OwnedGdt>()
             || (selector as usize & !7) >= old_size
         {
             return Err(Error::ExistingGdtInvalid);
@@ -110,7 +122,7 @@ pub unsafe fn install() -> Result<(), Error> {
             + core::mem::size_of::<EmergencyStack>() as u64;
         let df = ptr::addr_of_mut!(DOUBLE_FAULT_STACK).cast::<u8>() as u64
             + core::mem::size_of::<EmergencyStack>() as u64;
-        let tss = TaskStateSegment {
+        let mut tss = TaskStateSegment {
             reserved0: 0,
             privilege_stacks: [0; 3],
             reserved1: 0,
@@ -119,6 +131,11 @@ pub unsafe fn install() -> Result<(), Error> {
             reserved3: 0,
             io_bitmap_offset: core::mem::size_of::<TaskStateSegment>() as u16,
         };
+        #[cfg(feature = "qemu-user")]
+        {
+            tss.privilege_stacks[0] = ptr::addr_of_mut!(USER_TRAP_STACK).cast::<u8>() as u64
+                + core::mem::size_of::<EmergencyStack>() as u64;
+        }
         ptr::write(ptr::addr_of_mut!(TSS), tss);
 
         let tss_base = ptr::addr_of!(TSS) as u64;
@@ -130,8 +147,15 @@ pub unsafe fn install() -> Result<(), Error> {
         let gdt = ptr::addr_of_mut!(GDT).cast::<u64>();
         ptr::write(gdt.add(slot), low);
         ptr::write(gdt.add(slot + 1), high);
+        #[cfg(feature = "qemu-user")]
+        {
+            // Intel x86-64 flat ring-3 code (L=1,DPL=3) and data (DPL=3).
+            ptr::write(gdt.add(slot + 2), 0x00af_fa00_0000_ffff);
+            ptr::write(gdt.add(slot + 3), 0x00cf_f200_0000_ffff);
+        }
         let gdtr = DescriptorTablePointer {
-            limit: (old_size + 16 - 1) as u16,
+            limit: (old_size + if cfg!(feature = "qemu-user") { 32 } else { 16 } - 1)
+                as u16,
             base: gdt as u64,
         };
         asm!("lgdt [{}]", in(reg) &gdtr, options(readonly, nostack));
@@ -141,6 +165,11 @@ pub unsafe fn install() -> Result<(), Error> {
         asm!("str ax", out("ax") loaded, options(nomem, nostack, preserves_flags));
         if loaded != tss_selector {
             return Err(Error::TssNotLoaded);
+        }
+        #[cfg(feature = "qemu-user")]
+        {
+            USER_CS.store(((old_size + 16) as u16) | 3, Ordering::Release);
+            USER_SS.store(((old_size + 24) as u16) | 3, Ordering::Release);
         }
         LOADED.store(true, Ordering::Release);
         Ok(())
@@ -199,5 +228,24 @@ mod tests {
                 base
             );
         }
+    }
+}
+
+
+#[cfg(feature = "qemu-user")]
+pub fn user_selectors() -> Option<(u16, u16)> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let cs = USER_CS.load(Ordering::Acquire);
+        let ss = USER_SS.load(Ordering::Acquire);
+        if ready() && cs & 3 == 3 && ss & 3 == 3 {
+            Some((cs, ss))
+        } else {
+            None
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
     }
 }

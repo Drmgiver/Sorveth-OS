@@ -12,6 +12,8 @@ mod screen;
 mod serial;
 mod stack;
 mod tss;
+#[cfg(feature = "qemu-user")]
+mod user;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};

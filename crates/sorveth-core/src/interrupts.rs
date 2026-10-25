@@ -326,3 +326,97 @@ mod tests {
         }
     }
 }
+
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+static USER_TRAP_PHASE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+core::arch::global_asm!(
+    r#"
+.global sorveth_user_int80_entry
+sorveth_user_int80_entry:
+    push rbx
+    push rax
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+    mov rbx, rsp
+    mov rcx, [rbx + 48]
+    mov rdx, [rbx + 72]
+    and rsp, -16
+    sub rsp, 32
+    call sorveth_user_int80_rust
+    mov [rbx + 48], rax
+    mov rsp, rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rax
+    pop rbx
+    iretq
+"#
+);
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+extern "C" {
+    fn sorveth_user_int80_entry();
+}
+
+#[cfg(feature = "qemu-user")]
+pub fn install_user_gateway() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        if !crate::tss::ready() {
+            return false;
+        }
+        let kernel_code = IDT[3].selector;
+        if kernel_code == 0 {
+            return false;
+        }
+        let mut gate = Gate::new(sorveth_user_int80_entry as usize as u64, kernel_code);
+        gate.attributes = 0xee; // present interrupt gate, DPL3
+        IDT[0x80] = gate;
+        true
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// The ring-3 probe must execute two separate INT 0x80 instructions.
+/// The first trap returns a known RAX value to user code. The second can
+/// occur only if IRETQ returned to the unprivileged instruction stream.
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+#[no_mangle]
+pub extern "efiapi" fn sorveth_user_int80_rust(number: u64, caller_cs: u64) -> u64 {
+    if caller_cs & 3 != 3 {
+        crate::serial::write_line("FATAL: ring-3 trap came from wrong privilege");
+        halt_fault();
+    }
+    if number == 7 && USER_TRAP_PHASE.load(Ordering::Acquire) == 0 {
+        USER_TRAP_PHASE.store(1, Ordering::Release);
+        crate::serial::write_line("Sorveth ring-3 syscall: entered kernel from user mode");
+        return 0x5356_5246;
+    }
+    if number == 8 && USER_TRAP_PHASE.load(Ordering::Acquire) == 1 {
+        crate::serial::write_line("SORVETH RING3 ROUNDTRIP: verified");
+        unsafe {
+            core::arch::asm!(
+                "out dx, al",
+                in("dx") 0xf4u16,
+                in("al") 0x10u8,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+    }
+    crate::serial::write_line("FATAL: invalid ring-3 syscall probe sequence");
+    halt_fault()
+}
