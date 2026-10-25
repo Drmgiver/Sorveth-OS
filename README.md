@@ -22,15 +22,15 @@ is enabled. The code is GPL-3.0-only.
 | M2-A/B: kernel coordination | Capability-gated bounded IPC; generation-safe task registry and runnable selection | Trusted kernel data structures, no userspace ownership yet |
 | M2-C: message wakeups | Authorized send wakes a parked receiver with reserved dequeue and revocation rules | Kernel-internal only |
 | M2-D/E: real context switching | Native x86-64 kernel context saves and resumes, then two separate kernel workers run in A-B-A-B scheduler order | Cooperative, ring 0, no preemption or complete extended register state |
-| M2-F: first user boundary | A **test-only** ring-3 code page calls INT 0x80, returns from kernel to user code, and traps back a second time | One hardcoded probe, shared address space, no process/syscall API |
+| M2-F/G: tested user boundary | A **test-only** ring-3 program calls INT 0x80 twice and then attempts a supervisor-only memory read; the CPU generates the expected user-mode protection #PF | One hardcoded probe, shared address space, no process/syscall API |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
-page and must receive a hardware #PF with the expected user-mode
-protection-violation bits. This tests one concrete privilege boundary,
+page. QEMU verified the hardware #PF, CR2 address and user-mode
+protection-violation bits. This establishes one concrete privilege boundary,
 not complete process isolation.
 
-The controlled ring-3 test and earlier acceptance gates passed in
-[GitHub Actions run 40160414357](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160414357).
+The controlled ring-3 protection test and previous acceptance gates passed in
+[GitHub Actions run 40160674706](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160674706).
 Source commits, builds, boot tests and hardware support are **separate** claims.
 
 ## What Sorveth is building
@@ -80,8 +80,9 @@ bash scripts/smoke-monitor-qemu.sh
 2. **`qemu-fault`** — deliberately accesses a private unmapped page and
    requires Sorveth's own #PF handler, CR2/error-code diagnostics and IST1 stack.
 3. **`qemu-user`** — enters CPL3 using an explicitly mapped user-executable
-   machine-code stub and user NX stack. An INT 0x80 returns a token through
-   IRETQ and a second INT 0x80 proves execution returned to user mode.
+   machine-code stub and user NX stack. Two INT 0x80 roundtrips prove return
+   to user mode; the stub then reads a supervisor-only kernel address and
+   must trigger a controlled user-mode protection #PF on IST1.
 
 `smoke-monitor-qemu.sh` boots the **normal** kernel and sends commands
 to the polling serial monitor, verifying the live replies. Use

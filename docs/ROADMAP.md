@@ -287,3 +287,5 @@ from the kernel trap, the image must not report success.
 This checks a concrete hardware-enforced user/supervisor boundary, but it
 does not yet establish a complete hostile-code sandbox or a task-specific
 kernel/user address-space strategy.
+
+**M2-G acceptance:** [passing GitHub Actions run 40160674706](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160674706), including the test-only ring-3 supervisor-memory denial and all earlier emulator acceptance gates.

@@ -181,3 +181,24 @@ shares most system mappings with the kernel, not a fully isolated process.
 There are no task-scoped syscall handles, external-interrupt preemption,
 user-pointer validation, independent per-process CR3, full SIMD state
 management or userland services yet. No physical-hardware verification.
+
+
+## 2026-10-24 — M2-G: verified ring-3 supervisor-memory denial
+
+- Extended the qemu-user probe: after completing two INT80/IretQ roundtrips,
+  it deliberately attempts to read Sorveth's existing supervisor-only
+  high-half private scratch mapping from CPL3.
+- The x86-64 page fault handler requires CR2 to identify that exact address,
+  a valid IST1 emergency fault stack, and error bits P=1, W=0, U=1.
+  Only that protection-fault sequence emits the test-only success marker
+  and exits QEMU. An absent-page fault or unexpected trap cannot pass.
+- Fully verified both CI jobs: host Rust tests, Rust UEFI build, formatting,
+  normal QEMU boot, kernel fault probe, ring-3 memory-denial test and live
+  serial-monitor commands.
+- Evidence: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160674706
+
+This proves one actual hardware-mediated user/supervisor protection rule,
+not a complete process sandbox. Normal boot remains privileged monitor mode;
+the ring-3 test is confined to the qemu-user build. Independent user address
+spaces, task-scoped syscalls, pointer validation and fault recovery remain
+future milestones.
