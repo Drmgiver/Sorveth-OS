@@ -18,3 +18,4 @@ sorveth-paging = { path = "../sorveth-paging" }
 sorveth-ipc = { path = "../sorveth-ipc" }
 sorveth-task = { path = "../sorveth-task" }
 sorveth-exchange = { path = "../sorveth-exchange" }
+sorveth-broker = { path = "../sorveth-broker" }

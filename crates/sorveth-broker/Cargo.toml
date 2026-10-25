@@ -1,0 +1,9 @@
+[package]
+name = "sorveth-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sorveth-cap = { path = "../sorveth-cap" }
+sorveth-task = { path = "../sorveth-task" }

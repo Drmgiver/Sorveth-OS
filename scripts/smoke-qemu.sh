@@ -26,7 +26,7 @@ if [[ ! -f "$CODE" || ! -f "$VARS" ]]; then
   exit 1
 fi
 
-cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-exchange
+cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-exchange -p sorveth-broker
 cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-smoke
 
 TMP="$(mktemp -d)"
