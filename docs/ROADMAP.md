@@ -8,7 +8,7 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
 | M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | Frame ledger, owned PML4/private pages, IDT/TSS/IST and dedicated stack verified in QEMU; most firmware mappings remain shared |
-| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..F verified as controlled QEMU/host prototypes; full processes, isolated address spaces and task-scoped syscalls pending |
+| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..H verified in QEMU/host prototypes; independent user address spaces and production syscalls pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
 | M5 | Native app platform | Manifests, action contracts, editable resources, Forge, Atlas, Frame, Script | Pending |
@@ -311,3 +311,5 @@ not an independent process scheduler or generic system call ABI. No
 user pointers are passed, so copy-in/out and invalid-address handling
 remain unimplemented. Per-process CR3, task lifetimes, real services,
 preemption and hardware support are also pending.
+
+**M2-H acceptance:** [successful GitHub Actions run 40163063162](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40163063162), including Rust host unit tests, UEFI compilation, code-format checks, native QEMU boot, deliberate page fault, serial monitor and real ring-3 authorization/denial checks. The implementation is not production userspace.

@@ -202,3 +202,30 @@ not a complete process sandbox. Normal boot remains privileged monitor mode;
 the ring-3 test is confined to the qemu-user build. Independent user address
 spaces, task-scoped syscalls, pointer validation and fault recovery remain
 future milestones.
+
+## 2026-10-24 — M2-H: task-owned capability syscall prototype
+
+- Added the `sorveth-broker` no_std crate with a fixed-capacity global
+  capability table, per-token task ownership and generation-safe task IDs.
+  Kernel-only grant, attenuation, revocation and task retirement are
+  separate from the small register-only syscall dispatcher.
+- Extended the qemu-user INT80 entry to pass syscall number, saved CPL3
+  selector, opaque handle and scalar argument to the privileged Rust handler.
+  The current task ID is selected from kernel-owned bootstrap state, never
+  accepted as a caller-provided register.
+- The unprivileged executable page checks an authorized resource READ,
+  denial of WRITE via READ-only authority, denial of a zero forged token and
+  denial of another task's valid WRITE token. Only after all tests match
+  their expected register results does the earlier supervisor-memory
+  protection #PF test execute.
+- CI verified full Rust host/unit tests and a real QEMU ring-3 security
+  integration test; normal QEMU boot, explicit fault probe and the serial
+  monitor also pass.
+- Evidence: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40163063162
+
+Limits: there is still just one hardcoded unprivileged test program, not
+separately scheduled address spaces or a public userspace ABI. The
+broker receives no pointers, so no safe copy-in/out, page pinning or
+user fault recovery exists. The loader still depends on firmware identity
+mappings and no physical hardware has been tested. Next engineering target:
+per-task page tables and bounded validated user memory transfers.
