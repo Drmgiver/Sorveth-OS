@@ -386,7 +386,6 @@ pub fn active() -> bool {
     }
 }
 
-
 #[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
 static mut USER_PDPT: RootPage = RootPage([0; 512]);
 #[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
@@ -412,8 +411,8 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
     unsafe {
         const U: u64 = 1 << 2;
         const CODE: [u8; 23] = [
-            0xb8, 7, 0, 0, 0, 0xcd, 0x80, 0x3d, 0x46, 0x52, 0x56, 0x53,
-            0x75, 0xfe, 0xb8, 8, 0, 0, 0, 0xcd, 0x80, 0xeb, 0xfe,
+            0xb8, 7, 0, 0, 0, 0xcd, 0x80, 0x3d, 0x46, 0x52, 0x56, 0x53, 0x75, 0xfe, 0xb8, 8, 0, 0,
+            0, 0xcd, 0x80, 0xeb, 0xfe,
         ];
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         if root == 0 {

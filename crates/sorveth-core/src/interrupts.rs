@@ -327,7 +327,6 @@ mod tests {
     }
 }
 
-
 #[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
 static USER_TRAP_PHASE: AtomicU64 = AtomicU64::new(0);
 

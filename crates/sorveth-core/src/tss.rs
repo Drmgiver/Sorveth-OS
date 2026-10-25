@@ -154,8 +154,7 @@ pub unsafe fn install() -> Result<(), Error> {
             ptr::write(gdt.add(slot + 3), 0x00cf_f200_0000_ffff);
         }
         let gdtr = DescriptorTablePointer {
-            limit: (old_size + if cfg!(feature = "qemu-user") { 32 } else { 16 } - 1)
-                as u16,
+            limit: (old_size + if cfg!(feature = "qemu-user") { 32 } else { 16 } - 1) as u16,
             base: gdt as u64,
         };
         asm!("lgdt [{}]", in(reg) &gdtr, options(readonly, nostack));
@@ -230,7 +229,6 @@ mod tests {
         }
     }
 }
-
 
 #[cfg(feature = "qemu-user")]
 pub fn user_selectors() -> Option<(u16, u16)> {
