@@ -149,3 +149,35 @@
   this is not an isolated address space, secure heap allocator or complete
   virtual memory manager. No exception handler, user mode, or real-hardware
   boot exists yet.
+
+## 2026-10-24 — Verified M2-C through M2-F kernel milestones
+
+- **M2-C / kernel exchange:** combined the bounded capability-gated mailbox
+  with the generation-safe task registry. Empty authorized receives park
+  a task; a successful authorized send wakes it and reserves delivery.
+  Tests cover unauthorized sends, revocation, queue saturation,
+  cancelled/exited waiters and fairness of reserved messages.
+  Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40159627068
+- **M2-D / CPU-context handoff:** added x86-64 Win64-ABI register/RSP
+  preservation, with nonvolatile XMM6-XMM15, plus a separate 64 KiB kernel
+  worker stack. The live worker yields/resumes twice in QEMU.
+  Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40159855488
+- **M2-E / scheduler-directed workers:** connected the task registry's
+  round-robin selection to two real worker execution contexts. QEMU
+  requires worker order A-B-A-B with separate saved continuations.
+  Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160028585
+- **M2-F / ring-3 test-only probe:** added a separately built qemu-user image
+  with CPL3 flat code/data descriptors, TSS RSP0, a separate DPL3 INT80
+  IDT gate and two physical frames mapped into a fresh lower-canonical
+  user-executable/RW-NX subtree. A raw machine-code stub entered via IRETQ,
+  invoked INT80, received a known result through IRETQ to user mode, and
+  issued a second INT80. The final kernel handler signalled the test-only
+  QEMU debug-exit path. Both CI jobs passed.
+  Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160414357
+
+**Security and completeness limits:** all these milestones are QEMU-only
+prototypes. Kernel workers run privileged; ring-3 probe is hardcoded and
+shares most system mappings with the kernel, not a fully isolated process.
+There are no task-scoped syscall handles, external-interrupt preemption,
+user-pointer validation, independent per-process CR3, full SIMD state
+management or userland services yet. No physical-hardware verification.

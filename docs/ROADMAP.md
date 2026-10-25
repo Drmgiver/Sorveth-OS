@@ -7,8 +7,8 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-A | Source bootstrap | UEFI loader, freestanding kernel, ABI, capability prototype, memory map validation, host tests | Verified in CI |
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
-| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | M1-A/B1/B2 boot tests verified in QEMU; most firmware leaf mappings still shared, IDT/process isolation pending |
-| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | Pending |
+| M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | Frame ledger, owned PML4/private pages, IDT/TSS/IST and dedicated stack verified in QEMU; most firmware mappings remain shared |
+| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..F verified as controlled QEMU/host prototypes; full processes, isolated address spaces and task-scoped syscalls pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
 | M5 | Native app platform | Manifests, action contracts, editable resources, Forge, Atlas, Frame, Script | Pending |
@@ -254,3 +254,21 @@ cannot perform general syscalls; its frame mappings still rely on OVMF's
 bootstrap identity window for setup. There is no ELF loader, capability
 table in userspace, process lifecycle, pointer validation, process-specific
 CR3 switching, IRQ preemption or recoverable error handling.
+
+## Immediate engineering sequence after M2-F
+
+1. Convert the ring-3 proof into a separately tracked task with private
+   address-space ownership and guaranteed kernel-only mappings.
+2. Implement a small syscall ABI with explicit capability-table ownership,
+   untrusted-pointer checks, bounded copy-in/out and rejection of forged handles.
+3. Preserve the demonstrated scheduler-controlled kernel context switches,
+   adding user register/extended-state save and TSS RSP0 lifecycle semantics.
+4. Add scheduler/interrupt integration and process exit/fault recovery without
+   allowing one faulty task to bring down the kernel.
+5. Continue native storage, input, display and resource services, then Sorveth
+   Space, application tooling and eventually optional Sorveth Mind.
+
+**M2-F acceptance:** [successful GitHub Actions run 40160414357](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160414357).
+This verifies a controlled QEMU CPL3 entry and two trap transitions, **not**
+a complete, secure, general-purpose userspace or bare-metal support.
+

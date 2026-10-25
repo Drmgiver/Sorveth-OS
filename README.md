@@ -1,137 +1,117 @@
 # Sorveth OS
 
-**An independent, local-first, AI-optional, user-owned operating system.**
+**An independent, local-first, AI-optional, user-owned operating system project.**
 
-Sorveth OS is a **from-scratch operating system project**, not a Linux distribution,
-not a Wine/Windows compatibility environment, and not a conventional OS with a
-chatbot glued on top. Its core principles are user ownership, understandable native
-software, explicit capabilities, portability, and useful computing with AI fully off.
+Sorveth is an original Rust x86-64 operating-system effort: not Linux, a
+distribution, or a Windows compatibility layer. Its planned native desktop,
+resource environment and application platform are designed for human control
+and portability, whether or not Sorveth Mind (its optional AI component)
+is enabled. The code is GPL-3.0-only.
 
-This repository is the **initial engineering baseline, dated 2026-10-22**. It
-contains real early-stage source code, not a complete OS. This bootstrap milestone
-is designed to run Rust kernel code without UEFI boot services after a firmware handoff. It
-**does not yet** provide task isolation, a scheduler, IPC, filesystem, drivers,
-resource editing, a desktop, or AI.
+> **Development status (October 24, 2026): early microkernel engineering,
+> not a complete or safe daily-use OS.** Only QEMU/OVMF boot and controlled
+> verification programs have been tested. Do **not** boot this on real
+> hardware or entrust personal data to it.
 
-## Subsystems we are building
+## Verified milestones
 
-| System | Role | State |
+| Area | What actual QEMU/host tests demonstrate | Boundary |
 |---|---|---|
-| Sorveth Core | Independent Rust microkernel and capability protection | Bootstrap only |
-| Sorveth Space | Original project/activity desktop with windows/files/menus | Architecture defined |
-| Sorveth Vault | Portable structured resource/data environment | Architecture defined |
-| Sorveth Mind | Optional local-first OS agent, broker and native app builder | Architecture defined |
-| Sorveth Forge | Native code / app creation tooling | Planned |
-| Sorveth Atlas / Frame / Script | Resource explorer / media tools / automation | Planned |
+| M0: independent startup | Rust UEFI loader exits firmware boot services and executes Sorveth Core, serial monitor responds to commands | No general drivers, filesystem, desktop |
+| M1: kernel foundations | Persistent physical frame ledger; CR3 switch to an owned PML4; private 4 KiB supervisor mappings; x86 IDT, TSS/IST fault stacks, controlled page fault; dedicated kernel stack | Most memory mappings still inherited from OVMF, single CPU |
+| M2-A/B: kernel coordination | Capability-gated bounded IPC; generation-safe task registry and runnable selection | Trusted kernel data structures, no userspace ownership yet |
+| M2-C: message wakeups | Authorized send wakes a parked receiver with reserved dequeue and revocation rules | Kernel-internal only |
+| M2-D/E: real context switching | Native x86-64 kernel context saves and resumes, then two separate kernel workers run in A-B-A-B scheduler order | Cooperative, ring 0, no preemption or complete extended register state |
+| M2-F: first user boundary | A **test-only** ring-3 code page calls INT 0x80, returns from kernel to user code, and traps back a second time | One hardcoded probe, shared address space, no process/syscall API |
 
-## Repository layout
+The controlled ring-3 test and earlier acceptance gates passed in
+[GitHub Actions run 40160414357](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160414357).
+Source commits, builds, boot tests and hardware support are **separate** claims.
 
-- `crates/sorveth-abi`: typed versioned bootloader-to-kernel handoff.
-- `crates/sorveth-cap`: `no_std`, fixed-capacity capabilities with least-rights derivation,
-  generations to reject stale handles, and recursive descendant revocation.
-- `crates/sorveth-memory`: allocation-free, checked UEFI memory-descriptor reader and
-  conventional-page summary.
-- `crates/sorveth-frames`: a permanent locked ledger for conventional-memory
-  physical frame claims, with checked reservations and overlap rejection. Its
-  physical claims are unmapped until an address is explicitly installed.
-- `crates/sorveth-paging`: no-heap 4 KiB mapping policy (W^X, canonicality,
-  privilege separation, overlap validation) and read-only CPU paging audit.
-- `crates/sorveth-boot`: small x86-64 UEFI loader. Obtains GOP and the final memory map,
-  calls `ExitBootServices`, then transfers control to Sorveth Core.
-- `crates/sorveth-core`: freestanding Rust kernel entry, serial diagnostic monitor,
-  owned top-level x86-64 PML4 transition, and direct framebuffer splash.
-  Sorveth builds one private PDPT/PD/PT subtree and maps a claimed, zeroed
-  supervisor-only NX scratch page. Most inherited firmware mappings remain
-  shared. After handoff it makes no firmware boot-service calls. The monitor
-  is a privileged bootstrap tool, not a userspace terminal.
-- `docs`: implementation decisions, architecture, security rules, roadmap.
-- `scripts`: local build, checks, and QEMU boot command.
-- `.github/workflows`: cross-build and host tests for a future dedicated repository.
+## What Sorveth is building
 
-## Build and run (Linux development host)
+| Subsystem | Intended role | Current state |
+|---|---|---|
+| **Sorveth Core** | Capability-based microkernel, memory protection, processes, IPC | Partial native kernel + controlled ring-3 probe |
+| **Sorveth Space** | Original project/activity desktop, windowing, input | Design only |
+| **Sorveth Vault** | User-owned structured resources and portable storage | Design only |
+| **Sorveth Forge** | Native app creation and editing tools | Planned |
+| **Sorveth Atlas / Frame / Script** | Resource exploration, media tools and automation | Planned |
+| **Sorveth Mind** | Optional local AI orchestration and app generation | Design only |
 
-Prerequisites: stable Rust with rustup/cargo, C compiler, QEMU x86-64 and OVMF
-(UEFI firmware). Example package names vary by distribution.
+## Repository structure
+
+- `crates/sorveth-boot` — independent x86-64 UEFI handoff.
+- `crates/sorveth-abi` — typed versioned loader/kernel interface.
+- `crates/sorveth-core` — Rust kernel, owned-stack and page-table tests,
+  synchronous fault handlers, TSS and serial monitor; experimental
+  Win64-ABI kernel fiber and ring-3 trap routines.
+- `crates/sorveth-memory`, `sorveth-frames`, `sorveth-paging` —
+  checked firmware map accounting, persistent frame claims and 4 KiB
+  virtual-mapping policy.
+- `crates/sorveth-cap` — derivable, revocable capability handles.
+- `crates/sorveth-ipc` — bounded copy-only message mailboxes.
+- `crates/sorveth-task` — generation-safe runnable/blocked task registry.
+- `crates/sorveth-exchange` — capability-checked mailbox parking and wakeups.
+- `docs` — product architecture, engineering decisions, constraints and roadmap.
+- `scripts`, `.github/workflows` — test and QEMU boot infrastructure.
+
+## Build and test on a Linux development host
+
+Requires Rust/cargo, the `x86_64-unknown-uefi` target, QEMU x86-64 and
+OVMF UEFI firmware. These are development and emulator tests only.
 
 ```sh
 rustup target add x86_64-unknown-uefi
 ./scripts/check.sh
-./scripts/run-qemu.sh
+./scripts/smoke-qemu.sh
+bash scripts/smoke-monitor-qemu.sh
 ```
 
-The CI acceptance tests run on GitHub Actions:
-- `./scripts/smoke-qemu.sh` builds an instrumented EFI image, verifies serial
-  markers emitted after UEFI ExitBootServices, and requires a test-only QEMU
-  debug-exit status.
-- `bash scripts/smoke-monitor-qemu.sh` builds the *normal* EFI image, boots it
-  in QEMU, sends commands over a serial socket, and validates their answers.
-- Rust unit tests cover the capability system, memory parser, frame planner,
-  and kernel monitor line editor. Successful commits and passing CI are tracked
-  separately; inspect the current Actions run before declaring a milestone.
-The `sorveth-qemu-diagnostics` artifact saves emulator logs on failures.
-To preserve logs locally, set `SORVETH_QEMU_ARTIFACT_DIR` to a directory.
+`smoke-qemu.sh` builds three independent EFI test images:
 
-The QEMU script detects commonly installed OVMF images; override with
-`OVMF_CODE=/path/to/OVMF_CODE.fd` and `OVMF_VARS=/path/to/OVMF_VARS.fd` as needed.
-For serial-only operation, run `./scripts/run-qemu.sh --headless`.
-The script compiles a PE32+ `sorveth-boot.efi` image and places it at
-`esp/EFI/BOOT/BOOTX64.EFI` for the emulated UEFI firmware.
+1. **`qemu-smoke`** — post-ExitBootServices native kernel boot, physical
+   memory validation, context switching, then a test-only QEMU debug exit.
+2. **`qemu-fault`** — deliberately accesses a private unmapped page and
+   requires Sorveth's own #PF handler, CR2/error-code diagnostics and IST1 stack.
+3. **`qemu-user`** — enters CPL3 using an explicitly mapped user-executable
+   machine-code stub and user NX stack. An INT 0x80 returns a token through
+   IRETQ and a second INT 0x80 proves execution returned to user mode.
 
-After a successful boot, QEMU COM1 should print messages including:
+`smoke-monitor-qemu.sh` boots the **normal** kernel and sends commands
+to the polling serial monitor, verifying the live replies. Use
+`SORVETH_QEMU_ARTIFACT_DIR` to preserve emulator logs. On normal startup:
 
-```text
-SORVETH OS / Sorveth Core
-Native kernel execution: EFI boot services exited
-Boot protocol v1: OK
-UEFI physical memory map: validated
-Physical frame planner: validated (no mappings written)
-Persistent physical frame ledger: installed (unmapped)
-Sorveth PML4 root: active (firmware lower levels shared)
-Sorveth private supervisor NX mapping: verified
-Capability table: initialized
-SORVETH CORE ONLINE / end of milestone 0
-```
-
-On a normal boot, Sorveth then enters its **interactive serial kernel monitor**:
 ```text
 Sorveth bootstrap monitor v0.1
 Type help for available commands.
 sorveth> help
 Commands: help status memory paging caps halt
-sorveth> 
+sorveth>
 ```
-The `status`, `memory`, `paging`, and `caps` commands inspect bootstrap
-state; `halt` halts the CPU. Sorveth now creates and switches to a distinct
-PML4 root and a single private high-half supervisor mapping. Most of the
-subordinate firmware paging tables are still shared, so this is **not** an
-isolated address space. Input is line-buffered, supports backspace and CR/LF,
-and rejects
-overlong commands. QEMU's `-serial stdio` connects the prompt to a terminal.
-The special first-boot smoke-test binary deliberately exits QEMU instead.
 
-A supported GOP framebuffer receives a basic startup splash. Neither the splash
-nor this privileged monitor is a desktop, user process, or proper terminal.
+The monitor is a privileged diagnostic interface, not a shell for an
+isolated user process.
 
-## Test status (2026-10-22)
+## Next engineering gates
 
-- **Verified in GitHub Actions:** Rust tests, UEFI cross-build, ABI offsets,
-  rustfmt, native post-firmware QEMU boot and an interactive monitor session.
-- **Verified hardware transition in QEMU:** a new Sorveth PML4 root was
-  loaded through CR3, and a separate 4 KiB supervisor-only NX mapping was
-  exercised by writing through the new high virtual address and reading back
-  the claimed physical page. This uses an OVMF-provided identity mapping
-  to access paging structures during bootstrap.
-- **Not implemented:** fully private address spaces, page faults/IDT, proper
-  kernel stacks, user-mode tasks, scheduler, IPC, native driver services,
-  filesystem, networking, desktop, and Sorveth Mind. Physical machines have
-  not been tested; this bootstrap is **QEMU-only**.
+The next task is to turn the ring-3 proof into a deliberately narrow but
+real task-scoped syscall boundary: per-process address spaces,
+capability-table ownership, untrusted-pointer validation and copy semantics,
+then scheduling and lifecycle management. The test INT 0x80 dispatch is **not**
+a generally usable syscall implementation.
 
-See the authoritative [Sorveth Product Constitution](docs/SORVETH_VISION.md),
-[implementation roadmap](docs/ROADMAP.md), [architecture](docs/ARCHITECTURE.md)
-and [security model](docs/SECURITY.md) for the design and engineering gates.
+Only after memory independence, process containment, services, security and
+hardware coverage are verified will Sorveth be considered an operating system
+that other people should run. No physical-hardware test has yet occurred.
 
-## License and contributions
+See [the roadmap](docs/ROADMAP.md),
+[architecture](docs/ARCHITECTURE.md),
+[security model](docs/SECURITY.md), and
+[Sorveth Product Constitution](docs/SORVETH_VISION.md).
 
-Copyright 2026 Sorveth OS contributors. GNU GPL v3.0 (`LICENSE`). Design discussions,
-changes, and new user-facing resources should preserve the project's ownership,
-portability, permission and no-AI-required principles.
+## License
+
+Copyright 2026 Sorveth OS contributors.
+GNU GPL v3.0 (`GPL-3.0-only`). Native software should preserve user
+ownership, portability, explicit capabilities and a fully usable AI-off mode.
