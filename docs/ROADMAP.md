@@ -237,3 +237,20 @@ an `A B A B` serial acceptance marker.
 These workers are still explicitly controlled, privileged test functions.
 There is no timer IRQ, preemption, independent address space, userspace code,
 blocking syscall entry or complete floating-point/AVX context handling.
+
+
+## M2-F — Experimental ring-3 INT80 privilege boundary
+
+A dedicated \`qemu-user\` EFI image (never a normal boot) installs ring-3
+code/data GDT selectors, a TSS RSP0 trap stack, and a DPL3 INT80 IDT gate.
+Sorveth allocates two fresh physical frames and maps a read-only executable
+machine-code stub and a writable NX stack in an unused lower-canonical
+user-address subtree (U/S=1 at every paging level). It enters CPL3 via
+IRETQ. The stub issues INT80, checks the returned RAX token in user mode,
+then issues INT80 again; only the second successful trap exits QEMU.
+
+**This is a test-only user transition, not a process service:** the stub
+cannot perform general syscalls; its frame mappings still rely on OVMF's
+bootstrap identity window for setup. There is no ELF loader, capability
+table in userspace, process lifecycle, pointer validation, process-specific
+CR3 switching, IRQ preemption or recoverable error handling.

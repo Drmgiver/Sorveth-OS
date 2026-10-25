@@ -79,6 +79,29 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth scheduled kernel contexts: A B A B verified");
+    #[cfg(feature = "qemu-user")]
+    {
+        let probe = match crate::root::prepare_user_probe(&crate::FRAME_POOL) {
+            Ok(probe) => probe,
+            Err(_) => {
+                crate::serial::write_line("FATAL: ring-3 user mappings unavailable");
+                crate::halt_forever();
+            }
+        };
+        let (cs, ss) = match crate::tss::user_selectors() {
+            Some(selectors) => selectors,
+            None => {
+                crate::serial::write_line("FATAL: ring-3 selectors not loaded");
+                crate::halt_forever();
+            }
+        };
+        if !crate::interrupts::install_user_gateway() {
+            crate::serial::write_line("FATAL: ring-3 trap gateway unavailable");
+            crate::halt_forever();
+        }
+        crate::serial::write_line("Sorveth ring-3 probe: user mappings and trap ready");
+        unsafe { crate::user::enter(probe.entry, probe.stack, cs, ss) }
+    }
     let summary = unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_MEMORY)) };
 
     // The controlled #PF must now be serviced on Sorveth's own stack too.
@@ -113,10 +136,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
 
-    #[cfg(not(any(feature = "qemu-smoke", feature = "qemu-fault")))]
+    #[cfg(not(any(feature = "qemu-smoke", feature = "qemu-fault", feature = "qemu-user")))]
     crate::monitor::run(summary, &crate::FRAME_POOL);
 
-    #[cfg(feature = "qemu-fault")]
+    #[cfg(any(feature = "qemu-fault", feature = "qemu-user"))]
     crate::halt_forever()
 }
 

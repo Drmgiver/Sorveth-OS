@@ -39,7 +39,7 @@ fi
 save_diagnostics() {
   local result=$?
   if [[ -n "$ARTIFACT_DIR" ]]; then
-    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err; do
+    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err user-serial.log user-qemu.out user-qemu.err; do
       if [[ -f "$TMP/$name" ]]; then
         cp "$TMP/$name" "$ARTIFACT_DIR/$name"
       fi
@@ -141,3 +141,39 @@ for marker in \
 done
 echo 'PASS: private unmapped page generated an x86 #PF and Sorveth logged and handled it.'
 
+
+
+# M2-F QEMU-only ring-3 test: a tiny unprivileged code page invokes INT80.
+# The first call returns a known value to ring 3; the second proves IRETQ
+# returned to user instructions and the interrupt gate crossed back to ring 0.
+cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-user
+cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
+cp "$VARS" "$TMP/OVMF_VARS.fd"
+set +e
+timeout --signal=TERM --kill-after=5s 55s qemu-system-x86_64 \
+  -machine q35 -m 512M -no-reboot -display none \
+  -drive "if=pflash,format=raw,readonly=on,file=$CODE" \
+  -drive "if=pflash,format=raw,file=$TMP/OVMF_VARS.fd" \
+  -drive "if=ide,format=raw,file=fat:rw:$TMP/esp" \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -serial "file:$TMP/user-serial.log" -monitor none -net none \
+  >"$TMP/user-qemu.out" 2>"$TMP/user-qemu.err"
+USER_STATUS=$?
+set -e
+cat "$TMP/user-serial.log" 2>/dev/null || true
+if [[ "$USER_STATUS" -ne 33 ]]; then
+  echo "QEMU ring-3 test failed: expected status 33, observed $USER_STATUS" >&2
+  cat "$TMP/user-qemu.err" >&2 || true
+  exit 1
+fi
+for marker in \
+  'Sorveth scheduled kernel contexts: A B A B verified' \
+  'Sorveth ring-3 probe: user mappings and trap ready' \
+  'Sorveth ring-3 syscall: entered kernel from user mode' \
+  'SORVETH RING3 ROUNDTRIP: verified'; do
+  if ! grep -Fq "$marker" "$TMP/user-serial.log"; then
+    echo "QEMU ring-3 test failed: missing marker: $marker" >&2
+    exit 1
+  fi
+done
+echo 'PASS: ring-3 instructions trapped to kernel, returned, and trapped again.'

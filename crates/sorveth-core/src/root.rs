@@ -386,6 +386,114 @@ pub fn active() -> bool {
     }
 }
 
+
+#[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
+static mut USER_PDPT: RootPage = RootPage([0; 512]);
+#[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
+static mut USER_PD: RootPage = RootPage([0; 512]);
+#[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
+static mut USER_PT: RootPage = RootPage([0; 512]);
+
+#[cfg(feature = "qemu-user")]
+pub struct UserProbe {
+    pub entry: u64,
+    pub stack: u64,
+}
+
+/// Isolated from all existing high-half kernel mappings. This builds a new
+/// USER=1 four-level subtree in an unused *lower canonical* PML4 slot.
+///
+/// Only used by the QEMU privilege-transition acceptance test. The actual
+/// machine-code probe consists of MOV EAX,7; INT80; CMP EAX,magic; JNE loop;
+/// MOV EAX,8; INT80. It cannot call Rust, UEFI, or arbitrary kernel services.
+#[cfg(feature = "qemu-user")]
+pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        const U: u64 = 1 << 2;
+        const CODE: [u8; 23] = [
+            0xb8, 7, 0, 0, 0, 0xcd, 0x80, 0x3d, 0x46, 0x52, 0x56, 0x53,
+            0x75, 0xfe, 0xb8, 8, 0, 0, 0, 0xcd, 0x80, 0xeb, 0xfe,
+        ];
+        let root = ACTIVE_ROOT.load(Ordering::Acquire);
+        if root == 0 {
+            return Err(Error::RootNotInstalled);
+        }
+        let pml4 = root as *mut u64;
+        let slot = match (1usize..256)
+            .rev()
+            .find(|&i| ptr::read_volatile(pml4.add(i)) & PRESENT == 0)
+        {
+            Some(i) => i,
+            None => return Err(Error::NoFreeVirtualSlot),
+        };
+        let pdpt = ptr::addr_of_mut!(USER_PDPT).cast::<u64>() as u64;
+        let pd = ptr::addr_of_mut!(USER_PD).cast::<u64>() as u64;
+        let pt = ptr::addr_of_mut!(USER_PT).cast::<u64>() as u64;
+        for table in [pdpt, pd, pt] {
+            if table & 4095 != 0 || inherited_translate(root, table) != Some(table) {
+                return Err(Error::PrivateTablesNotIdentityMapped);
+            }
+        }
+
+        let code = pool
+            .claim_unmapped(1)
+            .map_err(|_| Error::FrameUnavailable)?
+            .start;
+        let stack = pool
+            .claim_unmapped(1)
+            .map_err(|_| Error::FrameUnavailable)?
+            .start;
+        if code == stack
+            || inherited_translate(root, code) != Some(code)
+            || inherited_translate(root, stack) != Some(stack)
+        {
+            return Err(Error::TestFrameNotIdentityMapped);
+        }
+        ptr::write_bytes(code as *mut u8, 0, 4096);
+        ptr::write_bytes(stack as *mut u8, 0, 4096);
+        ptr::copy_nonoverlapping(CODE.as_ptr(), code as *mut u8, CODE.len());
+        ptr::write_bytes(pdpt as *mut u8, 0, 4096);
+        ptr::write_bytes(pd as *mut u8, 0, 4096);
+        ptr::write_bytes(pt as *mut u8, 0, 4096);
+
+        ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE | U);
+        ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE | U);
+        ptr::write_volatile(pt as *mut u64, code | PRESENT | U);
+        ptr::write_volatile(
+            (pt as *mut u64).add(1),
+            stack | PRESENT | WRITE | U | NO_EXECUTE,
+        );
+        ptr::write_volatile(pml4.add(slot), pdpt | PRESENT | WRITE | U);
+        let entry = (slot as u64) << 39;
+        let user_stack = entry + 8192 - 16;
+        core::arch::asm!("invlpg [{}]", in(reg) entry, options(nostack, preserves_flags));
+        core::arch::asm!(
+            "invlpg [{}]",
+            in(reg) (entry + 4096),
+            options(nostack, preserves_flags),
+        );
+        if translate(root, entry, |address| {
+            Some(ptr::read_volatile(address as *const u64))
+        }) != Some(code)
+            || translate(root, entry + 4096, |address| {
+                Some(ptr::read_volatile(address as *const u64))
+            }) != Some(stack)
+        {
+            return Err(Error::VerificationFailed);
+        }
+        Ok(UserProbe {
+            entry,
+            stack: user_stack,
+        })
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::UnsupportedArchitecture)
+    }
+}
+
 #[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
