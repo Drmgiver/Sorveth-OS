@@ -185,7 +185,6 @@ pub fn verify_roundtrip() -> bool {
     }
 }
 
-
 #[cfg(target_arch = "x86_64")]
 static mut SCHEDULED_BOOT: CpuContext = CpuContext::EMPTY;
 #[cfg(target_arch = "x86_64")]
@@ -270,21 +269,27 @@ pub fn verify_scheduled_workers() -> bool {
             Err(_) => return false,
         };
         unsafe {
-            let a_top = ptr::addr_of_mut!(SCHEDULED_A_STACK).cast::<u8>() as u64
-                + WORK_STACK_BYTES as u64;
-            let b_top = ptr::addr_of_mut!(SCHEDULED_B_STACK).cast::<u8>() as u64
-                + WORK_STACK_BYTES as u64;
+            let a_top =
+                ptr::addr_of_mut!(SCHEDULED_A_STACK).cast::<u8>() as u64 + WORK_STACK_BYTES as u64;
+            let b_top =
+                ptr::addr_of_mut!(SCHEDULED_B_STACK).cast::<u8>() as u64 + WORK_STACK_BYTES as u64;
             let a_rsp = a_top - 48;
             let b_rsp = b_top - 48;
             ptr::write(a_rsp as *mut u64, task_a_entry as usize as u64);
             ptr::write(b_rsp as *mut u64, task_b_entry as usize as u64);
             ptr::write(
                 ptr::addr_of_mut!(SCHEDULED_A),
-                CpuContext { rsp: a_rsp, ..CpuContext::EMPTY },
+                CpuContext {
+                    rsp: a_rsp,
+                    ..CpuContext::EMPTY
+                },
             );
             ptr::write(
                 ptr::addr_of_mut!(SCHEDULED_B),
-                CpuContext { rsp: b_rsp, ..CpuContext::EMPTY },
+                CpuContext {
+                    rsp: b_rsp,
+                    ..CpuContext::EMPTY
+                },
             );
 
             for (index, selected) in [a, b, a, b].iter().enumerate() {
@@ -297,8 +302,15 @@ pub fn verify_scheduled_workers() -> bool {
                     ptr::addr_of!(SCHEDULED_B)
                 };
                 sorveth_swap_kernel_context(ptr::addr_of_mut!(SCHEDULED_BOOT), next);
-                let expected_a = match index { 0 | 1 => 1, _ => 2 };
-                let expected_b = match index { 0 => 0, 1 | 2 => 1, _ => 2 };
+                let expected_a = match index {
+                    0 | 1 => 1,
+                    _ => 2,
+                };
+                let expected_b = match index {
+                    0 => 0,
+                    1 | 2 => 1,
+                    _ => 2,
+                };
                 if A_RUNS.load(Ordering::Acquire) != expected_a
                     || B_RUNS.load(Ordering::Acquire) != expected_b
                 {
