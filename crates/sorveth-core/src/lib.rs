@@ -4,6 +4,7 @@
 //! Early privileged bootstrap: page mapping, exception diagnostics, task
 //! bookkeeping and kernel-local IPC are prototypes, not isolated userspace.
 
+mod fibers;
 mod interrupts;
 mod monitor;
 mod root;

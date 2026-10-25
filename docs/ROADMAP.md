@@ -208,3 +208,19 @@ task exit clear parked state. Tests exercise these races deterministically.
 This is a **task-state and delivery handshake**, not actual CPU multitasking.
 It still executes only in the privileged bootstrap and has neither ring-3
 tasks, saved CPU contexts, hardware scheduling nor user-visible system calls.
+
+## M2-D — Native cooperative x86 kernel context switching
+
+Sorveth's x86-64 bootstrap contains a restricted assembly context switcher
+that saves/restores the EFI/Windows-x64 ABI's nonvolatile general registers,
+XMM6-XMM15, and RSP. A statically allocated 64 KiB worker stack is initialized
+with an ABI-aligned synthetic return frame. A separate worker runs, yields to
+the kernel stack, resumes from its saved continuation, and yields a second
+time. Normal QEMU boot, fault-test boot and interactive monitor acceptance
+all require the post-switch serial proof.
+
+**Restricted scope:** this is one controlled ring-0 cooperative experiment.
+The CPU still uses one address space; no actual scheduler-driven tasks,
+time slicing, extended x87/AVX context, FPU per-task ownership, user privilege
+isolation or ring-3 entry are implemented. This switcher must not yet be used
+to run arbitrary workloads.

@@ -82,6 +82,7 @@ for marker in \
   'Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed' \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
   'Sorveth dedicated kernel stack: active' \
+  'Sorveth native context switch: two worker roundtrips verified' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -125,6 +126,7 @@ for marker in \
   'Sorveth task registry: fair selection and stale IDs validated' \
   'Sorveth exchange: authorized send wakes a parked task' \
   'Sorveth dedicated kernel stack: active' \
+  'Sorveth native context switch: two worker roundtrips verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
