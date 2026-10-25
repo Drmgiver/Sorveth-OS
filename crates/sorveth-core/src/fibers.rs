@@ -185,6 +185,138 @@ pub fn verify_roundtrip() -> bool {
     }
 }
 
+
+#[cfg(target_arch = "x86_64")]
+static mut SCHEDULED_BOOT: CpuContext = CpuContext::EMPTY;
+#[cfg(target_arch = "x86_64")]
+static mut SCHEDULED_A: CpuContext = CpuContext::EMPTY;
+#[cfg(target_arch = "x86_64")]
+static mut SCHEDULED_B: CpuContext = CpuContext::EMPTY;
+#[cfg(target_arch = "x86_64")]
+static mut SCHEDULED_A_STACK: WorkerStack = WorkerStack([0; WORK_STACK_BYTES]);
+#[cfg(target_arch = "x86_64")]
+static mut SCHEDULED_B_STACK: WorkerStack = WorkerStack([0; WORK_STACK_BYTES]);
+#[cfg(target_arch = "x86_64")]
+static A_RUNS: AtomicU32 = AtomicU32::new(0);
+#[cfg(target_arch = "x86_64")]
+static B_RUNS: AtomicU32 = AtomicU32::new(0);
+#[cfg(target_arch = "x86_64")]
+static SCHEDULED_ONCE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+extern "win64" fn task_a_entry() -> ! {
+    A_RUNS.fetch_add(1, Ordering::AcqRel);
+    unsafe {
+        sorveth_swap_kernel_context(
+            ptr::addr_of_mut!(SCHEDULED_A),
+            ptr::addr_of!(SCHEDULED_BOOT),
+        );
+    }
+    A_RUNS.fetch_add(1, Ordering::AcqRel);
+    unsafe {
+        sorveth_swap_kernel_context(
+            ptr::addr_of_mut!(SCHEDULED_A),
+            ptr::addr_of!(SCHEDULED_BOOT),
+        );
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+extern "win64" fn task_b_entry() -> ! {
+    B_RUNS.fetch_add(1, Ordering::AcqRel);
+    unsafe {
+        sorveth_swap_kernel_context(
+            ptr::addr_of_mut!(SCHEDULED_B),
+            ptr::addr_of!(SCHEDULED_BOOT),
+        );
+    }
+    B_RUNS.fetch_add(1, Ordering::AcqRel);
+    unsafe {
+        sorveth_swap_kernel_context(
+            ptr::addr_of_mut!(SCHEDULED_B),
+            ptr::addr_of!(SCHEDULED_BOOT),
+        );
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+/// A bootstrap-only round-robin scheduler selects which *native* worker
+/// context is restored. Every continuation executes on its own 64 KiB stack.
+/// This is CPU execution switching under a trusted kernel dispatcher, not
+/// timer-driven multitasking, ring-3 isolation, or a general context ABI.
+pub fn verify_scheduled_workers() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use sorveth_cap::ObjectId;
+        use sorveth_task::Scheduler;
+
+        if SCHEDULED_ONCE.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        let mut tasks = Scheduler::<2>::new();
+        let a = match tasks.spawn(ObjectId(401)) {
+            Ok(id) => id,
+            Err(_) => return false,
+        };
+        let b = match tasks.spawn(ObjectId(402)) {
+            Ok(id) => id,
+            Err(_) => return false,
+        };
+        unsafe {
+            let a_top = ptr::addr_of_mut!(SCHEDULED_A_STACK).cast::<u8>() as u64
+                + WORK_STACK_BYTES as u64;
+            let b_top = ptr::addr_of_mut!(SCHEDULED_B_STACK).cast::<u8>() as u64
+                + WORK_STACK_BYTES as u64;
+            let a_rsp = a_top - 48;
+            let b_rsp = b_top - 48;
+            ptr::write(a_rsp as *mut u64, task_a_entry as usize as u64);
+            ptr::write(b_rsp as *mut u64, task_b_entry as usize as u64);
+            ptr::write(
+                ptr::addr_of_mut!(SCHEDULED_A),
+                CpuContext { rsp: a_rsp, ..CpuContext::EMPTY },
+            );
+            ptr::write(
+                ptr::addr_of_mut!(SCHEDULED_B),
+                CpuContext { rsp: b_rsp, ..CpuContext::EMPTY },
+            );
+
+            for (index, selected) in [a, b, a, b].iter().enumerate() {
+                if tasks.select_next() != Some(*selected) {
+                    return false;
+                }
+                let next = if *selected == a {
+                    ptr::addr_of!(SCHEDULED_A)
+                } else {
+                    ptr::addr_of!(SCHEDULED_B)
+                };
+                sorveth_swap_kernel_context(ptr::addr_of_mut!(SCHEDULED_BOOT), next);
+                let expected_a = match index { 0 | 1 => 1, _ => 2 };
+                let expected_b = match index { 0 => 0, 1 | 2 => 1, _ => 2 };
+                if A_RUNS.load(Ordering::Acquire) != expected_a
+                    || B_RUNS.load(Ordering::Acquire) != expected_b
+                {
+                    return false;
+                }
+            }
+        }
+        tasks.exit(a).is_ok()
+            && tasks.exit(b).is_ok()
+            && A_RUNS.load(Ordering::Acquire) == 2
+            && B_RUNS.load(Ordering::Acquire) == 2
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

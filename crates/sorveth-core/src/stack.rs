@@ -74,6 +74,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth native context switch: two worker roundtrips verified");
+    if !crate::fibers::verify_scheduled_workers() {
+        crate::serial::write_line("FATAL: scheduled kernel workers did not complete");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("Sorveth scheduled kernel contexts: A B A B verified");
     let summary = unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_MEMORY)) };
 
     // The controlled #PF must now be serviced on Sorveth's own stack too.

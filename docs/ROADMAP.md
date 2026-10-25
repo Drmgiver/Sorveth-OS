@@ -224,3 +224,16 @@ The CPU still uses one address space; no actual scheduler-driven tasks,
 time slicing, extended x87/AVX context, FPU per-task ownership, user privilege
 isolation or ring-3 entry are implemented. This switcher must not yet be used
 to run arbitrary workloads.
+
+## M2-E — Scheduler-directed cooperative kernel workers
+
+Sorveth tests two independent 64-KiB kernel worker stacks and saved Win64
+register contexts. Its existing generation-safe Scheduler selects worker A,
+worker B, then A and B again. Each resumes at its own suspended instruction
+rather than restarting. The bootstrap rejects any incorrect order or
+unexpected continuation; both QEMU modes and interactive boot require
+an `A B A B` serial acceptance marker.
+
+These workers are still explicitly controlled, privileged test functions.
+There is no timer IRQ, preemption, independent address space, userspace code,
+blocking syscall entry or complete floating-point/AVX context handling.
