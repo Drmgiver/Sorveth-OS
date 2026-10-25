@@ -8,6 +8,7 @@ members = [
   "crates/sorveth-paging",
   "crates/sorveth-ipc",
   "crates/sorveth-task",
+  "crates/sorveth-exchange",
   "crates/sorveth-core",
   "crates/sorveth-boot",
 ]

@@ -26,7 +26,7 @@ if [[ ! -f "$CODE" || ! -f "$VARS" ]]; then
   exit 1
 fi
 
-cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task
+cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-exchange
 cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-smoke
 
 TMP="$(mktemp -d)"
@@ -85,6 +85,7 @@ for marker in \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
+  'Sorveth exchange: authorized send wakes a parked task' \
   'SORVETH CORE ONLINE / end of milestone 0'; do
   if ! grep -Fq "$marker" "$TMP/serial.log"; then
     echo "QEMU boot failed: missing serial marker: $marker" >&2
@@ -122,6 +123,7 @@ for marker in \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
+  'Sorveth exchange: authorized send wakes a parked task' \
   'Sorveth dedicated kernel stack: active' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \

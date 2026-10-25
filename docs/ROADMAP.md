@@ -193,3 +193,18 @@ with two simulated tasks and publishes a serial marker in QEMU.
 **Not yet multitasking:** no task has registers, a private stack, a page
 table, CPU execution, timers or syscalls. The scheduler chooses *identities*,
 not an actual process to run. This is groundwork for a future switcher.
+
+## M2-C — Capability-gated IPC receiver parking and wakeup
+
+The kernel-owned `sorveth-exchange` component composes an endpoint mailbox
+with the generation-safe task registry. A receiver with READ authority can
+park when the queue is empty; it becomes non-runnable. A *successful*
+capability-authorized SEND wakes that task and preserves a dequeue reservation
+so another task cannot steal its message. Unauthorized sends/receives and
+queue overflow cannot create spurious wakeups. Revoked receive authority
+releases the reservation without consuming queued data; cancellation and
+task exit clear parked state. Tests exercise these races deterministically.
+
+This is a **task-state and delivery handshake**, not actual CPU multitasking.
+It still executes only in the privileged bootstrap and has neither ring-3
+tasks, saved CPU contexts, hardware scheduling nor user-visible system calls.

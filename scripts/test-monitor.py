@@ -67,6 +67,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
     if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:
         raise AssertionError("Task registry round-robin and stale ID checks failed")
+    if b"Sorveth exchange: authorized send wakes a parked task" not in transcript:
+        raise AssertionError("Kernel IPC did not wake a parked receiver")
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),

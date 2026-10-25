@@ -13,7 +13,7 @@ jobs:
           targets: x86_64-unknown-uefi
           components: rustfmt
       - name: Host unit tests
-        run: cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-core
+        run: cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-exchange -p sorveth-core
       - name: UEFI cross-build
         run: cargo build -p sorveth-boot --release --target x86_64-unknown-uefi
       - name: Native ABI layout test

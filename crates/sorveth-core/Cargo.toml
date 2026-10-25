@@ -16,3 +16,4 @@ sorveth-frames = { path = "../sorveth-frames" }
 sorveth-paging = { path = "../sorveth-paging" }
 sorveth-ipc = { path = "../sorveth-ipc" }
 sorveth-task = { path = "../sorveth-task" }
+sorveth-exchange = { path = "../sorveth-exchange" }

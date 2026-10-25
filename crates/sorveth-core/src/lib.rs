@@ -15,6 +15,7 @@ mod tss;
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
 use sorveth_frames::{FrameAllocator, FramePool};
+use sorveth_exchange::{Exchange, Receive};
 use sorveth_ipc::{Mailbox, Message};
 use sorveth_memory::MemoryMap;
 use sorveth_paging::audit_inherited;
@@ -212,6 +213,47 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         halt_forever();
     }
     serial::write_line("Sorveth task registry: fair selection and stale IDs validated");
+
+    // M2-C: tie authorized IPC delivery to scheduler parking and wakeup.
+    // This remains kernel-local; there is no CPU context switch or ring 3.
+    let exchange_probe_ok = (|| {
+        let mut exchange_caps = CapabilitySpace::<8>::new();
+        let root = exchange_caps
+            .grant_root(
+                ObjectId(300),
+                ObjectKind::Endpoint,
+                Rights::SEND | Rights::READ | Rights::DERIVE,
+            )
+            .ok()?;
+        let send = exchange_caps.derive(root, Rights::SEND).ok()?;
+        let receive = exchange_caps.derive(root, Rights::READ).ok()?;
+        let mut exchange = Exchange::<2, 2>::new(ObjectId(300)).ok()?;
+        let reader = exchange.spawn(ObjectId(301)).ok()?;
+        let writer = exchange.spawn(ObjectId(302)).ok()?;
+        if exchange.receive_or_park(&exchange_caps, reader, receive).ok()?
+            != Receive::Parked
+            || exchange.next_runnable() != Some(writer)
+        {
+            return None;
+        }
+        let msg = Message::from_bytes(0x534f, b"wakeup").ok()?;
+        exchange.send(&exchange_caps, send, msg).ok()?;
+        if exchange.next_runnable() != Some(reader)
+            || exchange.receive_or_park(&exchange_caps, reader, receive).ok()?
+                != Receive::Delivered(msg)
+            || exchange.pending_messages() != 0
+        {
+            return None;
+        }
+        exchange_caps.revoke(root).ok()?;
+        Some(exchange.send(&exchange_caps, send, msg).is_err())
+    })()
+    .unwrap_or(false);
+    if !exchange_probe_ok {
+        serial::write_line("FATAL: capability-gated task wakeup test failed");
+        halt_forever();
+    }
+    serial::write_line("Sorveth exchange: authorized send wakes a parked task");
 
     if boot.framebuffer.is_usable() {
         screen::paint(&boot.framebuffer);
