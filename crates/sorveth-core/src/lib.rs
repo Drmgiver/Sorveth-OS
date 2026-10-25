@@ -1,7 +1,8 @@
 #![no_std]
 
 //! Sorveth Core: first freestanding kernel execution after ExitBootServices.
-//! Boot milestone only; paging, protection rings, tasks and IPC are NOT ready.
+//! Early privileged bootstrap: page mapping, exception diagnostics, task
+//! bookkeeping and kernel-local IPC are prototypes, not isolated userspace.
 
 mod interrupts;
 mod monitor;
@@ -34,8 +35,8 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     serial::write_line("Boot protocol v1: OK");
 
-    // Read the firmware-provided CPU paging configuration. Do not edit CR3
-    // or dereference inherited page-table pointers at this stage.
+    // Audit inherited firmware paging before installing Sorveth-owned tables.
+    // The later root transition remains restricted to the QEMU bootstrap.
     let inherited = match audit_inherited() {
         Ok(paging) => paging,
         Err(_) => {
