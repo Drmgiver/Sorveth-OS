@@ -24,6 +24,11 @@ is enabled. The code is GPL-3.0-only.
 | M2-D/E: real context switching | Native x86-64 kernel context saves and resumes, then two separate kernel workers run in A-B-A-B scheduler order | Cooperative, ring 0, no preemption or complete extended register state |
 | M2-F: first user boundary | A **test-only** ring-3 code page calls INT 0x80, returns from kernel to user code, and traps back a second time | One hardcoded probe, shared address space, no process/syscall API |
 
+The ring-3 test also deliberately attempts to read a supervisor-only kernel
+page and must receive a hardware #PF with the expected user-mode
+protection-violation bits. This tests one concrete privilege boundary,
+not complete process isolation.
+
 The controlled ring-3 test and earlier acceptance gates passed in
 [GitHub Actions run 40160414357](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160414357).
 Source commits, builds, boot tests and hardware support are **separate** claims.

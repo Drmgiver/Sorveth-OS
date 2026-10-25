@@ -170,10 +170,13 @@ for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
-  'SORVETH RING3 ROUNDTRIP: verified'; do
+  'SORVETH RING3 ROUNDTRIP: verified' \
+  'SORVETH EXCEPTION: PAGE FAULT' \
+  'Sorveth page fault IST1: active' \
+  'SORVETH USER KERNEL-MEMORY DENIAL: verified'; do
   if ! grep -Fq "$marker" "$TMP/user-serial.log"; then
     echo "QEMU ring-3 test failed: missing marker: $marker" >&2
     exit 1
   fi
 done
-echo 'PASS: ring-3 instructions trapped to kernel, returned, and trapped again.'
+echo 'PASS: ring-3 execution trapped twice and a supervisor-only read was rejected by hardware paging.'

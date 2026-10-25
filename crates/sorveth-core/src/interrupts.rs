@@ -277,6 +277,25 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
             }
         }
     }
+    #[cfg(feature = "qemu-user")]
+    {
+        // P=1, W=0, U=1: privilege-protected supervisor mapping.
+        // This must be a protection failure, not merely an absent page.
+        if USER_TRAP_PHASE.load(Ordering::Acquire) == 2
+            && crate::root::protected_kernel_address() == Some(address)
+            && (error & 0x7) == 0x5
+        {
+            crate::serial::write_line("SORVETH USER KERNEL-MEMORY DENIAL: verified");
+            unsafe {
+                core::arch::asm!(
+                    "out dx, al",
+                    in("dx") 0xf4u16,
+                    in("al") 0x10u8,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+        }
+    }
     halt_fault()
 }
 
@@ -406,15 +425,9 @@ pub extern "efiapi" fn sorveth_user_int80_rust(number: u64, caller_cs: u64) -> u
         return 0x5356_5246;
     }
     if number == 8 && USER_TRAP_PHASE.load(Ordering::Acquire) == 1 {
+        USER_TRAP_PHASE.store(2, Ordering::Release);
         crate::serial::write_line("SORVETH RING3 ROUNDTRIP: verified");
-        unsafe {
-            core::arch::asm!(
-                "out dx, al",
-                in("dx") 0xf4u16,
-                in("al") 0x10u8,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
+        return 0;
     }
     crate::serial::write_line("FATAL: invalid ring-3 syscall probe sequence");
     halt_fault()

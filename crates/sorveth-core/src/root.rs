@@ -410,10 +410,22 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         const U: u64 = 1 << 2;
-        const CODE: [u8; 23] = [
+        // Call INT80 twice, then attempt to read Sorveth's supervisor-only
+        // high-half scratch page. The expected result is a CPL3 protection #PF.
+        const CODE_PREFIX: [u8; 21] = [
             0xb8, 7, 0, 0, 0, 0xcd, 0x80, 0x3d, 0x46, 0x52, 0x56, 0x53, 0x75, 0xfe, 0xb8, 8, 0, 0,
-            0, 0xcd, 0x80, 0xeb, 0xfe,
+            0, 0xcd, 0x80,
         ];
+        let protected = PRIVATE_BASE.load(Ordering::Acquire);
+        if protected == 0 {
+            return Err(Error::VerificationFailed);
+        }
+        let mut code_bytes = [0u8; 36];
+        code_bytes[..21].copy_from_slice(&CODE_PREFIX);
+        code_bytes[21] = 0x48; // REX.W
+        code_bytes[22] = 0xb8; // MOVABS RAX, imm64
+        code_bytes[23..31].copy_from_slice(&protected.to_le_bytes());
+        code_bytes[31..36].copy_from_slice(&[0x48, 0x8b, 0x00, 0xeb, 0xfe]); // MOV RAX,[RAX]; spin
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         if root == 0 {
             return Err(Error::RootNotInstalled);
@@ -451,7 +463,7 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
         }
         ptr::write_bytes(code as *mut u8, 0, 4096);
         ptr::write_bytes(stack as *mut u8, 0, 4096);
-        ptr::copy_nonoverlapping(CODE.as_ptr(), code as *mut u8, CODE.len());
+        ptr::copy_nonoverlapping(code_bytes.as_ptr(), code as *mut u8, code_bytes.len());
         ptr::write_bytes(pdpt as *mut u8, 0, 4096);
         ptr::write_bytes(pd as *mut u8, 0, 4096);
         ptr::write_bytes(pt as *mut u8, 0, 4096);
@@ -490,6 +502,23 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
     {
         let _ = pool;
         Err(Error::UnsupportedArchitecture)
+    }
+}
+
+#[cfg(feature = "qemu-user")]
+pub fn protected_kernel_address() -> Option<u64> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let address = PRIVATE_BASE.load(Ordering::Acquire);
+        if address != 0 {
+            Some(address)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
     }
 }
 

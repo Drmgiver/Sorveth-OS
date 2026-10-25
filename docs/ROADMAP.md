@@ -272,3 +272,18 @@ CR3 switching, IRQ preemption or recoverable error handling.
 This verifies a controlled QEMU CPL3 entry and two trap transitions, **not**
 a complete, secure, general-purpose userspace or bare-metal support.
 
+
+
+## M2-G — User-mode supervisor-memory denial test
+
+The qemu-user stub now returns from its second INT80 as well, then tries to
+read the existing high-half Sorveth supervisor-only private scratch page.
+The controlled acceptance test requires a real x86 #PF on IST1 with
+CR2 equal to that page and error-code bits P=1, W=0, U=1 (0x5).
+Only that exact fault sequence signals the emulator's success exit.
+If user code can read the page, faults for another reason, or cannot return
+from the kernel trap, the image must not report success.
+
+This checks a concrete hardware-enforced user/supervisor boundary, but it
+does not yet establish a complete hostile-code sandbox or a task-specific
+kernel/user address-space strategy.
