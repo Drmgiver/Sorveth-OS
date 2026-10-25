@@ -284,7 +284,9 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
         if USER_TRAP_PHASE.load(Ordering::Acquire) == 2
             && crate::root::protected_kernel_address() == Some(address)
             && (error & 0x7) == 0x5
+            && USER_BROKER_CALLS.load(Ordering::Acquire) == 4
         {
+            crate::serial::write_line("SORVETH TASK-SCOPED SYSCALL: capability checks verified");
             crate::serial::write_line("SORVETH USER KERNEL-MEMORY DENIAL: verified");
             unsafe {
                 core::arch::asm!(
@@ -348,6 +350,8 @@ mod tests {
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
 static USER_TRAP_PHASE: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
+static USER_BROKER_CALLS: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
 core::arch::global_asm!(
@@ -365,6 +369,8 @@ sorveth_user_int80_entry:
     mov rbx, rsp
     mov rcx, [rbx + 48]
     mov rdx, [rbx + 72]
+    mov r8, [rbx + 32]
+    mov r9, [rbx + 24]
     and rsp, -16
     sub rsp, 32
     call sorveth_user_int80_rust
@@ -414,7 +420,12 @@ pub fn install_user_gateway() -> bool {
 /// occur only if IRETQ returned to the unprivileged instruction stream.
 #[cfg(all(target_arch = "x86_64", feature = "qemu-user"))]
 #[no_mangle]
-pub extern "efiapi" fn sorveth_user_int80_rust(number: u64, caller_cs: u64) -> u64 {
+pub extern "efiapi" fn sorveth_user_int80_rust(
+    number: u64,
+    caller_cs: u64,
+    handle: u64,
+    value: u64,
+) -> u64 {
     if caller_cs & 3 != 3 {
         crate::serial::write_line("FATAL: ring-3 trap came from wrong privilege");
         halt_fault();
@@ -428,6 +439,25 @@ pub extern "efiapi" fn sorveth_user_int80_rust(number: u64, caller_cs: u64) -> u
         USER_TRAP_PHASE.store(2, Ordering::Release);
         crate::serial::write_line("SORVETH RING3 ROUNDTRIP: verified");
         return 0;
+    }
+    if USER_TRAP_PHASE.load(Ordering::Acquire) == 2 {
+        use sorveth_broker::{SYS_RESOURCE_READ, SYS_RESOURCE_WRITE};
+        let index = USER_BROKER_CALLS.load(Ordering::Acquire);
+        let expected = match index {
+            0 | 2 | 3 => SYS_RESOURCE_READ,
+            1 => SYS_RESOURCE_WRITE,
+            _ => {
+                crate::serial::write_line("FATAL: excess ring-3 broker syscalls");
+                halt_fault();
+            }
+        };
+        if number != expected {
+            crate::serial::write_line("FATAL: incorrect ring-3 broker call order");
+            halt_fault();
+        }
+        let reply = crate::user::dispatch(number, handle, value);
+        USER_BROKER_CALLS.store(index + 1, Ordering::Release);
+        return reply;
     }
     crate::serial::write_line("FATAL: invalid ring-3 syscall probe sequence");
     halt_fault()

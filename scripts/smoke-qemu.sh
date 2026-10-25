@@ -172,6 +172,7 @@ for marker in \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
+  'SORVETH TASK-SCOPED SYSCALL: capability checks verified' \
   'Sorveth page fault IST1: active' \
   'SORVETH USER KERNEL-MEMORY DENIAL: verified'; do
   if ! grep -Fq "$marker" "$TMP/user-serial.log"; then
@@ -179,4 +180,4 @@ for marker in \
     exit 1
   fi
 done
-echo 'PASS: ring-3 execution trapped twice and a supervisor-only read was rejected by hardware paging.'
+echo 'PASS: ring-3 task-scoped capability syscalls denied forged/foreign/write handles before supervisor-memory fault.'

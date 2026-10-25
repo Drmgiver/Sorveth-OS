@@ -289,3 +289,25 @@ does not yet establish a complete hostile-code sandbox or a task-specific
 kernel/user address-space strategy.
 
 **M2-G acceptance:** [passing GitHub Actions run 40160674706](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40160674706), including the test-only ring-3 supervisor-memory denial and all earlier emulator acceptance gates.
+
+## M2-H — Task-bound capability checks across a ring-3 syscall trap
+
+The `sorveth-broker` no-heap crate binds global capability handles to
+generation-safe task identities selected by the **kernel**, not user registers.
+Kernel-only grant/derive/revoke and task-exit operations enforce ownership.
+Its bounded, pointer-free resource READ/WRITE ABI returns a scalar in RAX.
+The same numeric handle cannot grant authority to a different task, and a
+task with READ authority cannot WRITE.
+
+The qemu-user image presents a READ-only handle in RDX. Its ring-3 stub
+first reads a test resource successfully, then verifies that a WRITE
+attempt, a zero forged token and another task's valid WRITE token are all
+denied. Every expected result is compared **in ring 3**; a mismatch
+cannot reach the final protected-kernel-page fault or debug-exit marker.
+Only then does the previous hardware supervisor-memory-denial test run.
+
+**Boundary:** one hardcoded identity in the privileged QEMU bootstrap,
+not an independent process scheduler or generic system call ABI. No
+user pointers are passed, so copy-in/out and invalid-address handling
+remain unimplemented. Per-process CR3, task lifetimes, real services,
+preemption and hardware support are also pending.

@@ -81,7 +81,14 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line("Sorveth scheduled kernel contexts: A B A B verified");
     #[cfg(feature = "qemu-user")]
     {
-        let probe = match crate::root::prepare_user_probe(&crate::FRAME_POOL) {
+        let (allowed, foreign) = match crate::user::initialize_broker() {
+            Some(handles) => handles,
+            None => {
+                crate::serial::write_line("FATAL: task broker initialization failed");
+                crate::halt_forever();
+            }
+        };
+        let probe = match crate::root::prepare_user_probe(&crate::FRAME_POOL, allowed, foreign) {
             Ok(probe) => probe,
             Err(_) => {
                 crate::serial::write_line("FATAL: ring-3 user mappings unavailable");

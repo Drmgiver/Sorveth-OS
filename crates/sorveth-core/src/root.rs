@@ -393,6 +393,84 @@ static mut USER_PD: RootPage = RootPage([0; 512]);
 #[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
 static mut USER_PT: RootPage = RootPage([0; 512]);
 
+
+/// Bounded, allocation-free machine-code emitter for the test-only ring-3
+/// stub. Every expected result is compared *inside* user mode. A mismatch
+/// loops forever and cannot produce the QEMU success marker.
+#[cfg(feature = "qemu-user")]
+struct ProbeProgram {
+    bytes: [u8; 256],
+    len: usize,
+}
+
+#[cfg(feature = "qemu-user")]
+impl ProbeProgram {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; 256],
+            len: 0,
+        }
+    }
+
+    fn emit(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        let end = self.len.checked_add(bytes.len()).ok_or(Error::VerificationFailed)?;
+        if end > self.bytes.len() {
+            return Err(Error::VerificationFailed);
+        }
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+
+    fn set_rax(&mut self, value: u32) -> Result<(), Error> {
+        self.emit(&[0xb8])?;
+        self.emit(&value.to_le_bytes())
+    }
+
+    fn set_rdx(&mut self, value: u64) -> Result<(), Error> {
+        self.emit(&[0x48, 0xba])?;
+        self.emit(&value.to_le_bytes())
+    }
+
+    fn int80(&mut self) -> Result<(), Error> {
+        self.emit(&[0xcd, 0x80])
+    }
+
+    fn expect_rax(&mut self, value: u32) -> Result<(), Error> {
+        self.emit(&[0x3d])?;
+        self.emit(&value.to_le_bytes())?;
+        self.emit(&[0x75, 0xfe]) // jne to this instruction: fail closed
+    }
+
+    fn trap(&mut self, number: u32, reply: u32) -> Result<(), Error> {
+        self.set_rax(number)?;
+        self.int80()?;
+        self.expect_rax(reply)
+    }
+}
+
+#[cfg(feature = "qemu-user")]
+fn build_probe(allowed: u64, foreign: u64, protected: u64) -> Result<ProbeProgram, Error> {
+    use sorveth_broker::{REPLY_DENIED, SYS_RESOURCE_READ, SYS_RESOURCE_WRITE};
+    let mut program = ProbeProgram::new();
+    program.trap(7, 0x5356_5246)?; // first legacy test handshake
+    program.set_rax(8)?; // second legacy handshake returns 0
+    program.int80()?;
+
+    program.set_rdx(allowed)?;
+    program.trap(SYS_RESOURCE_READ as u32, crate::user::RESOURCE_PROBE_VALUE as u32)?;
+    program.trap(SYS_RESOURCE_WRITE as u32, REPLY_DENIED as u32)?;
+    program.set_rdx(0)?;
+    program.trap(SYS_RESOURCE_READ as u32, REPLY_DENIED as u32)?;
+    program.set_rdx(foreign)?;
+    program.trap(SYS_RESOURCE_READ as u32, REPLY_DENIED as u32)?;
+
+    program.emit(&[0x48, 0xb8])?; // movabs rax, protected high-half address
+    program.emit(&protected.to_le_bytes())?;
+    program.emit(&[0x48, 0x8b, 0x00, 0xeb, 0xfe])?; // read then spin
+    Ok(program)
+}
+
 #[cfg(feature = "qemu-user")]
 pub struct UserProbe {
     pub entry: u64,
@@ -406,26 +484,22 @@ pub struct UserProbe {
 /// machine-code probe consists of MOV EAX,7; INT80; CMP EAX,magic; JNE loop;
 /// MOV EAX,8; INT80. It cannot call Rust, UEFI, or arbitrary kernel services.
 #[cfg(feature = "qemu-user")]
-pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
+pub fn prepare_user_probe(
+    pool: &FramePool<256>,
+    read_handle: u64,
+    foreign_handle: u64,
+) -> Result<UserProbe, Error> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         const U: u64 = 1 << 2;
-        // Call INT80 twice, then attempt to read Sorveth's supervisor-only
-        // high-half scratch page. The expected result is a CPL3 protection #PF.
-        const CODE_PREFIX: [u8; 21] = [
-            0xb8, 7, 0, 0, 0, 0xcd, 0x80, 0x3d, 0x46, 0x52, 0x56, 0x53, 0x75, 0xfe, 0xb8, 8, 0, 0,
-            0, 0xcd, 0x80,
-        ];
+        // The test-only program runs a task-owned capability read and
+        // probes denied WRITE, forged and foreign-task handles before
+        // attempting the existing supervisor-memory protection check.
         let protected = PRIVATE_BASE.load(Ordering::Acquire);
         if protected == 0 {
             return Err(Error::VerificationFailed);
         }
-        let mut code_bytes = [0u8; 36];
-        code_bytes[..21].copy_from_slice(&CODE_PREFIX);
-        code_bytes[21] = 0x48; // REX.W
-        code_bytes[22] = 0xb8; // MOVABS RAX, imm64
-        code_bytes[23..31].copy_from_slice(&protected.to_le_bytes());
-        code_bytes[31..36].copy_from_slice(&[0x48, 0x8b, 0x00, 0xeb, 0xfe]); // MOV RAX,[RAX]; spin
+        let code_bytes = build_probe(read_handle, foreign_handle, protected)?;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         if root == 0 {
             return Err(Error::RootNotInstalled);
@@ -463,7 +537,7 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
         }
         ptr::write_bytes(code as *mut u8, 0, 4096);
         ptr::write_bytes(stack as *mut u8, 0, 4096);
-        ptr::copy_nonoverlapping(code_bytes.as_ptr(), code as *mut u8, code_bytes.len());
+        ptr::copy_nonoverlapping(code_bytes.bytes.as_ptr(), code as *mut u8, code_bytes.len);
         ptr::write_bytes(pdpt as *mut u8, 0, 4096);
         ptr::write_bytes(pd as *mut u8, 0, 4096);
         ptr::write_bytes(pt as *mut u8, 0, 4096);
@@ -500,7 +574,7 @@ pub fn prepare_user_probe(pool: &FramePool<256>) -> Result<UserProbe, Error> {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = pool;
+        let _ = (pool, read_handle, foreign_handle);
         Err(Error::UnsupportedArchitecture)
     }
 }
