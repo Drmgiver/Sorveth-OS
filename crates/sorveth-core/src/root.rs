@@ -393,7 +393,6 @@ static mut USER_PD: RootPage = RootPage([0; 512]);
 #[cfg(all(feature = "qemu-user", target_arch = "x86_64"))]
 static mut USER_PT: RootPage = RootPage([0; 512]);
 
-
 /// Bounded, allocation-free machine-code emitter for the test-only ring-3
 /// stub. Every expected result is compared *inside* user mode. A mismatch
 /// loops forever and cannot produce the QEMU success marker.
@@ -413,7 +412,10 @@ impl ProbeProgram {
     }
 
     fn emit(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        let end = self.len.checked_add(bytes.len()).ok_or(Error::VerificationFailed)?;
+        let end = self
+            .len
+            .checked_add(bytes.len())
+            .ok_or(Error::VerificationFailed)?;
         if end > self.bytes.len() {
             return Err(Error::VerificationFailed);
         }
@@ -458,7 +460,10 @@ fn build_probe(allowed: u64, foreign: u64, protected: u64) -> Result<ProbeProgra
     program.int80()?;
 
     program.set_rdx(allowed)?;
-    program.trap(SYS_RESOURCE_READ as u32, crate::user::RESOURCE_PROBE_VALUE as u32)?;
+    program.trap(
+        SYS_RESOURCE_READ as u32,
+        crate::user::RESOURCE_PROBE_VALUE as u32,
+    )?;
     program.trap(SYS_RESOURCE_WRITE as u32, REPLY_DENIED as u32)?;
     program.set_rdx(0)?;
     program.trap(SYS_RESOURCE_READ as u32, REPLY_DENIED as u32)?;

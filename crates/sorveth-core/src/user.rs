@@ -29,19 +29,18 @@ pub unsafe fn enter(entry: u64, stack: u64, user_cs: u16, user_ss: u16) -> ! {
     }
 }
 
-
 // M2-H QEMU-only, fixed task identity supplied by privileged bootstrap.
 // The ring-3 program never chooses its caller TaskId or gets a reference
 // to the broker. The mutable state is accessed only on the single test CPU,
 // while maskable interrupts remain disabled.
+#[cfg(target_arch = "x86_64")]
+use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_arch = "x86_64")]
 use sorveth_broker::{Broker, REPLY_DENIED};
 #[cfg(target_arch = "x86_64")]
 use sorveth_cap::{ObjectId, Rights};
 #[cfg(target_arch = "x86_64")]
 use sorveth_task::TaskId;
-#[cfg(target_arch = "x86_64")]
-use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const RESOURCE_PROBE_VALUE: u64 = 0x5356_5256;
 
