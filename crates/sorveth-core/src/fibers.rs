@@ -153,16 +153,18 @@ pub fn verify_roundtrip() -> bool {
             return false;
         }
         unsafe {
-            let top = ptr::addr_of_mut!(WORKER_STACK).cast::<u8>() as u64
-                + WORK_STACK_BYTES as u64;
+            let top = ptr::addr_of_mut!(WORKER_STACK).cast::<u8>() as u64 + WORK_STACK_BYTES as u64;
             // Top is page-aligned; RSP before RET is 0 (mod 16), and the
             // resulting worker-entry RSP is 8 (mod 16), as if CALL ran.
             let synthetic_rsp = top - 48;
             ptr::write(synthetic_rsp as *mut u64, worker_entry as usize as u64);
-            ptr::write(ptr::addr_of_mut!(WORKER_CONTEXT), CpuContext {
-                rsp: synthetic_rsp,
-                ..CpuContext::EMPTY
-            });
+            ptr::write(
+                ptr::addr_of_mut!(WORKER_CONTEXT),
+                CpuContext {
+                    rsp: synthetic_rsp,
+                    ..CpuContext::EMPTY
+                },
+            );
             sorveth_swap_kernel_context(
                 ptr::addr_of_mut!(BOOT_CONTEXT),
                 ptr::addr_of!(WORKER_CONTEXT),
