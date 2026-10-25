@@ -14,8 +14,8 @@ mod tss;
 
 use sorveth_abi::{BootInfo, BOOT_PROTOCOL_VERSION};
 use sorveth_cap::{CapabilitySpace, ObjectId, ObjectKind, Rights};
-use sorveth_frames::{FrameAllocator, FramePool};
 use sorveth_exchange::{Exchange, Receive};
+use sorveth_frames::{FrameAllocator, FramePool};
 use sorveth_ipc::{Mailbox, Message};
 use sorveth_memory::MemoryMap;
 use sorveth_paging::audit_inherited;
@@ -230,7 +230,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         let mut exchange = Exchange::<2, 2>::new(ObjectId(300)).ok()?;
         let reader = exchange.spawn(ObjectId(301)).ok()?;
         let writer = exchange.spawn(ObjectId(302)).ok()?;
-        if exchange.receive_or_park(&exchange_caps, reader, receive).ok()?
+        if exchange
+            .receive_or_park(&exchange_caps, reader, receive)
+            .ok()?
             != Receive::Parked
             || exchange.next_runnable() != Some(writer)
         {
@@ -239,7 +241,9 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         let msg = Message::from_bytes(0x534f, b"wakeup").ok()?;
         exchange.send(&exchange_caps, send, msg).ok()?;
         if exchange.next_runnable() != Some(reader)
-            || exchange.receive_or_park(&exchange_caps, reader, receive).ok()?
+            || exchange
+                .receive_or_park(&exchange_caps, reader, receive)
+                .ok()?
                 != Receive::Delivered(msg)
             || exchange.pending_messages() != 0
         {

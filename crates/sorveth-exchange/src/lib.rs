@@ -190,7 +190,10 @@ mod tests {
         let reader = exchange.spawn(ObjectId(101)).unwrap();
         let writer = exchange.spawn(ObjectId(102)).unwrap();
         let competitor = exchange.spawn(ObjectId(103)).unwrap();
-        assert_eq!(exchange.receive_or_park(&caps, reader, rx), Ok(Receive::Parked));
+        assert_eq!(
+            exchange.receive_or_park(&caps, reader, rx),
+            Ok(Receive::Parked)
+        );
         assert_eq!(exchange.task_state(reader), Ok(State::Blocked));
         assert_eq!(exchange.next_runnable(), Some(writer));
         assert_eq!(exchange.next_runnable(), Some(competitor));
@@ -229,7 +232,10 @@ mod tests {
         let (caps, _, tx, rx) = setup();
         let mut exchange = Exchange::<2, 1>::new(ObjectId(77)).unwrap();
         let task = exchange.spawn(ObjectId(151)).unwrap();
-        assert_eq!(exchange.receive_or_park(&caps, task, rx), Ok(Receive::Parked));
+        assert_eq!(
+            exchange.receive_or_park(&caps, task, rx),
+            Ok(Receive::Parked)
+        );
         let msg = Message::from_bytes(5, b"a").unwrap();
         assert_eq!(
             exchange.send(&caps, rx, msg),
@@ -239,7 +245,10 @@ mod tests {
         assert_eq!(exchange.pending_messages(), 0);
         exchange.send(&caps, tx, msg).unwrap();
         assert_eq!(exchange.task_state(task), Ok(State::Ready));
-        assert_eq!(exchange.send(&caps, tx, msg), Err(Error::Ipc(IpcError::Full)));
+        assert_eq!(
+            exchange.send(&caps, tx, msg),
+            Err(Error::Ipc(IpcError::Full))
+        );
         assert_eq!(exchange.pending_messages(), 1);
         assert_eq!(exchange.reserved_receiver(), Some(task));
     }
@@ -258,8 +267,14 @@ mod tests {
         assert_eq!(exchange.receive_or_park(&caps, b, rx), Ok(Receive::Parked));
         exchange.exit(b).unwrap();
         assert_eq!(exchange.reserved_receiver(), None);
-        assert_eq!(exchange.task_state(b), Err(Error::Task(TaskError::InvalidTask)));
-        assert_eq!(exchange.cancel_receive(b), Err(Error::Task(TaskError::InvalidTask)));
+        assert_eq!(
+            exchange.task_state(b),
+            Err(Error::Task(TaskError::InvalidTask))
+        );
+        assert_eq!(
+            exchange.cancel_receive(b),
+            Err(Error::Task(TaskError::InvalidTask))
+        );
         assert_eq!(exchange.next_runnable(), Some(a));
     }
 
@@ -300,7 +315,10 @@ mod tests {
         ));
         let (caps, _, _, rx) = setup();
         let mut exchange = Exchange::<0, 1>::new(ObjectId(77)).unwrap();
-        assert_eq!(exchange.spawn(ObjectId(1)), Err(Error::Task(TaskError::NoCapacity)));
+        assert_eq!(
+            exchange.spawn(ObjectId(1)),
+            Err(Error::Task(TaskError::NoCapacity))
+        );
         assert_eq!(exchange.next_runnable(), None);
         let _ = caps;
         let _ = rx;
