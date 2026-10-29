@@ -329,6 +329,13 @@ pub fn verify_scheduled_workers() -> bool {
     }
 }
 
+/// The bootstrap kernel worker stack must also be mapped across CR3.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn survival_stack_bounds() -> (u64, u64) {
+    let base = ptr::addr_of!(WORKER_STACK) as u64;
+    (base, base + WORK_STACK_BYTES as u64)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

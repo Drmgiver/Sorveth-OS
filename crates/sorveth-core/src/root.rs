@@ -382,6 +382,30 @@ pub(crate) unsafe fn with_physical_window<R>(
     Ok(result)
 }
 
+/// Read a firmware-inherited supervisor page-table entry through the owned
+/// high-half window, after verifying that its table frame still has the
+/// trusted bootstrap identity mapping. This is a TRANSITIONAL inventory
+/// reader: it cannot be used after inherited supervisor mappings are removed.
+///
+/// # Safety
+/// Kernel CR3 active on the single bootstrap CPU with IRQs disabled.
+/// The firmware table ancestry must remain immutable during the read.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_bootstrap_supervisor_entry(address: u64) -> Option<u64> {
+    let page = address & !4095;
+    if page == 0 || address & 7 != 0 || address - page > 4088 {
+        return None;
+    }
+    let kernel_root = kernel_root_physical()?;
+    if inherited_translate(kernel_root, page) != Some(page) {
+        return None;
+    }
+    with_physical_window(page, |window| {
+        ptr::read_volatile(window.add((address - page) as usize) as *const u64)
+    })
+    .ok()
+}
+
 /// Claim, zero, and map one additional supervisor-only NX 4 KiB page inside
 /// Sorveth's private 2 MiB upper-half bootstrap window. Slot one is reserved
 /// as an intentionally absent page for the controlled #PF acceptance test.

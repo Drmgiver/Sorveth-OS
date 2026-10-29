@@ -16,6 +16,7 @@ mod root;
 mod screen;
 mod serial;
 mod stack;
+mod supervisor_audit;
 #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
 mod transfer;
 mod tss;

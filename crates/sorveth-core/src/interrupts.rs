@@ -165,6 +165,18 @@ extern "C" {
     fn sorveth_exception_double_fault_entry();
 }
 
+/// Current synchronous exception entry points that must survive any
+/// future supervisor page-table switch.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn survival_handler_addresses() -> [u64; 4] {
+    [
+        sorveth_exception_breakpoint_entry as usize as u64,
+        sorveth_exception_page_fault_entry as usize as u64,
+        sorveth_exception_general_protection_entry as usize as u64,
+        sorveth_exception_double_fault_entry as usize as u64,
+    ]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     UnsupportedArchitecture,

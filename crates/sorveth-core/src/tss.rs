@@ -179,6 +179,27 @@ pub unsafe fn install() -> Result<(), Error> {
     }
 }
 
+/// Static fault and optional ring-3 trap-stack bounds to preserve across CR3.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn survival_stack_bounds() -> ([(u64, u64); 2], Option<(u64, u64)>) {
+    let pf = ptr::addr_of!(PAGE_FAULT_STACK) as u64;
+    let df = ptr::addr_of!(DOUBLE_FAULT_STACK) as u64;
+    let bytes = core::mem::size_of::<EmergencyStack>() as u64;
+    #[cfg(feature = "qemu-user")]
+    let trap = {
+        let addr = ptr::addr_of!(USER_TRAP_STACK) as u64;
+        Some((addr, addr + bytes))
+    };
+    #[cfg(not(feature = "qemu-user"))]
+    let trap = None;
+    ([(pf, pf + bytes), (df, df + bytes)], trap)
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn survival_tss_address() -> u64 {
+    ptr::addr_of!(TSS) as u64
+}
+
 pub fn ready() -> bool {
     #[cfg(target_arch = "x86_64")]
     {

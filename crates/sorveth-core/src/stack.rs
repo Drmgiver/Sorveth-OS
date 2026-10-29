@@ -69,6 +69,27 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth dedicated kernel stack: active");
+    // K.1d read-only survival inventory: no root is replaced here. Require
+    // trusted, supervisor-only live mappings of code, CPU tables and every
+    // page of the kernel, worker, fault and trap stacks before future work
+    // removes OVMF lower-level page-table inheritance.
+    let survived = unsafe { crate::supervisor_audit::verify_bootstrap_survival(base, end) };
+    match survived {
+        Ok(report) if report.inspected_pages >= 16 => {
+            crate::serial::write_line(
+                "SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited",
+            );
+            crate::serial::write("Sorveth inherited supervisor samples: ");
+            crate::serial::write_u64(report.inspected_pages);
+            crate::serial::write(" (legacy writable+executable: ");
+            crate::serial::write_u64(report.legacy_write_execute_pages);
+            crate::serial::write_line(")");
+        }
+        _ => {
+            crate::serial::write_line("FATAL: supervisor survival mapping audit failed");
+            crate::halt_forever();
+        }
+    }
     if !crate::fibers::verify_roundtrip() {
         crate::serial::write_line("FATAL: native kernel context switch failed");
         crate::halt_forever();
