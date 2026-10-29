@@ -283,7 +283,6 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
     }
 }
 
-
 #[cfg(target_arch = "x86_64")]
 fn valid_physical_window_frame(frame: u64) -> bool {
     frame != 0 && frame & 4095 == 0 && frame & !ADDRESS_MASK == 0
@@ -404,9 +403,8 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         // A distinct address and a distinct physical claim are required.
         const SENTINEL: u64 = 0x53_4f_52_56_4d_41_50_21;
         ptr::write_volatile(virtual_address as *mut u64, SENTINEL ^ slot);
-        let observed = with_physical_window(physical, |window| {
-            ptr::read_volatile(window as *const u64)
-        })?;
+        let observed =
+            with_physical_window(physical, |window| ptr::read_volatile(window as *const u64))?;
         if observed != (SENTINEL ^ slot)
             || translate(root, virtual_address, |address| {
                 Some(ptr::read_volatile(address as *const u64))
