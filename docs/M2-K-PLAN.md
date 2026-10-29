@@ -212,3 +212,19 @@ new proof marker before loading their selected process CR3; they
 continue to test forbidden cross-process accesses and unauthorized
 user-memory operations. The test probe still borrows a kernel test-code
 subtree, and the general-purpose userspace loader does not exist.
+
+
+### K.1d incremental checkpoint — read-only PTE tamper denial uses owned aliases
+
+The M2-J.4 negative mapping test now retrieves the inactive process's
+registered PT leaf entry through the owned frame window, changes only
+its write permission using the registered-table writer, and restores
+the original PTE before concluding the check. The process data-word
+integrity comparison also uses an owned temporary high-half alias,
+not the physical identity-mapped address. QEMU must require a separate
+marker after both A/B write-denial probes complete successfully.
+
+These controlled mutations are serialized on the single bootstrap CPU;
+this does not provide dynamic process mapping teardown or concurrent
+lifetime protection. Additional legacy scheduler/bootstrap inspection
+paths still rely on OVMF identity mappings.
