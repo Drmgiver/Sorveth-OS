@@ -430,7 +430,7 @@ static mut USER_PT: RootPage = RootPage([0; 512]);
 /// loops forever and cannot produce the QEMU success marker.
 #[cfg(feature = "qemu-user")]
 struct ProbeProgram {
-    bytes: [u8; 256],
+    bytes: [u8; 1024],
     len: usize,
 }
 
@@ -438,7 +438,7 @@ struct ProbeProgram {
 impl ProbeProgram {
     const fn new() -> Self {
         Self {
-            bytes: [0; 256],
+            bytes: [0; 1024],
             len: 0,
         }
     }
@@ -463,6 +463,18 @@ impl ProbeProgram {
 
     fn set_rdx(&mut self, value: u64) -> Result<(), Error> {
         self.emit(&[0x48, 0xba])?;
+        self.emit(&value.to_le_bytes())
+    }
+
+    #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+    fn set_r8(&mut self, value: u64) -> Result<(), Error> {
+        self.emit(&[0x49, 0xb8])?;
+        self.emit(&value.to_le_bytes())
+    }
+
+    #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+    fn set_r9(&mut self, value: u64) -> Result<(), Error> {
+        self.emit(&[0x49, 0xb9])?;
         self.emit(&value.to_le_bytes())
     }
 
@@ -505,6 +517,59 @@ fn build_probe(allowed: u64, foreign: u64, protected: u64) -> Result<ProbeProgra
     program.emit(&[0x48, 0xb8])?; // movabs rax, protected high-half address
     program.emit(&protected.to_le_bytes())?;
     program.emit(&[0x48, 0x8b, 0x00, 0xeb, 0xfe])?; // read then spin
+    Ok(program)
+}
+
+/// Dedicated ring-3 syscall acceptance program. The trusted kernel
+/// chooses this process and its capability handles; the program can only
+/// submit numeric arguments, never a TaskId, Process ID or CR3 root.
+#[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> {
+    use crate::transfer::{
+        COPY_DENIED, COPY_IN_OK, COPY_OUT_OK, SYS_COMPLETE, SYS_COPY_IN, SYS_COPY_OUT,
+    };
+
+    let own = crate::process_roots::mapped_page(crate::transfer::owner())
+        .ok_or(Error::VerificationFailed)?;
+    let other = crate::process_roots::mapped_page(crate::transfer::other())
+        .ok_or(Error::VerificationFailed)?;
+    let write = crate::transfer::write_handle().ok_or(Error::VerificationFailed)?;
+    let mut program = ProbeProgram::new();
+
+    // Each call supplies a user capability in RDX, a user virtual pointer
+    // in R8 and a length in R9. The fifth efiapi gateway argument receives
+    // the saved R9 value. The kernel obtains the caller identity from CR3.
+    let mut call = |number: u64, handle: u64, pointer: u64, len: u64, reply: u64| {
+        program.set_rdx(handle)?;
+        program.set_r8(pointer)?;
+        program.set_r9(len)?;
+        program.trap(number as u32, reply as u32)
+    };
+    call(SYS_COPY_IN, read, own.virtual_address, 8, COPY_IN_OK)?;
+    call(SYS_COPY_IN, read, other.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_OUT, read, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_OUT, foreign, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, 0, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, read, own.virtual_address, 0, COPY_DENIED)?;
+    call(SYS_COPY_OUT, write, own.virtual_address + 4095, 2, COPY_DENIED)?;
+    call(SYS_COPY_OUT, write, own.virtual_address, 8, COPY_OUT_OK)?;
+
+    // Proof from actual CPL3 instructions that the process sees the bytes
+    // written by the kernel. A mismatch loops without reaching completion.
+    program.emit(&[0x48, 0xb8])?; // movabs rax, own data virtual address
+    program.emit(&own.virtual_address.to_le_bytes())?;
+    program.emit(&[0x48, 0x8b, 0x08])?; // mov rcx,[rax]
+    program.emit(&[0x48, 0xba])?; // movabs rdx, expected data
+    program.emit(&u64::from_le_bytes(crate::transfer::pattern()).to_le_bytes())?;
+    program.emit(&[0x48, 0x39, 0xd1, 0x75, 0xfe])?; // cmp rcx,rdx; jne self
+
+    // The completion INT80 verifies source/destination content and restores
+    // the process's original data before allowing QEMU's debug exit.
+    program.set_rdx(0)?;
+    program.set_r8(own.virtual_address)?;
+    program.set_r9(8)?;
+    program.trap(SYS_COMPLETE as u32, 0)?;
+    program.emit(&[0xeb, 0xfe])?; // no uncontrolled return to unknown memory
     Ok(program)
 }
 
@@ -571,7 +636,14 @@ pub fn prepare_user_probe(
         }
         #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
         let code_bytes = build_isolation_probe()?;
-        #[cfg(not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b")))]
+        #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+        let code_bytes = build_transfer_probe(read_handle, foreign_handle)?;
+        #[cfg(not(any(
+            feature = "qemu-isolate-a",
+            feature = "qemu-isolate-b",
+            feature = "qemu-transfer-a",
+            feature = "qemu-transfer-b"
+        )))]
         let code_bytes = build_probe(read_handle, foreign_handle, protected)?;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         if root == 0 {
@@ -579,7 +651,12 @@ pub fn prepare_user_probe(
         }
         let pml4 = root as *mut u64;
         // In isolation images do not collide with process A/B data slots.
-        #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+        #[cfg(any(
+            feature = "qemu-isolate-a",
+            feature = "qemu-isolate-b",
+            feature = "qemu-transfer-a",
+            feature = "qemu-transfer-b"
+        ))]
         let avoided = [
             crate::process_roots::process_root(crate::process_roots::Process::First)
                 .ok_or(Error::VerificationFailed)?
@@ -588,7 +665,12 @@ pub fn prepare_user_probe(
                 .ok_or(Error::VerificationFailed)?
                 .1 as usize,
         ];
-        #[cfg(not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b")))]
+        #[cfg(not(any(
+            feature = "qemu-isolate-a",
+            feature = "qemu-isolate-b",
+            feature = "qemu-transfer-a",
+            feature = "qemu-transfer-b"
+        )))]
         let avoided = [0usize; 2];
         let slot = match (1usize..256)
             .rev()
