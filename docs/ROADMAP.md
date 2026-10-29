@@ -529,3 +529,40 @@ concurrently remappable user buffers, multiple CPUs, page reclaim,
 general user syscalls, or recoverable user faults. Later milestones
 must implement those conditions and user-facing authority binding.
 Next: M2-J.4 bounded kernel-to-user copying.
+
+
+## M2-J.4 — Bounded copy to writable user-process pages
+
+The kernel now has an internal, no-heap copy-to-user path that accepts
+a trusted Process identity, a destination user virtual address, and a
+borrowed kernel-owned byte slice. It validates the entire destination
+range through J.1 and walks every mapped page with J.2's explicit WRITE
+permission requirement at PML4, PDPT, PD and PT levels. It checks the
+kernel CR3 and masked interrupts and confirms identity access to the
+entire permanent physical process data page before any write.
+
+The shared paging policy preflights ALL resolved physical destination
+frames against the selected process-owned allowlist before copying a
+single byte. It supports misaligned spans and separately owned,
+noncontiguous physical pages when the kernel's callback guarantees
+those pages remain mapped and writable; its host tests cover these
+spans, the page's final byte, length mismatch and rejection of an
+unowned second frame with **zero writes**.
+
+This milestone's QEMU implementation deliberately permits only the
+single permanently claimed 4-KiB data page for each experimental process.
+It writes test bytes to A and B, independently reads them back through
+J.3 copy-from-user, restores their original sentinel values, and
+checks that other-process memory remains unchanged. It also denies
+foreign destination addresses, missing second pages, null/overflow/
+kernel pointers, and zero-length requests. A controlled test removes
+WRITE from the selected inactive private PTE and verifies that the
+existing process-root ownership audit rejects the write attempt;
+the PTE is restored before proceeding.
+
+This is a kernel-internal, single-core QEMU bootstrap proof. No
+general-purpose user syscall, multiple CPUs, preemption, dynamic
+unmapping, frame reclamation, or recoverable copy faults are supported
+yet; frame and page-table stability are guaranteed here only by their
+permanent allocation and serialized execution. M2-J.5 will bind
+copy operations to authorized caller identities in a syscall interface.

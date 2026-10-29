@@ -81,6 +81,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("M2-J.2 process-aware page walker did not complete")
     if b"SORVETH M2-J.3: bounded copy-in and denied buffers verified" not in transcript:
         raise AssertionError("M2-J.3 owned user-memory copy-in was not verified")
+    if b"SORVETH M2-J.4: bounded writable copy-out and denial verified" not in transcript:
+        raise AssertionError("M2-J.4 writable user-memory copy-out was not verified")
     if b"Sorveth IPC: capability-checked mailbox and revocation validated" not in transcript:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
     if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:

@@ -118,6 +118,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-J.3: bounded copy-in and denied buffers verified");
+    if !unsafe { crate::user_copy::verify_copy_to_user() } {
+        crate::serial::write_line("FATAL: bounded writable user copy-out failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("SORVETH M2-J.4: bounded writable copy-out and denial verified");
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {

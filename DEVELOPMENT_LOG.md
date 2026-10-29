@@ -346,3 +346,24 @@ ensure user mappings and physical frames cannot change during transfer.
 Scope remains narrow: one 4-KiB permanently allocated data frame per
 process under single-core, nonpreemptive, identity-mapped QEMU bootstrap.
 No general user buffer lifetime tracking, page pinning or syscall copy-in.
+
+
+## 2026-10-29 — M2-J.4 bounded writable user-memory copy-out
+
+- Added no_std, bounded copy-to-resolved transfer that checks all
+  destination pages before writing any user byte, with multi-page,
+  wrong-length and last-byte host tests.
+- Added kernel-only copy_to_process using numeric user-range checking,
+  a process-owned four-level WRITE page-table walk, fixed private-frame
+  ownership, verified identity mapping and kernel CR3 checks.
+- Added real QEMU writes into A and B and copy-in readback, followed
+  by restoration of the exact original process data.
+- Denied foreign/unmapped/kernel/null/overflow/zero-length destinations,
+  and verified rejection of a temporarily read-only private leaf
+  without changing the user's memory.
+- Preserved the existing boot, fault, ring-3 capability/isolation and
+  interactive kernel monitor smoke acceptance.
+
+Only the two permanent 4-KiB QEMU private data frames are supported by
+the kernel bridge. Dynamic address-space lifetime management,
+user-facing system calls and fault recovery remain subsequent work.
