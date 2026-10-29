@@ -596,3 +596,63 @@ single-core, nonpreemptive QEMU bootstrap with permanently owned pages.
 It is NOT yet production-capable for arbitrary user buffers, SMP,
 dynamic mapping/reclamation or recoverable copy faults. M2-J.6
 will harden the acceptance tests and document the constraints.
+
+
+## M2-J.6 — Ring-3 negative tests, integrity and boundary audit
+
+The final M2-J micro-milestone expands *each* QEMU process-A/process-B
+ring-3 memory-syscall test to 22 sequential INT80 requests. These
+include valid copy-from-user and copy-to-user, wrong READ/WRITE
+capabilities, foreign-task and zero/MAX forged tokens, foreign-process
+source and destination virtual addresses, a zero-length read/write,
+an unmapped second-page crossing, the zero page, a noncanonical
+high-half pointer, a kernel pointer, a low-half user-range boundary
+crossing, an overflowing unsigned start address, an oversized request,
+an unknown syscall number, and denied write attempts **after** a
+successful write. Every result is checked inside ring 3 before the
+next instruction executes.
+
+The kernel verifies a checksum covering **all 4096 bytes** of *both*
+permanently owned private process frames *before and after every
+individual syscall*, while the test-only caller state also checks
+the saved process root against the audited root mappings, both
+capability grants and denial of the other process's handle. The
+checksum has an independently predicted value after the one
+authorized write and verifies the original image after final
+restoration. Any unexpected memory change or authority check
+halts/fails the QEMU acceptance test; a final success marker can
+appear only after the entire sequence, actual ring-3 data readback,
+and both frame checks succeed. This is a deterministic QEMU
+regression assertion **not a security mechanism for applications
+that legitimately write their own pages**. A noncryptographic checksum
+also is not a proof of collision-resistant memory integrity.
+
+### Current security envelope and excluded conditions
+
+- The memory ABI currently copies **exactly 8 bytes**, despite the
+  pure numeric policy's 64 KiB bound and the multi-page copy helper.
+  This test-only restriction is deliberate until real process
+  lifetime and arbitrary user buffers are supported.
+- A single QEMU bootstrap CPU is assumed, maskable IRQs disabled;
+  there is no preemption, concurrent PTE replacement, page reclaim,
+  copy-fault recovery, or CPU-local scheduler context.
+- Exactly two ledger-owned, permanent **4 KiB user data frames** are
+  available in the current process-root demonstrations. Both roots
+  still share inherited firmware supervisor paging lower levels.
+- Caller ownership is fixed by the active CR3 and kernel-private
+  generated TaskId for the demonstration. It is not yet a
+  full process lifecycle or general syscall authority service.
+- Physical identity-map access is allowed only for the kernel's
+  known, registered process frames; no unchecked user pointer is
+  dereferenced. Future production code must handle pinning/mapping
+  stability, safe kernel physical mappings, copy faults, and
+  untrusted callers who legitimately mutate their own data.
+- The negative tests are *sequential scripted ring-3 probes*.
+  They do not constitute fuzzing, race testing, exhaustive pointer
+  coverage or validation on independent CPU/firmware combinations.
+
+All prior normal boot, controlled page-fault, legacy ring-3
+capability, A->B/B->A hardware-isolation and interactive monitor
+acceptance checks remain required. M2-J is a complete **bounded
+bootstrap proof** with those stated limitations, not finished
+production-grade user memory infrastructure.

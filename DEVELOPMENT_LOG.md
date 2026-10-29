@@ -388,3 +388,25 @@ user-facing system calls and fault recovery remain subsequent work.
 
 This is a bounded experimental syscall proof rather than a general
 concurrent userspace ABI; J.6 remains the final validation milestone.
+
+
+## 2026-10-29 — M2-J.6 full-frame/capability hardening acceptance
+
+- Expanded the separate QEMU process A/B ring-3 syscall probes to
+  22 actual INT80 requests, including malicious addresses, forged
+  tokens, wrong rights, excessive and zero lengths, foreign memory,
+  an unknown operation and denied writes after a valid write.
+- Added a trusted-kernel pre/post checksum of *every byte* of both
+  permanent user data pages on each syscall, with a predicted post-
+  write image and final verification of restored original contents.
+- Rechecked capability availability and foreign-handle denial and
+  audited the registered process roots on every syscall.
+- Required the additional full-frame/capability integrity marker
+  from **both** process A and process B QEMU images before acceptance.
+- Documented single-core, permanent-frames, identity-map and
+  test-only eight-byte ABI restrictions; no claims of general-purpose
+  user memory support or concurrent lifetime-safe copying.
+- Preserved all existing M2-I/J, fault, ring-3 and interactive monitor
+  regressions as mandatory acceptance gates.
+
+M2-J complete only as a controlled QEMU bootstrap demonstration.

@@ -287,11 +287,12 @@ for side in a b; do
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
     'Sorveth ring-3 memory gateway: process CR3 armed' \
     'Sorveth ring-3 probe: user mappings and trap ready' \
-    'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied'; do
+    'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied' \
+    'SORVETH M2-J.6: full-frame and capability integrity verified after every syscall'; do
     if ! grep -Fq "$marker" "$TMP/transfer-$side-serial.log"; then
       echo "QEMU process $side syscall test failed: missing marker: $marker" >&2
       exit 1
     fi
   done
-  echo "PASS: process $side issued capability-checked CPL3 copy syscalls and denied forged/foreign buffers."
+  echo "PASS: process $side issued 22 CPL3 memory syscall requests; denied operations preserved full-frame/capability integrity."
 done
