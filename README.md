@@ -26,7 +26,7 @@ is enabled. The code is GPL-3.0-only.
 | M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only READ/WRITE and denies forged/foreign tokens | Hardcoded QEMU probe |
 | M2-I: isolated experimental process roots | Distinct A/B CR3 roots, per-process user frames, bidirectional ring-3 foreign-memory denial and task-root lifecycle checks | Static permanent test mappings, nonpreemptive bootstrap |
 | M2-J: bounded user-memory syscall proof | Audited user page walks, capability-gated copy-in/out and 22 real ring-3 INT80 probes per process with whole-frame integrity checks | Exactly eight bytes per syscall in current test ABI; not general user memory or production process lifecycle |
-| M2-K.1 (partial): owned supervisor frame access | Private high-half frame window, process page/root auditing, scheduler checks, copy-in/out integrity, PML4 construction and ring-3 program/table initialization through owned aliases | Early kernel executable/stack/IDT/TSS and lower-level supervisor paging still inherit OVMF mappings |
+| M2-K.1 (partial): owned supervisor frame access | High-half access window, isolated process table/data paths, ring-3 test program builder and read-only live survival audits for kernel code, stacks, IDT/TSS, BootInfo and optional framebuffer | Actual kernel execution still uses firmware-inherited lower-level supervisor mappings; independent replacement root not yet built |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
 page. QEMU verified the hardware #PF, CR2 address and user-mode
@@ -34,7 +34,7 @@ protection-violation bits. This establishes one concrete privilege boundary,
 not complete process isolation.
 
 The latest accepted kernel changes passed host and QEMU tests in
-[GitHub Actions run 40918371037](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918371037).
+[GitHub Actions run 40932702573](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40932702573).
 Earlier milestone evidence remains in the development log.
 Source commits, builds, boot tests and hardware support are **separate** claims.
 

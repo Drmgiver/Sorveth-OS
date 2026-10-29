@@ -526,3 +526,36 @@ The kernel executable, kernel/IST stacks, CPU descriptor tables, memory
 map and remaining firmware-inherited supervisor paging still require
 independent mapping. M2-K.1d is not complete, nor is M2-K.2 frame reuse.
 See docs/M2-K1D-SUPERVISOR-TRANSITION.md for the next acceptance gates.
+
+
+## 2026-10-29 — M2-K.1d read-only supervisor survival inventories
+
+- Added a host-tested, allocation-free x86-64 four-level page walker with
+  effective USER/WRITE/NX checks, canonical address validation and aligned
+  1-GiB/2-MiB/4-KiB leaf handling. A read-only bootstrap reader accesses
+  inherited paging frames through the Sorveth-owned supervisor window,
+  **after** validating their existing firmware identity mappings.
+- Under real QEMU kernel CR3, checked kernel/serial/exception executable
+  addresses, the full kernel/worker/IST stacks, optional ring-3 trap stack,
+  current RSP, active IDTR/GDTR table buffers and TSS. Missing mappings,
+  user exposure, non-writable critical stacks, or NX executable targets
+  fail closed. Legacy writable+executable pages are counted, not mistaken
+  for an already hardened W^X kernel.
+- Added early boot-handoff validation for mapped BootInfo and every page
+  of the retained UEFI memory-descriptor buffer. When the GOP framebuffer
+  is usable, the audit checks presence/write access at its boundaries,
+  without treating the MMIO device as normal RAM or reading its pixels.
+- All seven QEMU images must report both new K.1d mapping-audit markers,
+  in addition to prior host, normal/fault, ring-3, A/B isolation, A/B
+  memory-copy and interactive monitor acceptance criteria.
+- Verified branch CI for runtime inventory:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40931953610
+- Verified branch CI for boot-data inventory:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40932702573
+
+**Still not complete:** no firmware-independent executable/data/stack
+mapping tables are constructed or activated by this step. The reader
+itself depends on the original identity mapping to validate inherited
+paging-table frames. Descriptor ownership, section-level W^X permissions,
+physical-backing manifest and a separate no-inherited-table CR3 smoke
+mode are the next prerequisites. M2-K.2 reclamation is also pending.

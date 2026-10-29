@@ -311,3 +311,14 @@ preflights borrowed firmware table frames through inherited identity
 translation; no inherited page tables are removed by this checkpoint.
 The audit additionally counts legacy writable+executable kernel pages
 as remaining migration debt instead of claiming W^X is already complete.
+
+
+### K.1d verified boot handoff inventory
+
+Read-only QEMU inventory now covers mapped BootInfo, all UEFI descriptor
+buffer pages, and (if available) writable framebuffer boundaries, as
+well as code/stack/IDT/TSS survival mappings. Accepted evidence:
+https://github.com/Drmgiver/Sorveth-OS/actions/runs/40932702573
+
+This is not an independently mapped kernel. Mapping ownership and the
+replacement root still require separate implementation and QEMU proof.

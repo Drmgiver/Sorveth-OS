@@ -102,3 +102,25 @@ stack guard regions; construct independent supervisor tables from verified
 physical frame claims, then transition and prove no inherited table
 ancestry under a separate QEMU mode. Audit success by itself is not K.1d
 completion.
+
+
+## Additional boot handoff mapping gate (verified checkpoint)
+
+After the IDT/TSS installation, but before starting arbitrary kernel
+scratch tests, Sorveth audits its live BootInfo address range and every
+4-KiB page of the retained UEFI memory descriptor buffer. It also
+validates the boundary mappings of the framebuffer, when usable, without
+reading device memory as RAM. These pointers were separately reserved
+in the original physical frame ledger. Invalid/null, arithmetic-overflow,
+noncanonical, absent or effectively user-accessible addresses are denied;
+framebuffer endpoints additionally require write permission.
+
+QEMU acceptance requires this proof and the later code/stack/GDT/IDT/TSS
+survival audit in all supported smoke variants. Both are **read-only**
+firmware-transition inventories. They do not pin every backing page,
+construct replacement supervisor mappings, remove firmware ancestry or
+assert a secure W^X layout. A verified physical-backing/ownership manifest
+is the next engineering requirement, followed by an independent page-table
+builder and a separate root-transition QEMU mode.
+
+Evidence: Actions runs 40931953610 and 40932702573.
