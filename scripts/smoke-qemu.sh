@@ -98,6 +98,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
+  'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -161,6 +162,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
+  'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -217,6 +219,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
+  'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -278,6 +281,7 @@ for side in a b; do
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
+  'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -328,6 +332,7 @@ for side in a b; do
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
+  'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \

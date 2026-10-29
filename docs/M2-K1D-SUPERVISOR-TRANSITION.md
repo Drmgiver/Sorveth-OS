@@ -73,3 +73,32 @@ process loader, a preemptive scheduler or general user buffers. These are
 separate M2-K/L tasks. Do not advance K.1d from an ownership-less
 identity-map clone or from tests that only see a serial marker before the
 new CR3 is loaded.
+
+
+## Runtime survival mapping inventory (M2-K.1d staged checkpoint)
+
+The x86-64 bootstrap now includes a **read-only** four-level supervisor
+page walker, with host tests covering missing entries, USER exposure,
+ancestor NX/WRITE reduction, canonical address rejection and aligned
+2-MiB huge-page handling. After IDT/TSS installation and the permanent
+kernel-stack transfer, it walks every 4-KiB address of the kernel stack,
+worker stack, page-fault and double-fault IST stacks, and (when compiled)
+the ring-3 trap stack; it also audits the active RSP, CPU GDTR/IDTR
+ranges, TSS, serial/kernel code and all four exception entry points.
+
+Every page-table read uses Sorveth's transient high-half window, but the
+**firmware-inherited identity mapping is still needed to validate each
+lower-level table frame before borrowing it**. This is an inventory proof,
+not a new mapping and not an independent root. The audit rejects absent
+or effectively USER-accessible critical pages, non-writable stacks and
+non-executable code. It counts legacy writable+executable leaf mappings
+as technical debt rather than incorrectly pretending OVMF already supplies
+a W^X kernel image. The normal/fault/ring-3/isolation/transfer QEMU gates
+require an audit marker before the kernel proceeds.
+
+**Next:** record the actual backing physical pages and ownership for each
+sample; partition executable/readonly/writable sections and protected
+stack guard regions; construct independent supervisor tables from verified
+physical frame claims, then transition and prove no inherited table
+ancestry under a separate QEMU mode. Audit success by itself is not K.1d
+completion.

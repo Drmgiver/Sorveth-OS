@@ -299,3 +299,15 @@ ownership and permissions for kernel executable, data, stacks, IDT/TSS,
 boot information, serial console and optional framebuffer; a separately
 QEMU-validated replacement kernel root that can drop all inherited OVMF
 lower-level tables. See M2-K1D-SUPERVISOR-TRANSITION.md.
+
+
+### K.1d read-only runtime survival audit
+
+Implemented a fail-closed, x86-64 supervisor page-walk audit of live
+kernel/serial/exception execution, GDTR/IDTR/TSS metadata and all pages
+of the kernel, worker and IST stacks (plus ring-3 trap stack when present).
+It uses an owned temporary high-half mapping for table reads but still
+preflights borrowed firmware table frames through inherited identity
+translation; no inherited page tables are removed by this checkpoint.
+The audit additionally counts legacy writable+executable kernel pages
+as remaining migration debt instead of claiming W^X is already complete.
