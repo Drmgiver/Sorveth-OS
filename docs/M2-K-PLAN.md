@@ -228,3 +228,23 @@ These controlled mutations are serialized on the single bootstrap CPU;
 this does not provide dynamic process mapping teardown or concurrent
 lifetime protection. Additional legacy scheduler/bootstrap inspection
 paths still rely on OVMF identity mappings.
+
+
+### K.1d incremental checkpoint — owned scheduler/negative-root physical access
+
+The M2-I.3 scheduler address-space switching test no longer reads the
+PML4 entries or either process data frame through raw identity-mapped
+physical pointers. Trusted process-root lookup accepts only the two
+kernel-registered process PML4 frames; process first-word checks use
+Sorveth's transient supervisor-only high-half frame mapping. The
+A-B-A-B CPU-visible user-virtual memory writes remain intentional
+proofs that switching actual CR3 roots changes the mapped address space.
+
+The M2-I.5 stale-task/damaged-root negative test now temporarily clears
+USER permission on only the registered selected process root PML4 entry,
+using the high-half writer, calls the authorization-denial predicate,
+then restores and verifies the original entry and trusted process-root
+audit. The caller receives no physical table pointer. QEMU requires a
+new marker after these real scheduler/negative tests, in all supported
+boot variants. Unmapped/faulting kernel pointers and inherited supervisor
+code/stack/IDT memory are not yet removed; K.1d is still incomplete.
