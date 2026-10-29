@@ -151,9 +151,8 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     .iter()
     .enumerate()
     {
-        let (selected_id, selected_process) = scheduler
-            .select_next()?
-            .ok_or(Error::IncorrectSelection)?;
+        let (selected_id, selected_process) =
+            scheduler.select_next()?.ok_or(Error::IncorrectSelection)?;
         if selected_process != *expected_process
             || selected_id
                 != if selected_process == Process::First {
@@ -187,8 +186,8 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         // These addresses were verified present by M2-I.2. Each access
         // takes place under the scheduler-selected process root.
         let root_correct = observed & CR3_ADDRESS_MASK == root;
-        let initial_correct = ptr::read_volatile(own_page.virtual_address as *const u64)
-            == expected_value;
+        let initial_correct =
+            ptr::read_volatile(own_page.virtual_address as *const u64) == expected_value;
         if root_correct && initial_correct {
             ptr::write_volatile(own_page.virtual_address as *mut u64, next_value);
         }

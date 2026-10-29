@@ -4,11 +4,11 @@
 //! Early privileged bootstrap: page mapping, exception diagnostics, task
 //! bookkeeping and kernel-local IPC are prototypes, not isolated userspace.
 
+#[cfg(target_arch = "x86_64")]
+mod address_scheduler;
 mod fibers;
 mod interrupts;
 mod monitor;
-#[cfg(target_arch = "x86_64")]
-mod address_scheduler;
 mod process_roots;
 mod root;
 mod screen;
