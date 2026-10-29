@@ -313,6 +313,7 @@ pub unsafe fn attach_isolation_probe(process: Process, entry: u64) -> Result<u64
 /// inherited identity mappings verified and no concurrent page-table edits.
 pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     if !MAPPED.load(Ordering::Acquire) {
+        crate::serial::write_line("M2I5 AUDIT FAILED: stage 1");
         return None;
     }
     let (root_a, slot_a) = process_root(Process::First)?;
@@ -333,6 +334,7 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
         || ptr::read_volatile((root_a as *const u64).add(slot_b as usize)) != 0
         || ptr::read_volatile((root_b as *const u64).add(slot_a as usize)) != 0
     {
+        crate::serial::write_line("M2I5 AUDIT FAILED: stage 2");
         return None;
     }
     let tables_a = [
@@ -355,7 +357,8 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
                 .take(i)
                 .any(|previous| previous == table)
         {
-            return None;
+            crate::serial::write_line("M2I5 AUDIT FAILED: stage 3");
+        return None;
         }
     }
     if !validate_user_path(
@@ -373,6 +376,7 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
         tables_b[2],
         page_b.physical_address,
     ) {
+        crate::serial::write_line("M2I5 AUDIT FAILED: stage 4");
         return None;
     }
     Some(match process {
