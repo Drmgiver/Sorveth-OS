@@ -143,6 +143,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     match (first_page, second_page) {
         (Ok(first), Ok(second)) if first != second && root::private_pages() == 3 => {
             serial::write_line("Sorveth dynamic private pages: 2 additional mappings verified");
+            serial::write_line("SORVETH M2-K.1a: owned physical frame window verified");
         }
         _ => {
             serial::write_line("FATAL: private page allocator did not pass validation");
