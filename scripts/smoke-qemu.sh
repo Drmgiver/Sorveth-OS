@@ -39,7 +39,7 @@ fi
 save_diagnostics() {
   local result=$?
   if [[ -n "$ARTIFACT_DIR" ]]; then
-    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err user-serial.log user-qemu.out user-qemu.err isolation-a-serial.log isolation-a-qemu.out isolation-a-qemu.err isolation-b-serial.log isolation-b-qemu.out isolation-b-qemu.err; do
+    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err user-serial.log user-qemu.out user-qemu.err isolation-a-serial.log isolation-a-qemu.out isolation-a-qemu.err isolation-b-serial.log isolation-b-qemu.out isolation-b-qemu.err transfer-a-serial.log transfer-a-qemu.out transfer-a-qemu.err transfer-b-serial.log transfer-b-qemu.out transfer-b-qemu.err; do
       if [[ -f "$TMP/$name" ]]; then
         cp "$TMP/$name" "$ARTIFACT_DIR/$name"
       fi
@@ -256,4 +256,42 @@ for side in a b; do
     fi
   done
   echo "PASS: process $side read its own page and CPU denied cross-process ring-3 read."
+done
+
+
+# M2-J.5: ring-3 under each process CR3 with capability-checked INT80.
+for side in a b; do
+  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
+    --features "qemu-transfer-$side"
+  cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
+  cp "$VARS" "$TMP/OVMF_VARS.fd"
+  set +e
+  timeout --signal=TERM --kill-after=5s 55s qemu-system-x86_64 \
+    -machine q35 -m 512M -no-reboot -display none \
+    -drive "if=pflash,format=raw,readonly=on,file=$CODE" \
+    -drive "if=pflash,format=raw,file=$TMP/OVMF_VARS.fd" \
+    -drive "if=ide,format=raw,file=fat:rw:$TMP/esp" \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+    -serial "file:$TMP/transfer-$side-serial.log" -monitor none -net none \
+    >"$TMP/transfer-$side-qemu.out" 2>"$TMP/transfer-$side-qemu.err"
+  TRANSFER_STATUS=$?
+  set -e
+  cat "$TMP/transfer-$side-serial.log" 2>/dev/null || true
+  if [[ "$TRANSFER_STATUS" -ne 33 ]]; then
+    echo "QEMU process $side syscall test failed: expected exit 33, got $TRANSFER_STATUS" >&2
+    cat "$TMP/transfer-$side-qemu.err" >&2 || true
+    exit 1
+  fi
+  for marker in \
+    'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
+    'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+    'Sorveth ring-3 memory gateway: process CR3 armed' \
+    'Sorveth ring-3 probe: user mappings and trap ready' \
+    'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied'; do
+    if ! grep -Fq "$marker" "$TMP/transfer-$side-serial.log"; then
+      echo "QEMU process $side syscall test failed: missing marker: $marker" >&2
+      exit 1
+    fi
+  done
+  echo "PASS: process $side issued capability-checked CPL3 copy syscalls and denied forged/foreign buffers."
 done

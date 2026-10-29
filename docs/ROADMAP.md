@@ -566,3 +566,33 @@ unmapping, frame reclamation, or recoverable copy faults are supported
 yet; frame and page-table stability are guaranteed here only by their
 permanent allocation and serialized execution. M2-J.5 will bind
 copy operations to authorized caller identities in a syscall interface.
+
+
+## M2-J.5 — Capability-gated user-memory syscalls (experimental)
+
+Two QEMU-only EFI builds, qemu-transfer-a and qemu-transfer-b, enter
+CPL3 with the respective process-owned CR3. Each program calls INT80
+with a capability in RDX, user pointer in R8, and length in R9. The
+interrupt entry passes length as the fifth x64 EFI ABI argument. The
+kernel checks the active CR3, uses its OWN saved generation-safe TaskId
+and process binding, validates a memory-specific READ/WRITE capability,
+then temporarily switches to kernel CR3 for the existing J.3/J.4
+bounded copy functions. The process root is restored before IRETQ.
+Neither a process ID nor a TaskId nor a CR3 can be supplied by user code.
+
+The memory authority registry binds a specific TaskId and memory object
+to opaque capabilities, distinguishes READ and WRITE, rejects forged and
+foreign-task tokens, and revokes grants when a task retires.
+Both directions test successful eight-byte copy-in, valid write and
+direct ring-3 readback, and denied wrong-rights, forged/foreign token,
+foreign user addresses, zero lengths and unmapped page crossings.
+The kernel verifies the foreign frame remains intact and restores the
+original process data before allowing QEMU to exit successfully.
+All previous kernel boot, fault, ring-3 isolation and monitor tests
+remain mandatory.
+
+**Scope:** This is a test-only fixed eight-byte syscall ABI under the
+single-core, nonpreemptive QEMU bootstrap with permanently owned pages.
+It is NOT yet production-capable for arbitrary user buffers, SMP,
+dynamic mapping/reclamation or recoverable copy faults. M2-J.6
+will harden the acceptance tests and document the constraints.

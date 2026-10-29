@@ -367,3 +367,24 @@ No general user buffer lifetime tracking, page pinning or syscall copy-in.
 Only the two permanent 4-KiB QEMU private data frames are supported by
 the kernel bridge. Dynamic address-space lifetime management,
 user-facing system calls and fault recovery remain subsequent work.
+
+
+## 2026-10-29 — M2-J.5 experimental ring-3 memory syscall integration
+
+- Added kernel-owned memory capability grants with exact object/task
+  binding, distinct READ/WRITE rights, and stale/blocked task denial.
+- Added two QEMU-only transfer variants, executing actual INT80 calls in
+  CPL3 under process A/B's independent page-table roots.
+- Extended the gateway to receive user R9 length as the fifth EFI ABI
+  argument while retaining legacy syscall behavior.
+- On each syscall, checked the active root, determined caller identity
+  from saved kernel state, authorized the memory capability, used kernel
+  CR3 for the existing copy helpers, then restored the caller root.
+- Added successful copy-in/copy-out and ring-3 data readback, plus
+  rights, foreign token, forged token, foreign pointer, zero length
+  and unmapped page-crossing denial before debug exit.
+- Preserved prior QEMU normal boot, deliberate fault, capability,
+  A/B user hardware isolation, and interactive monitor regressions.
+
+This is a bounded experimental syscall proof rather than a general
+concurrent userspace ABI; J.6 remains the final validation milestone.
