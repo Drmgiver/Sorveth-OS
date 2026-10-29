@@ -358,25 +358,38 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
                 .any(|previous| previous == table)
         {
             crate::serial::write_line("M2I5 AUDIT FAILED: stage 3");
-        return None;
+            return None;
         }
     }
-    if !validate_user_path(
-        root_a,
-        slot_a,
-        tables_a[0],
-        tables_a[1],
-        tables_a[2],
-        page_a.physical_address,
-    ) || !validate_user_path(
-        root_b,
-        slot_b,
-        tables_b[0],
-        tables_b[1],
-        tables_b[2],
-        page_b.physical_address,
-    ) {
+    let valid_a = validate_user_path(
+        root_a, slot_a, tables_a[0], tables_a[1], tables_a[2], page_a.physical_address,
+    );
+    let valid_b = validate_user_path(
+        root_b, slot_b, tables_b[0], tables_b[1], tables_b[2], page_b.physical_address,
+    );
+    if !valid_a || !valid_b {
         crate::serial::write_line("M2I5 AUDIT FAILED: stage 4");
+        for (root, slot, tables, data) in [
+            (root_a, slot_a, tables_a, page_a.physical_address),
+            (root_b, slot_b, tables_b, page_b.physical_address),
+        ] {
+            crate::serial::write("Root address: ");
+            crate::serial::write_hex_u64(root);
+            crate::serial::write_line("");
+            for (label, actual, expected) in [
+                ("PML4", ptr::read_volatile((root as *const u64).add(slot as usize)), tables[0] | USER_TABLE_FLAGS),
+                ("PDPT", ptr::read_volatile(tables[0] as *const u64), tables[1] | USER_TABLE_FLAGS),
+                ("PD", ptr::read_volatile(tables[1] as *const u64), tables[2] | USER_TABLE_FLAGS),
+                ("PT", ptr::read_volatile(tables[2] as *const u64), data | USER_DATA_FLAGS),
+            ] {
+                crate::serial::write(label);
+                crate::serial::write(" observed ");
+                crate::serial::write_hex_u64(actual);
+                crate::serial::write(" expected ");
+                crate::serial::write_hex_u64(expected);
+                crate::serial::write_line("");
+            }
+        }
         return None;
     }
     Some(match process {
