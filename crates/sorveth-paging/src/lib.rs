@@ -5,6 +5,7 @@
 //! An eventual installer must prove NX support and zero owned page-table frames.
 
 pub mod user_range;
+pub mod user_walk;
 
 pub const PAGE_BYTES: u64 = 4096;
 pub const KERNEL_BASE: u64 = 0xffff_8000_0000_0000;
