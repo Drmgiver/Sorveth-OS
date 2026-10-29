@@ -394,6 +394,119 @@ fn entry_matches(actual: u64, expected: u64, leaf: bool) -> bool {
     actual & !volatile == expected
 }
 
+/// M2-J.2: inspect a validated user byte range under one trusted
+/// process-owned PML4 root, without switching CR3 or touching user data.
+/// Only known Sorveth-owned PML4/PDPT/PD/PT table pages can be read.
+///
+/// # Safety
+/// Restricted to this single-CPU QEMU bootstrap. IRQs must remain disabled;
+/// the trusted identity map and page tables must stay unchanged for the walk.
+/// This returns a snapshot, NOT a pin or permission to copy user memory.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn walk_process_user_range(
+    process: Process,
+    range: sorveth_paging::user_range::UserRange,
+    access: sorveth_paging::user_walk::UserAccess,
+) -> Result<sorveth_paging::user_walk::ResolvedPages, sorveth_paging::user_walk::WalkError> {
+    use sorveth_paging::user_walk::{walk_user_pages, WalkError};
+
+    // Reuse M2-I.5 ownership auditing, not a user-supplied physical root.
+    let root = checked_process_root(process).ok_or(WalkError::InvalidRoot)?;
+    let owned = match process {
+        Process::First => [
+            root,
+            ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
+            ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
+            ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
+        ],
+        Process::Second => [
+            root,
+            ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
+            ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
+            ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+        ],
+    };
+
+    // Every accepted table was identity-mapped and audited above. Never
+    // dereference any address coming from a PTE until the 4-KiB containing
+    // table is confirmed to be in this *specific* process-owned whitelist.
+    walk_user_pages(root, range, access, |entry_address| {
+        let page = entry_address & !4095;
+        if entry_address & 7 != 0 || !owned.contains(&page) {
+            return None;
+        }
+        Some(ptr::read_volatile(entry_address as *const u64))
+    })
+}
+
+/// Live QEMU acceptance: validate both real process-private USER pages,
+/// reject the other process's unmapped slot, and reject an otherwise valid
+/// two-byte numeric range which crosses into an absent second leaf page.
+/// The kernel stays on its root; no user data is dereferenced in this test.
+///
+/// # Safety
+/// One bootstrap CPU, IRQs masked; M2-I.5 and M2-J.1 already passed.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_user_page_walk() -> bool {
+    use sorveth_paging::{
+        user_range::validate_user_range,
+        user_walk::{UserAccess, WalkError},
+        PAGE_BYTES,
+    };
+
+    for (owner, foreign) in [
+        (Process::First, Process::Second),
+        (Process::Second, Process::First),
+    ] {
+        let own = match mapped_page(owner) {
+            Some(page) => page,
+            None => return false,
+        };
+        let other = match mapped_page(foreign) {
+            Some(page) => page,
+            None => return false,
+        };
+        let range = match validate_user_range(own.virtual_address + 7, 16) {
+            Ok(range) => range,
+            Err(_) => return false,
+        };
+        for access in [UserAccess::Read, UserAccess::Write] {
+            match walk_process_user_range(owner, range, access) {
+                Ok(pages)
+                    if pages.page_count() == 1
+                        && pages.physical_page(0) == Some(own.physical_address)
+                        && pages.physical_page(1).is_none() => {}
+                _ => return false,
+            }
+        }
+
+        // The foreign *number* is canonical and lies in the user region,
+        // but must not be interpreted as owned by this process.
+        let foreign_range = match validate_user_range(other.virtual_address, 8) {
+            Ok(range) => range,
+            Err(_) => return false,
+        };
+        if walk_process_user_range(owner, foreign_range, UserAccess::Read)
+            != Err(WalkError::MissingMapping)
+        {
+            return false;
+        }
+
+        // First page is present, second is not. A complete walk must
+        // reject the entire request rather than return partial success.
+        let crossing = match validate_user_range(own.virtual_address + PAGE_BYTES - 1, 2) {
+            Ok(range) => range,
+            Err(_) => return false,
+        };
+        if walk_process_user_range(owner, crossing, UserAccess::Read)
+            != Err(WalkError::MissingMapping)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
 /// addresses. The QEMU bootstrap has verified identity mapping of every
 /// page-table frame, so reading these raw entries is safe *for this test*.
