@@ -84,28 +84,43 @@ fn object(process: Process) -> ObjectId {
     }
 }
 
-/// Hash the entire permanently owned frame, not just the sentinel word.
-/// The optional eight-byte override computes the *expected* post-write
-/// image without modifying the frame. In this QEMU bootstrap the frames
-/// remain identity-mapped, pinned by the permanent ledger and unshared.
+/// Hash every byte of a permanently owned frame through the short-lived
+/// high-half physical window, not via firmware's physical identity mapping.
+/// The eight-byte override computes a predicted image without modifying RAM.
+/// This is only a QEMU test integrity oracle, not cryptographic protection.
 ///
 /// # Safety
-/// Requires permanent 4-KiB identity mappings, CPL0 and no concurrent
-/// modifications; this is an integrity oracle for tests, not cryptography.
-unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> u64 {
-    let mut checksum = 0xcbf2_9ce4_8422_2325u64;
-    for offset in 0..4096usize {
-        let value = if offset < 8 {
-            match override_word {
-                Some(word) => word[offset],
-                None => ptr::read_volatile((physical + offset as u64) as *const u8),
-            }
-        } else {
-            ptr::read_volatile((physical + offset as u64) as *const u8)
-        };
-        checksum = (checksum ^ value as u64).wrapping_mul(0x100_0000_01b3);
-    }
-    checksum
+/// Kernel CR3 active, CPL0 on the only CPU, maskable IRQs off, and the
+/// ledger-owned frame is never unmapped or reclaimed during this operation.
+unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> Option<u64> {
+    crate::root::with_physical_window(physical, |window| {
+        let mut checksum = 0xcbf2_9ce4_8422_2325u64;
+        for offset in 0..4096usize {
+            let value = if offset < 8 {
+                match override_word {
+                    Some(word) => word[offset],
+                    None => ptr::read_volatile(window.add(offset) as *const u8),
+                }
+            } else {
+                ptr::read_volatile(window.add(offset) as *const u8)
+            };
+            checksum = (checksum ^ value as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        checksum
+    })
+    .ok()
+}
+
+/// Return the first 64-bit word of a permanently owned process frame through
+/// the transient supervisor-only physical window.
+///
+/// # Safety
+/// The same single-core QEMU preconditions as frame_checksum apply.
+unsafe fn process_word(physical: u64) -> Option<u64> {
+    crate::root::with_physical_window(physical, |window| {
+        ptr::read_volatile(window as *const u64)
+    })
+    .ok()
 }
 
 /// Verify *all* 4096 bytes of both physical process data pages and
@@ -123,8 +138,8 @@ unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
         Some(page) => page,
         None => return false,
     };
-    frame_checksum(own.physical_address, None) == expected_owner
-        && frame_checksum(foreign.physical_address, None) == state.foreign_checksum
+    frame_checksum(own.physical_address, None) == Some(expected_owner)
+        && frame_checksum(foreign.physical_address, None) == Some(state.foreign_checksum)
         && process_roots::checked_process_root(state.process) == Some(state.root)
         && process_roots::checked_process_root(other()).is_some()
         && state
@@ -189,11 +204,11 @@ pub fn initialize() -> Option<(u64, u64)> {
         .grant(foreign_task, object(other()), Rights::WRITE)
         .ok()?
         .raw();
-    let original = unsafe { ptr::read_volatile(own.physical_address as *const u64) };
-    let foreign_original = unsafe { ptr::read_volatile(foreign.physical_address as *const u64) };
-    let original_checksum = unsafe { frame_checksum(own.physical_address, None) };
-    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN)) };
-    let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) };
+    let original = unsafe { process_word(own.physical_address) }?;
+    let foreign_original = unsafe { process_word(foreign.physical_address) }?;
+    let original_checksum = unsafe { frame_checksum(own.physical_address, None) }?;
+    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN)) }?;
+    let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) }?;
     unsafe {
         ptr::write(
             ptr::addr_of_mut!(STATE),
@@ -492,8 +507,7 @@ pub unsafe fn dispatch(
             )
             .is_err()
                 || read_back != PATTERN
-                || ptr::read_volatile(foreign.physical_address as *const u64)
-                    != state.foreign_original
+                || process_word(foreign.physical_address) != Some(state.foreign_original)
             {
                 fatal();
             }
@@ -504,7 +518,7 @@ pub unsafe fn dispatch(
                 &state.original.to_le_bytes(),
             )
             .is_err()
-                || ptr::read_volatile(mapped.physical_address as *const u64) != state.original
+                || process_word(mapped.physical_address) != Some(state.original)
             {
                 fatal();
             }
