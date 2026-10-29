@@ -1,7 +1,5 @@
 #![no_std]
 
-pub mod memory_authority;
-
 //! Kernel-owned syscall authority broker (M2-H prototype).
 //!
 //! The caller identity MUST be selected by the kernel from its active task,
@@ -9,6 +7,8 @@ pub mod memory_authority;
 //! lookup tokens, not pointers. Every capability has one owning TaskId;
 //! a numerically valid handle belonging to another task grants no authority.
 //! This no-heap broker has no user pointer, address-space, or IRQ handling.
+
+pub mod memory_authority;
 
 use sorveth_cap::{CapabilitySpace, Error as CapError, Handle, ObjectId, ObjectKind, Rights};
 use sorveth_task::{Error as TaskError, Scheduler, TaskId};
