@@ -52,10 +52,7 @@ impl<const TASKS: usize, const CAPS: usize> MemoryAuthority<TASKS, CAPS> {
             return Err(Error::InvalidTask);
         }
         let allowed = Rights::READ | Rights::WRITE;
-        if memory_object.0 == 0
-            || rights.is_empty()
-            || !allowed.contains(rights)
-        {
+        if memory_object.0 == 0 || rights.is_empty() || !allowed.contains(rights) {
             return Err(Error::InvalidRights);
         }
         let free = self
@@ -98,7 +95,10 @@ impl<const TASKS: usize, const CAPS: usize> MemoryAuthority<TASKS, CAPS> {
         }) {
             return Err(Error::Denied);
         }
-        let entry = self.caps.authorize(handle, right).map_err(|_| Error::Denied)?;
+        let entry = self
+            .caps
+            .authorize(handle, right)
+            .map_err(|_| Error::Denied)?;
         if entry.kind != ObjectKind::Memory || entry.object != memory_object {
             return Err(Error::Denied);
         }
@@ -146,8 +146,14 @@ mod tests {
         let write = authority.grant(a, ObjectId(101), Rights::WRITE).unwrap();
         let foreign = authority.grant(b, ObjectId(102), Rights::WRITE).unwrap();
 
-        assert_eq!(authority.authorize(a, read.raw(), ObjectId(101), Rights::READ), Ok(()));
-        assert_eq!(authority.authorize(a, write.raw(), ObjectId(101), Rights::WRITE), Ok(()));
+        assert_eq!(
+            authority.authorize(a, read.raw(), ObjectId(101), Rights::READ),
+            Ok(())
+        );
+        assert_eq!(
+            authority.authorize(a, write.raw(), ObjectId(101), Rights::WRITE),
+            Ok(())
+        );
         for bad in [
             authority.authorize(a, read.raw(), ObjectId(101), Rights::WRITE),
             authority.authorize(a, write.raw(), ObjectId(101), Rights::READ),
@@ -164,7 +170,9 @@ mod tests {
     fn blocked_stale_and_reused_task_generations_never_regain_memory_rights() {
         let mut authority = MemoryAuthority::<1, 4>::new();
         let original = authority.spawn(ObjectId(5)).unwrap();
-        let handle = authority.grant(original, ObjectId(11), Rights::READ).unwrap();
+        let handle = authority
+            .grant(original, ObjectId(11), Rights::READ)
+            .unwrap();
         authority.block(original).unwrap();
         assert_eq!(
             authority.authorize(original, handle.raw(), ObjectId(11), Rights::READ),
@@ -192,10 +200,22 @@ mod tests {
     fn rejects_unknown_task_invalid_rights_and_exhausted_caps() {
         let mut authority = MemoryAuthority::<1, 1>::new();
         let task = authority.spawn(ObjectId(1)).unwrap();
-        assert_eq!(authority.grant(task, ObjectId(2), Rights::NONE), Err(Error::InvalidRights));
-        assert_eq!(authority.grant(task, ObjectId(2), Rights::EXECUTE), Err(Error::InvalidRights));
+        assert_eq!(
+            authority.grant(task, ObjectId(2), Rights::NONE),
+            Err(Error::InvalidRights)
+        );
+        assert_eq!(
+            authority.grant(task, ObjectId(2), Rights::EXECUTE),
+            Err(Error::InvalidRights)
+        );
         let read = authority.grant(task, ObjectId(2), Rights::READ).unwrap();
-        assert_eq!(authority.grant(task, ObjectId(3), Rights::READ), Err(Error::NoCapacity));
-        assert_eq!(authority.authorize(task, read.raw(), ObjectId(2), Rights::EXECUTE), Err(Error::InvalidRights));
+        assert_eq!(
+            authority.grant(task, ObjectId(3), Rights::READ),
+            Err(Error::NoCapacity)
+        );
+        assert_eq!(
+            authority.authorize(task, read.raw(), ObjectId(2), Rights::EXECUTE),
+            Err(Error::InvalidRights)
+        );
     }
 }

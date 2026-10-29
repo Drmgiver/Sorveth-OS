@@ -99,9 +99,18 @@ pub fn initialize() -> Option<(u64, u64)> {
     let mut authority = MemoryAuthority::<2, 4>::new();
     let task = authority.spawn(ObjectId(0x5b01)).ok()?;
     let foreign_task = authority.spawn(ObjectId(0x5b02)).ok()?;
-    let read_handle = authority.grant(task, object(process), Rights::READ).ok()?.raw();
-    let write_handle = authority.grant(task, object(process), Rights::WRITE).ok()?.raw();
-    let foreign_handle = authority.grant(foreign_task, object(other()), Rights::WRITE).ok()?.raw();
+    let read_handle = authority
+        .grant(task, object(process), Rights::READ)
+        .ok()?
+        .raw();
+    let write_handle = authority
+        .grant(task, object(process), Rights::WRITE)
+        .ok()?
+        .raw();
+    let foreign_handle = authority
+        .grant(foreign_task, object(other()), Rights::WRITE)
+        .ok()?
+        .raw();
     let original = unsafe { ptr::read_volatile(own.physical_address as *const u64) };
     let foreign_original = unsafe { ptr::read_volatile(foreign.physical_address as *const u64) };
     unsafe {
@@ -206,24 +215,72 @@ pub unsafe fn dispatch(
         None => fatal(),
     };
     let expected = match state.completed {
-        0 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 8, COPY_IN_OK),
-        1 => (SYS_COPY_IN, state.read_handle, foreign.virtual_address, 8, COPY_DENIED),
-        2 => (SYS_COPY_OUT, state.read_handle, mapped.virtual_address, 8, COPY_DENIED),
-        3 => (SYS_COPY_OUT, state.foreign_handle, mapped.virtual_address, 8, COPY_DENIED),
+        0 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            8,
+            COPY_IN_OK,
+        ),
+        1 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            foreign.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        2 => (
+            SYS_COPY_OUT,
+            state.read_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        3 => (
+            SYS_COPY_OUT,
+            state.foreign_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
         4 => (SYS_COPY_IN, 0, mapped.virtual_address, 8, COPY_DENIED),
-        5 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 0, COPY_DENIED),
-        6 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address + 4095, 2, COPY_DENIED),
-        7 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address, 8, COPY_OUT_OK),
+        5 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            0,
+            COPY_DENIED,
+        ),
+        6 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            mapped.virtual_address + 4095,
+            2,
+            COPY_DENIED,
+        ),
+        7 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            mapped.virtual_address,
+            8,
+            COPY_OUT_OK,
+        ),
         8 => (SYS_COMPLETE, 0, mapped.virtual_address, 8, 0),
         _ => fatal(),
     };
-    if (number, raw_handle, user_address, length) != (expected.0, expected.1, expected.2, expected.3) {
+    if (number, raw_handle, user_address, length)
+        != (expected.0, expected.1, expected.2, expected.3)
+    {
         fatal();
     }
 
     let result = match number {
         SYS_COPY_IN | SYS_COPY_OUT => {
-            let needed = if number == SYS_COPY_IN { Rights::READ } else { Rights::WRITE };
+            let needed = if number == SYS_COPY_IN {
+                Rights::READ
+            } else {
+                Rights::WRITE
+            };
             if state
                 .authority
                 .authorize(state.task, raw_handle, object(state.process), needed)
@@ -259,9 +316,11 @@ pub unsafe fn dispatch(
                 state.process,
                 mapped.virtual_address,
                 &mut read_back,
-            ).is_err()
+            )
+            .is_err()
                 || read_back != PATTERN
-                || ptr::read_volatile(foreign.physical_address as *const u64) != state.foreign_original
+                || ptr::read_volatile(foreign.physical_address as *const u64)
+                    != state.foreign_original
             {
                 fatal();
             }
@@ -270,7 +329,8 @@ pub unsafe fn dispatch(
                 state.process,
                 mapped.virtual_address,
                 &state.original.to_le_bytes(),
-            ).is_err()
+            )
+            .is_err()
                 || ptr::read_volatile(mapped.physical_address as *const u64) != state.original
             {
                 fatal();

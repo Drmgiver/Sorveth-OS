@@ -551,7 +551,13 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
     call(SYS_COPY_OUT, foreign, own.virtual_address, 8, COPY_DENIED)?;
     call(SYS_COPY_IN, 0, own.virtual_address, 8, COPY_DENIED)?;
     call(SYS_COPY_IN, read, own.virtual_address, 0, COPY_DENIED)?;
-    call(SYS_COPY_OUT, write, own.virtual_address + 4095, 2, COPY_DENIED)?;
+    call(
+        SYS_COPY_OUT,
+        write,
+        own.virtual_address + 4095,
+        2,
+        COPY_DENIED,
+    )?;
     call(SYS_COPY_OUT, write, own.virtual_address, 8, COPY_OUT_OK)?;
 
     // Proof from actual CPL3 instructions that the process sees the bytes
