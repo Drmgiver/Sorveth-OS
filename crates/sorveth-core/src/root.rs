@@ -430,7 +430,7 @@ static mut USER_PT: RootPage = RootPage([0; 512]);
 /// loops forever and cannot produce the QEMU success marker.
 #[cfg(feature = "qemu-user")]
 struct ProbeProgram {
-    bytes: [u8; 1024],
+    bytes: [u8; 2048],
     len: usize,
 }
 
@@ -438,7 +438,7 @@ struct ProbeProgram {
 impl ProbeProgram {
     const fn new() -> Self {
         Self {
-            bytes: [0; 1024],
+            bytes: [0; 2048],
             len: 0,
         }
     }
@@ -545,6 +545,8 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
         program.set_r9(len)?;
         program.trap(number as u32, reply as u32)
     };
+    // Phase order mirrors the kernel's integrity-checked test table.
+    // Every request is an actual ring-3 INT80 instruction.
     call(SYS_COPY_IN, read, own.virtual_address, 8, COPY_IN_OK)?;
     call(SYS_COPY_IN, read, other.virtual_address, 8, COPY_DENIED)?;
     call(SYS_COPY_OUT, read, own.virtual_address, 8, COPY_DENIED)?;
@@ -558,7 +560,24 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
         2,
         COPY_DENIED,
     )?;
+    call(SYS_COPY_OUT, write, other.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, write, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, u64::MAX, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, read, 0, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, read, u64::MAX, 8, COPY_DENIED)?;
+    call(SYS_COPY_OUT, write, 0xffff_8000_0000_0000, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, read, 0x0000_7fff_ffff_fffc, 8, COPY_DENIED)?;
+    call(SYS_COPY_IN, read, own.virtual_address, 65537, COPY_DENIED)?;
+    call(SYS_COPY_OUT, write, own.virtual_address, 0, COPY_DENIED)?;
+
+    // Authorized write, followed by *additional* unauthorized writes.
+    // The kernel checks a whole-page digest on every INT80, so none of
+    // these denials may tamper with any byte of either process frame.
     call(SYS_COPY_OUT, write, own.virtual_address, 8, COPY_OUT_OK)?;
+    call(SYS_COPY_OUT, read, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_OUT, foreign, own.virtual_address, 8, COPY_DENIED)?;
+    call(SYS_COPY_OUT, write, other.virtual_address, 8, COPY_DENIED)?;
+    call(0x7f, write, own.virtual_address, 8, COPY_DENIED)?;
 
     // Proof from actual CPL3 instructions that the process sees the bytes
     // written by the kernel. A mismatch loops without reaching completion.
