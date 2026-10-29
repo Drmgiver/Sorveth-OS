@@ -216,13 +216,7 @@ pub unsafe fn verify_boot_handoff(info: &sorveth_abi::BootInfo) -> Result<Summar
     // Every page of the retained UEFI descriptor buffer is required to
     // reconstruct the physical ownership policy, not merely its endpoints.
     let map_end = checked_range_end(info.memory_map_address, info.memory_map_size)?;
-    audit_range(
-        root,
-        info.memory_map_address,
-        map_end,
-        false,
-        &mut report,
-    )?;
+    audit_range(root, info.memory_map_address, map_end, false, &mut report)?;
 
     if info.framebuffer.is_usable() {
         let start = info.framebuffer.address;
@@ -322,8 +316,14 @@ mod tests {
     fn handoff_ranges_reject_null_empty_overflow_and_canonical_holes() {
         assert_eq!(checked_range_end(0x1000, 4096), Ok(0x2000));
         assert_eq!(checked_range_end(0, 8), Err(AuditError::InvalidAddress));
-        assert_eq!(checked_range_end(0x1000, 0), Err(AuditError::InvalidAddress));
-        assert_eq!(checked_range_end(u64::MAX, 2), Err(AuditError::InvalidAddress));
+        assert_eq!(
+            checked_range_end(0x1000, 0),
+            Err(AuditError::InvalidAddress)
+        );
+        assert_eq!(
+            checked_range_end(u64::MAX, 2),
+            Err(AuditError::InvalidAddress)
+        );
         assert_eq!(
             checked_range_end(0x0000_7fff_ffff_ffff, 2),
             Err(AuditError::InvalidAddress)
