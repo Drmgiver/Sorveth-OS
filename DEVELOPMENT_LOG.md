@@ -229,3 +229,20 @@ broker receives no pointers, so no safe copy-in/out, page pinning or
 user fault recovery exists. The loader still depends on firmware identity
 mappings and no physical hardware has been tested. Next engineering target:
 per-task page tables and bounded validated user memory transfers.
+
+
+## 2026-10-28 — M2-I.2 process-private user data mapping
+
+- Added independent PDPT/PD/PT pages for each experimental process root.
+- Claimed two distinct conventional physical frames through Sorveth's
+  persistent ownership ledger and zeroed them before mapping.
+- Installed distinct USER RW/NX leaf mappings behind separate
+  lower-canonical PML4 slots; cross-process slots remain absent.
+- Integrated a CR3-driven virtual-memory write/read check with restoration
+  of the kernel root and verification of both physical sentinel values.
+- Preserved normal boot, serial monitor, deliberate #PF and hardcoded
+  ring-3 tests as mandatory acceptance checks.
+
+**Not yet a user-process security proof:** memory access tests execute
+under kernel privilege. Future milestones must run separate ring-3 contexts,
+prove user-to-user denial, and replace firmware inherited memory assumptions.

@@ -330,3 +330,25 @@ Lower-level kernel/firmware page tables are still shared and the identity
 mapping of loader storage still depends on OVMF. Process-private physical
 frames, individual user mapping subtrees and memory isolation are the next
 M2-I goals.
+
+
+## M2-I.2 — Separate physical user data pages and subtrees
+
+Sorveth's permanent physical frame ledger claims two **different** 4 KiB
+conventional-memory frames. Each is zeroed before being exposed in its own
+three-level PDPT/PD/PT subtree and previously reserved private PML4 slot.
+Every page-table level is USER=1, the data leaf is writable but NX, and no
+table or physical frame is shared between the two user mapping subtrees.
+
+QEMU temporarily installs each process's CR3 and reads/writes a different
+test value through the process's user virtual address. The kernel validates
+both underlying physical values, restored CR3, absent cross-process PML4
+slots and the absence of these mappings in the kernel root. Both page-table
+sets are checked via the previously validated bootstrap identity map.
+Normal monitor, controlled fault and ring-3 tests must still pass.
+
+**Scope:** the CPU runs these probes at CPL0, not as simultaneously running
+unprivileged processes. Both process PML4 roots still share inherited
+supervisor-only kernel subtrees, which rely on OVMF identity mapping. Actual
+ring-3 cross-process access denial and task execution are M2-I.3/I.4 tasks,
+not claims of this milestone.
