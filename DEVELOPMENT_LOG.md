@@ -308,3 +308,18 @@ this is not a production userspace scheduler or a general lifetime manager.
 - Required the policy marker in all existing QEMU and monitor modes.
 - Did not add any pointer dereferencing, process permission lookups,
   general page-table access or copying. Those require M2-J.2–J.4.
+
+
+## 2026-10-29 — M2-J.2 process-owned user-page walking
+
+- Added allocation-free read-only four-level page-table traversal with
+  bounded results and checked USER, PRESENT and WRITE permission paths.
+- Prevented callback reads of unchecked physical addresses by restricting
+  QEMU integration to kernel-audited process root and table-frame whitelist.
+- Tested mapped private data, foreign process slots, unmapped adjacent
+  pages and a range requiring all pages to pass before acceptance.
+- Added synthetic multi-page and permission-negative host tests.
+- Preserved the prior QEMU boot, #PF, ring-3 and monitor regressions.
+
+The returned mapping is a snapshot only. M2-J.3 must add copying and
+ensure user mappings and physical frames cannot change during transfer.

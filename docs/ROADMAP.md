@@ -458,3 +458,34 @@ numeric virtual addresses, with no memory access.
 permission, belongs to the calling task, or stays mapped. No untrusted
 pointer is dereferenced. Process-specific page-table walking follows in
 M2-J.2, while copy-in/copy-out safety comes in M2-J.3 and M2-J.4.
+
+
+## M2-J.2 — Process-aware, fail-closed page-table validation
+
+The new sorveth-paging user_walk module accepts a prevalidated UserRange,
+a trusted process PML4 root, and a read-only callback returning individual
+64-bit physical page-table entries. It walks four levels for *every* 4 KiB
+page in the requested range and requires PRESENT and USER at every level,
+plus WRITE at every level for write access. Missing mappings, supervisor
+permissions, read-only paths on writes, invalid physical frames, unknown
+table frames and 1-GiB/2-MiB huge pages fail closed.
+
+Returned physical page addresses are a bounded snapshot of up to 17 pages;
+not a pin, ownership grant, or permission to copy after mappings change.
+The walker never dereferences arbitrary physical addresses or user data.
+The kernel bridge chooses an existing kernel-owned Process identity and
+runs M2-I.5 mapping audits before walking. Its callback reads only the four
+whitelisted page-table frames owned by that process, all previously checked
+for safe identity mappings. The bridge currently knows the M2-I.2 private
+data subtrees, not arbitrary application mappings.
+
+Host tests cover cross-page success and noncontiguous physical frames,
+missing and unowned tables, non-user ancestors, read-only ancestors/leaves,
+huge pages and hardware-maintained Accessed/Dirty bits. QEMU verifies both
+process-owned pages for read/write permissions, rejects logical A-to-B and
+B-to-A cross-process walks, and rejects buffers crossing each unmapped
+second page. Normal boot, fault, ring-3 syscall/isolation and monitor tests
+remain mandatory.
+
+No copying, frame pinning, concurrent process execution or general-purpose
+user-memory service is claimed. M2-J.3 will address safe copy-from-user.
