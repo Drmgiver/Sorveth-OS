@@ -124,3 +124,36 @@ is the next engineering requirement, followed by an independent page-table
 builder and a separate root-transition QEMU mode.
 
 Evidence: Actions runs 40931953610 and 40932702573.
+
+
+## Bounded physical-backing and UEFI-provenance manifest (K.1d incremental)
+
+On Sorveth's permanent 128-KiB kernel stack, the loader handoff data is
+first copied into retained kernel storage. A bounded, allocation-free
+manifest then records **distinct 4-KiB virtual/physical page pairs** for
+sampled kernel/exception code, every kernel/worker/IST and optional ring-3
+trap stack page, active GDT/IDT/TSS, persistent frame-ledger storage,
+the retained BootInfo copy, all descriptor-buffer pages, and the first
+and last framebuffer device pages when usable.
+
+Each entry is resolved by an actual four-level page walk through the
+already audited, temporary Sorveth-owned access window; it is tagged
+with the UEFI descriptor memory type and effective WRITE/NX permissions.
+Missing physical descriptors, duplicate physical aliases, inconsistent
+UEFI descriptor coverage, accidental USER exposure and unrecognized
+critical memory types fail closed. Firmware framebuffer pages may be
+missing from ordinary descriptor coverage; this is explicitly counted,
+**not** treated as conventional RAM. Legacy writable+executable mappings
+remain visible as debt. These checks do not confer ownership of a UEFI
+loader/boot-services page, guarantee W^X, or prove a complete image map.
+
+The manifest is a *runtime test inventory*, consumed synchronously and
+not yet a persistent authoritative page-ownership database. The code image
+is represented by critical execution samples, not every executable page.
+Therefore it must not be fed directly into a replacement-CR3 installer.
+
+The full QEMU suite requires a dedicated manifest proof marker before
+native context switches. A future stage must capture the entire linked
+image layout and all required page-table ancestry, retain the validated
+metadata, reconcile ownership with actual frame claims, then construct
+a fully Sorveth-owned replacement supervisor hierarchy.

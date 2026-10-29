@@ -322,3 +322,15 @@ https://github.com/Drmgiver/Sorveth-OS/actions/runs/40932702573
 
 This is not an independently mapped kernel. Mapping ownership and the
 replacement root still require separate implementation and QEMU proof.
+
+
+### K.1d physical backing provenance (bounded manifest)
+
+The kernel now captures a bounded, zero-heap 4-KiB page manifest for
+critical supervisor code samples, all active/worker/fault/trap stacks,
+CPU descriptor tables, persistent frame ledger and retained boot handoff.
+Each page records its actual translated backing and UEFI type; overlaps,
+unsafe conventional/MMIO types for kernel data, USER exposure and missing
+mapping evidence fail closed. The device-framebuffer exception remains
+marked explicitly as potentially unclassified. This is a runtime proof,
+not an owner ledger or an installable full-image mapping plan.
