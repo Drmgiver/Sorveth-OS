@@ -334,3 +334,19 @@ unsafe conventional/MMIO types for kernel data, USER exposure and missing
 mapping evidence fail closed. The device-framebuffer exception remains
 marked explicitly as potentially unclassified. This is a runtime proof,
 not an owner ledger or an installable full-image mapping plan.
+
+
+### K.1d accepted physical-backing and owned table provenance
+
+Bounded, fail-closed runtime manifest checks current 4-KiB virtual/physical
+backing and UEFI provenance for critical kernel regions. A second dedicated
+QEMU gate verifies that all four static Sorveth-owned root/private paging
+frames have distinct, writable, aligned, classified backing. Host tests and
+all normal/fault/ring-3/isolation/transfer/monitor QEMU checks passed.
+Evidence: Actions 40942697712 and 40943212370.
+
+The manifest does **not** establish full-image sections, page lifetime,
+concurrent mapping safety, usable device caching or a firmware-independent
+supervisor hierarchy. Remaining before the K.1d switch: complete section
+coverage, retention/ownership semantics, W^X permissions, explicit
+physical table construction and a separate no-inherited-table QEMU mode.

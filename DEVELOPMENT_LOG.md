@@ -559,3 +559,36 @@ itself depends on the original identity mapping to validate inherited
 paging-table frames. Descriptor ownership, section-level W^X permissions,
 physical-backing manifest and a separate no-inherited-table CR3 smoke
 mode are the next prerequisites. M2-K.2 reclamation is also pending.
+
+
+## 2026-10-29 — M2-K.1d physical backing and paging provenance
+
+- Added a no-heap, 192-entry maximum physical-backing manifest on the
+  dedicated kernel stack. Its records track current virtual and physical
+  4-KiB pages, effective WRITE/NX, UEFI descriptor type and category.
+- Covered sampled kernel/exception code, all permanent kernel/worker/IST
+  and optional ring-3 trap stack pages, CPU GDT/IDT/TSS, frame ledger,
+  retained BootInfo, UEFI map buffer and optional framebuffer endpoints.
+- Copied BootInfo into retained kernel static memory before abandoning
+  the EFI entry stack; the UEFI descriptor buffer remains loader-owned.
+- Failed closed for missing/conflicting critical descriptor coverage,
+  critical conventional/MMIO backing, incorrect effective permissions,
+  mismatched page aliases and an overflowing manifest.
+- Device-framebuffer descriptors can be absent; that limitation is counted
+  separately rather than equated with ordinary RAM or frame ownership.
+- Added provenance proof for Sorveth's four static bootstrap paging frames:
+  PML4, private PDPT, private PD and private PT. All four must be separately
+  manifested with properly aligned backing and supervisor write access.
+- Kept the complete QEMU smoke suite, A/B fault/isolation/copy tests,
+  interactive monitor and host tests as mandatory acceptance gates.
+
+Evidence:
+- https://github.com/Drmgiver/Sorveth-OS/actions/runs/40942697712
+- https://github.com/Drmgiver/Sorveth-OS/actions/runs/40943212370
+
+**Not yet an independent CR3:** the manifest is captured and checked
+synchronously; it is not persistent authority for reclaiming or mapping
+frames. UEFI descriptor type is provenance, not a Sorveth ownership token.
+Full linked-image code/data coverage, physical page ownership and alias
+policy, device cache attributes, new page tables and a verified transition
+without borrowed OVMF ancestry remain to be implemented. M2-K.1d open.
