@@ -12,7 +12,7 @@ use sorveth_frames::FramePool;
 #[cfg(target_arch = "x86_64")]
 use core::{
     ptr,
-    sync::atomic::{compiler_fence, AtomicU64, Ordering},
+    sync::atomic::{compiler_fence, AtomicBool, AtomicU64, Ordering},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +30,9 @@ pub enum Error {
     NxUnsupported,
     RootNotInstalled,
     ScratchAddressUnavailable,
+    PhysicalWindowInvalid,
+    PhysicalWindowBusy,
+    WrongCpuContext,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -52,6 +55,10 @@ static UNMAPPED_TEST: AtomicU64 = AtomicU64::new(0);
 static PRIVATE_BASE: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static NEXT_PRIVATE_PAGE: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+const PHYSICAL_WINDOW_INDEX: usize = 511;
+#[cfg(target_arch = "x86_64")]
+static PHYSICAL_WINDOW_BUSY: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_arch = "x86_64")]
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
@@ -274,6 +281,83 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         let _ = pool;
         Err(Error::UnsupportedArchitecture)
     }
+}
+
+
+#[cfg(target_arch = "x86_64")]
+fn valid_physical_window_frame(frame: u64) -> bool {
+    frame != 0 && frame & 4095 == 0 && frame & !ADDRESS_MASK == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+struct PhysicalWindowGuard {
+    pte: *mut u64,
+    address: u64,
+}
+#[cfg(target_arch = "x86_64")]
+impl Drop for PhysicalWindowGuard {
+    fn drop(&mut self) {
+        unsafe {
+            ptr::write_volatile(self.pte, 0);
+            compiler_fence(Ordering::SeqCst);
+            core::arch::asm!(
+                "invlpg [{}]",
+                in(reg) self.address,
+                options(nostack, preserves_flags),
+            );
+        }
+        PHYSICAL_WINDOW_BUSY.store(false, Ordering::Release);
+    }
+}
+
+/// Temporarily access an owned physical frame through Sorveth's high-half PT.
+/// The page-table storage still uses the inherited bootstrap identity mapping.
+///
+/// # Safety
+/// The caller owns the complete frame, is on the only CPU with IRQs masked and
+/// kernel CR3 loaded, and does not retain the visitor pointer or change CR3.
+#[cfg(target_arch = "x86_64")]
+unsafe fn with_physical_window<R>(
+    frame: u64,
+    visit: impl FnOnce(*mut u8) -> R,
+) -> Result<R, Error> {
+    if !valid_physical_window_frame(frame) {
+        return Err(Error::PhysicalWindowInvalid);
+    }
+    let root = ACTIVE_ROOT.load(Ordering::Acquire);
+    let base = PRIVATE_BASE.load(Ordering::Acquire);
+    let active: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if root == 0 || base == 0 || active & ADDRESS_MASK != root || flags & (1 << 9) != 0 {
+        return Err(Error::WrongCpuContext);
+    }
+    if PHYSICAL_WINDOW_BUSY
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(Error::PhysicalWindowBusy);
+    }
+    let pte = ptr::addr_of_mut!(SORVETH_PT)
+        .cast::<u64>()
+        .add(PHYSICAL_WINDOW_INDEX);
+    if ptr::read_volatile(pte) != 0 {
+        PHYSICAL_WINDOW_BUSY.store(false, Ordering::Release);
+        return Err(Error::PhysicalWindowBusy);
+    }
+    let address = base + PHYSICAL_WINDOW_INDEX as u64 * 4096;
+    ptr::write_volatile(pte, frame | PRESENT | WRITE | NO_EXECUTE);
+    compiler_fence(Ordering::SeqCst);
+    core::arch::asm!(
+        "invlpg [{}]",
+        in(reg) address,
+        options(nostack, preserves_flags),
+    );
+    let guard = PhysicalWindowGuard { pte, address };
+    let result = visit(address as *mut u8);
+    drop(guard);
+    Ok(result)
 }
 
 /// Claim, zero, and map one additional supervisor-only NX 4 KiB page inside
