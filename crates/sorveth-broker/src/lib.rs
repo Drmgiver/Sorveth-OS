@@ -1,6 +1,6 @@
-pub mod memory_authority;
-
 #![no_std]
+
+pub mod memory_authority;
 
 //! Kernel-owned syscall authority broker (M2-H prototype).
 //!
