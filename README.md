@@ -26,7 +26,7 @@ is enabled. The code is GPL-3.0-only.
 | M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only READ/WRITE and denies forged/foreign tokens | Hardcoded QEMU probe |
 | M2-I: isolated experimental process roots | Distinct A/B CR3 roots, per-process user frames, bidirectional ring-3 foreign-memory denial and task-root lifecycle checks | Static permanent test mappings, nonpreemptive bootstrap |
 | M2-J: bounded user-memory syscall proof | Audited user page walks, capability-gated copy-in/out and 22 real ring-3 INT80 probes per process with whole-frame integrity checks | Exactly eight bytes per syscall in current test ABI; not general user memory or production process lifecycle |
-| M2-K.1 (partial): owned frame access | High-half transient physical window, owned frame-copy/checksum paths, audited user-page reads and private PT self-alias | Firmware-inherited mappings still required by early root setup, auditing and kernel execution |
+| M2-K.1 (partial): owned frame access | High-half physical window, copy/checksum paths, process-root audits, paging-tree initialization and private PT self-alias | Firmware-inherited mappings still required by early boot/root setup and kernel execution |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
 page. QEMU verified the hardware #PF, CR2 address and user-mode

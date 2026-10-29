@@ -443,3 +443,29 @@ M2-J complete only as a controlled QEMU bootstrap demonstration.
 dynamic physical-frame reclamation, full process lifecycle, general user
 buffer ABI or physical hardware. The remaining inherited mappings must be
 replaced and separately proven before any release claim.
+
+
+## 2026-10-29 — M2-K.1c registered page-table audit and construction
+
+- M2-I.5 address-space validation now inspects static registered kernel,
+  process PML4, PDPT, PD and PT entries via the scoped Sorveth-owned
+  physical frame window. A strict nine-frame whitelist and per-frame
+  index bounds deny arbitrary PTE-derived table pointers.
+- Existing foreign-slot checks, PTE permission audits, A/D-bit rules,
+  task identity generation checks, stale-root tests and deliberate
+  corruption denial remain mandatory.
+- M2-I.2 private process paging construction now zeros six static
+  paging frames and installs all eight process table links through the
+  same high-half window, rather than raw physical-pointer writes.
+- QEMU emits mandatory verification markers after the real process
+  isolation and scheduler tests. All host and QEMU checks passed.
+- Accepted test run for audit:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40905890138
+- Accepted test run for construction:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40906547145
+
+**Remaining K.1 work:** physical-to-virtual bootstrap conversion and the
+rest of firmware-dependent supervisor root/table initialization and CPU
+kernel mappings, followed by an explicit no-inherited-mapping test mode.
+Both K.1c increments remain single-core, nonpreemptive, QEMU-specific;
+not full general process creation or safe page reclamation.

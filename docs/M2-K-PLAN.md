@@ -158,3 +158,21 @@ Firmware identity mappings remain necessary for early static frame address
 validation and existing root/stack and supervisor boot mappings. These
 changes are single-core, nonpreemptive, permanently backed bootstrap
 experiments, not general concurrent address-space creation.
+
+
+### K.1c acceptance update — audited and constructed private paging trees
+
+The registered process address-space audit and both private paging-tree
+installation paths have been migrated to the Sorveth-owned high-half
+physical window. CI has verified the mapping-permission tamper tests,
+normal/fault QEMU boot, both process isolation directions, both 22-call
+ring-3 memory-transfer images and the interactive serial monitor.
+
+Evidence: Actions runs 40905890138 and 40906547145 (both passed).
+
+Pending for K.1d is real removal of firmware mapping inheritance, including
+provisioning supervisor kernel executable/data, stacks, interrupts, memory
+map, framebuffer and all CPU-required mappings through kernel-owned tables.
+Do not infer that switching the user-table builder removes those remaining
+bootstrap dependencies; the owned frame window itself still needs the
+initial Sorveth private supervisor subtree installed during handoff.
