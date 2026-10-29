@@ -364,9 +364,9 @@ unsafe fn with_physical_window<R>(
 /// Sorveth's private 2 MiB upper-half bootstrap window. Slot one is reserved
 /// as an intentionally absent page for the controlled #PF acceptance test.
 ///
-/// This is **not** a general heap: only one CPU may call it, the inherited
-/// firmware identity map must still cover the physical frame, and pages are
-/// never reclaimed. A future mapper will remove these constraints.
+/// This is **not** a general heap: only one CPU may call it; its paging
+/// tables still use inherited firmware identity mappings, and pages are never
+/// reclaimed. The claimed frame itself uses the owned K.1a virtual window.
 pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -374,7 +374,7 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
             return Err(Error::RootNotInstalled);
         }
         let slot = NEXT_PRIVATE_PAGE.load(Ordering::Acquire);
-        if !(2..512).contains(&slot) {
+        if !(2..PHYSICAL_WINDOW_INDEX as u64).contains(&slot) {
             return Err(Error::NoFreeVirtualSlot);
         }
         let physical = pool
@@ -382,12 +382,9 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
             .map_err(|_| Error::FrameUnavailable)?
             .start;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
-        if inherited_translate(root, physical) != Some(physical) {
-            return Err(Error::TestFrameNotIdentityMapped);
-        }
-        // Physical memory is accessible through OVMF's identity map here.
-        // Zero before exposing the page at its new virtual address.
-        ptr::write_bytes(physical as *mut u8, 0, 4096);
+        // K.1a: access this newly claimed frame through the Sorveth-owned
+        // high-half window instead of dereferencing a physical address.
+        with_physical_window(physical, |window| ptr::write_bytes(window, 0, 4096))?;
         let pte = ptr::addr_of_mut!(SORVETH_PT)
             .cast::<u64>()
             .add(slot as usize);
@@ -407,10 +404,18 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         // A distinct address and a distinct physical claim are required.
         const SENTINEL: u64 = 0x53_4f_52_56_4d_41_50_21;
         ptr::write_volatile(virtual_address as *mut u64, SENTINEL ^ slot);
-        if ptr::read_volatile(physical as *const u64) != (SENTINEL ^ slot)
+        let observed = with_physical_window(physical, |window| {
+            ptr::read_volatile(window as *const u64)
+        })?;
+        if observed != (SENTINEL ^ slot)
             || translate(root, virtual_address, |address| {
                 Some(ptr::read_volatile(address as *const u64))
             }) != Some(physical)
+            || ptr::read_volatile(
+                ptr::addr_of_mut!(SORVETH_PT)
+                    .cast::<u64>()
+                    .add(PHYSICAL_WINDOW_INDEX),
+            ) != 0
         {
             return Err(Error::VerificationFailed);
         }
