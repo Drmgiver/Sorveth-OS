@@ -493,7 +493,9 @@ pub unsafe fn walk_process_user_range(
 fn approved_table_entry(owned: &[u64; 4], entry_address: u64) -> bool {
     let page = entry_address & !4095;
     entry_address & 7 == 0
-        && entry_address.checked_sub(page).is_some_and(|offset| offset <= 4096 - 8)
+        && entry_address
+            .checked_sub(page)
+            .is_some_and(|offset| offset <= 4096 - 8)
         && owned.contains(&page)
 }
 
@@ -648,17 +650,21 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             || frame_b == 0
             || frame_a & 4095 != 0
             || frame_b & 4095 != 0
-            || !crate::root::identity_mapped(frame_a)
-            || !crate::root::identity_mapped(frame_b)
         {
             return Err(Error::FrameUnavailable);
         }
-        ptr::write_bytes(frame_a as *mut u8, 0, 4096);
-        ptr::write_bytes(frame_b as *mut u8, 0, 4096);
-        if ptr::read_volatile(frame_a as *const u64) != 0
-            || ptr::read_volatile(frame_b as *const u64) != 0
-        {
-            return Err(Error::VerificationFailed);
+        // Both ledger-claimed data frames are initialized through Sorveth's
+        // temporary supervisor alias. Their physical addresses are not
+        // directly dereferenced and need no firmware identity mapping.
+        for frame in [frame_a, frame_b] {
+            let zeroed = crate::root::with_physical_window(frame, |window| {
+                ptr::write_bytes(window, 0, 4096);
+                ptr::read_volatile(window as *const u64) == 0
+            })
+            .map_err(|_| Error::FrameUnavailable)?;
+            if !zeroed {
+                return Err(Error::VerificationFailed);
+            }
         }
 
         // Each process gets physically distinct PML4/PDPT/PD/PT ancestors.
@@ -694,9 +700,9 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         // Actual x86 translation and memory writes under each independent
         // CR3 root, with a full CR3 reload flushing non-global TLB entries.
         let mut valid = true;
-        for (root, address, expected, frame) in [
-            (first_root, first_virt, FIRST_TEST_WORD, frame_a),
-            (second_root, second_virt, SECOND_TEST_WORD, frame_b),
+        for (root, address, expected) in [
+            (first_root, first_virt, FIRST_TEST_WORD),
+            (second_root, second_virt, SECOND_TEST_WORD),
         ] {
             asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
             let mut observed: u64;
@@ -706,9 +712,11 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
                 break;
             }
             ptr::write_volatile(address as *mut u64, expected);
-            if ptr::read_volatile(address as *const u64) != expected
-                || ptr::read_volatile(frame as *const u64) != expected
-            {
+            // The user-virtual read proves data visibility under the selected
+            // process root. Physical-frame verification follows after the
+            // kernel CR3 is restored, through its own mapped window.
+            if ptr::read_volatile(address as *const u64) != expected {
+
                 valid = false;
                 break;
             }
@@ -716,10 +724,20 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
         let restored: u64;
         asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+        if restored & ADDRESS_MASK != kernel {
+            return Err(Error::VerificationFailed);
+        }
+        let observed_a = crate::root::with_physical_window(frame_a, |window| {
+            ptr::read_volatile(window as *const u64)
+        })
+        .map_err(|_| Error::VerificationFailed)?;
+        let observed_b = crate::root::with_physical_window(frame_b, |window| {
+            ptr::read_volatile(window as *const u64)
+        })
+        .map_err(|_| Error::VerificationFailed)?;
         if !valid
-            || restored & ADDRESS_MASK != kernel
-            || ptr::read_volatile(frame_a as *const u64) != FIRST_TEST_WORD
-            || ptr::read_volatile(frame_b as *const u64) != SECOND_TEST_WORD
+            || observed_a != FIRST_TEST_WORD
+            || observed_b != SECOND_TEST_WORD
             || ptr::read_volatile((kernel as *const u64).add(first_slot as usize)) != 0
             || ptr::read_volatile((kernel as *const u64).add(second_slot as usize)) != 0
         {
