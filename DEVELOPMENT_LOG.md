@@ -493,3 +493,36 @@ firmware-provided lower-level supervisor mappings and some bootstrap
 address-space checks still require inherited OVMF mappings. No claim
 of dynamically allocated/reclaimed frames, general process lifecycle,
 SMP, preemption or real-hardware acceptance is made here.
+
+
+## 2026-10-29 — M2-K.1d scheduler/copy/loader identity-access reduction
+
+- Replaced direct physical PML4/frame reads in the M2-I.3 scheduler
+  switching probe with registered frame-window accesses. The A-B-A-B
+  proof still performs actual user-virtual CPU reads/writes under each
+  selected independent process CR3 root.
+- Contained the M2-I.5 deliberately corrupted USER permission test in
+  a registered-root writer that restores and re-audits the original entry,
+  with no exposed raw physical root pointer.
+- Migrated M2-J.3/J.4 positive/negative copy-in/out verification of both
+  4-KiB process data frames, including the last-byte boundary, to bounded
+  Sorveth-owned frame-window reads; no direct physical identity reads
+  remain in those test functions.
+- Migrated the QEMU ring-3 test loader's root slot search, generated code
+  page, user stack, test PDPT/PD/PT construction and translation checks to
+  owned-window accesses. Page-table traversal admits only the four known
+  bootstrap test table frames. The two ledger-claimed code/stack frames
+  no longer need physical identity mappings for initial contents.
+- Preserved all normal boot, deliberate fault, legacy ring-3, bidirectional
+  cross-process denial, A/B 22-INT80 syscall and interactive monitor checks.
+- Accepted code and main-branch CI evidence:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40916862711
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40917416388
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918197260
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918371037
+
+**Scope:** all of these are controlled single-core QEMU bootstrap probes.
+The kernel executable, kernel/IST stacks, CPU descriptor tables, memory
+map and remaining firmware-inherited supervisor paging still require
+independent mapping. M2-K.1d is not complete, nor is M2-K.2 frame reuse.
+See docs/M2-K1D-SUPERVISOR-TRANSITION.md for the next acceptance gates.

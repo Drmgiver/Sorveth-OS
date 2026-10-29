@@ -285,3 +285,17 @@ The static test paging-table frames continue to be identity-validated
 at their early bootstrap physical addresses. This is not a general
 process loader, and active kernel code/stack/IDT mapping independence
 remains a separate K.1d acceptance target.
+
+
+### K.1d checkpoint: scheduler, copy and ring-3 loader owned mappings
+
+CI-verified: scheduler-owned PML4/data checks and negative test restoration,
+both bounded copy-integrity suites, and construction/translation of the
+ring-3 code/stack/table test subtree via Sorveth's owned frame window.
+Main verification: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918371037
+
+**K.1d remains open.** Next: the explicit supervisor mapping inventory,
+ownership and permissions for kernel executable, data, stacks, IDT/TSS,
+boot information, serial console and optional framebuffer; a separately
+QEMU-validated replacement kernel root that can drop all inherited OVMF
+lower-level tables. See M2-K1D-SUPERVISOR-TRANSITION.md.
