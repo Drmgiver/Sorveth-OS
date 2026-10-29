@@ -214,11 +214,15 @@ pub unsafe fn verify_copy_to_user() -> bool {
         let mut last_observed = [0u8; 1];
         let end_matched = copy_from_process(process, last_address, &mut last_observed).is_ok()
             && last_observed == [0xee]
-            && process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize) == Some(0xee);
+            && process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize)
+                == Some(0xee);
         if copy_to_process(process, last_address, &[last_before]).is_err() {
             return false;
         }
-        if !end_matched || process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize) != Some(last_before) {
+        if !end_matched
+            || process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize)
+                != Some(last_before)
+        {
             return false;
         }
 

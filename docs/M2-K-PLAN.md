@@ -248,3 +248,19 @@ audit. The caller receives no physical table pointer. QEMU requires a
 new marker after these real scheduler/negative tests, in all supported
 boot variants. Unmapped/faulting kernel pointers and inherited supervisor
 code/stack/IDT memory are not yet removed; K.1d is still incomplete.
+
+
+### K.1d intermediate checkpoint — owned-memory copy verification
+
+The controlled M2-J.3/4 kernel copy-in and copy-out tests now use
+Sorveth's registered, kernel-owned frame alias for all first-word and
+final-page-byte integrity observations of both process frames. Test code
+no longer casts a physical process-frame address into a pointer, even
+for the intentionally rejected writes and cross-page copy attempts.
+A bounded read for one requested byte rejects offsets beyond the fixed
+4-KiB process test frame. The exact positive and negative transfers
+still exercise the original audited user-memory copy routines, with
+both A/B cases checked before the new QEMU success marker is printed.
+
+This does not address dynamic data-frame pinning, multiple user pages,
+preemption or removing inherited supervisor code and stack mappings.
