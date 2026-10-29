@@ -471,16 +471,30 @@ pub unsafe fn walk_process_user_range(
         ],
     };
 
-    // Every accepted table was identity-mapped and audited above. Never
-    // dereference any address coming from a PTE until the 4-KiB containing
-    // table is confirmed to be in this *specific* process-owned whitelist.
+    // Deny any entry outside this process's audited four-frame whitelist,
+    // then read through the kernel-owned high-half window. No page-table
+    // entry physical address is directly dereferenced as a pointer.
     walk_user_pages(root, range, access, |entry_address| {
-        let page = entry_address & !4095;
-        if entry_address & 7 != 0 || !owned.contains(&page) {
+        if !approved_table_entry(&owned, entry_address) {
             return None;
         }
-        Some(ptr::read_volatile(entry_address as *const u64))
+        let page = entry_address & !4095;
+        crate::root::with_physical_window(page, |window| {
+            ptr::read_volatile(window.add((entry_address - page) as usize) as *const u64)
+        })
+        .ok()
     })
+}
+
+/// Read only an aligned u64 entry fully contained in a page-table frame
+/// explicitly owned by the selected process. Physical addresses obtained from
+/// untrusted PTEs must never expand the caller's whitelist.
+#[cfg(target_arch = "x86_64")]
+fn approved_table_entry(owned: &[u64; 4], entry_address: u64) -> bool {
+    let page = entry_address & !4095;
+    entry_address & 7 == 0
+        && entry_address.checked_sub(page).is_some_and(|offset| offset <= 4096 - 8)
+        && owned.contains(&page)
 }
 
 /// Live QEMU acceptance: validate both real process-private USER pages,
@@ -727,6 +741,19 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
 mod tests {
     #[cfg(target_arch = "x86_64")]
     use super::*;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn owned_page_table_reader_rejects_foreign_unaligned_and_cross_page_entries() {
+        let owned = [0x1000, 0x2000, 0x3000, 0x4000];
+        assert!(approved_table_entry(&owned, 0x1000));
+        assert!(approved_table_entry(&owned, 0x1ff8));
+        assert!(approved_table_entry(&owned, 0x4008));
+        assert!(!approved_table_entry(&owned, 0x5000));
+        assert!(!approved_table_entry(&owned, 0x1001));
+        assert!(!approved_table_entry(&owned, 0x1fff));
+        assert!(!approved_table_entry(&owned, u64::MAX));
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
