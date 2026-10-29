@@ -246,3 +246,18 @@ per-task page tables and bounded validated user memory transfers.
 **Not yet a user-process security proof:** memory access tests execute
 under kernel privilege. Future milestones must run separate ring-3 contexts,
 prove user-to-user denial, and replace firmware inherited memory assumptions.
+
+
+## 2026-10-28 — M2-I.3 scheduler-directed CR3 switching
+
+- Added a task-to-Process registry with generation-safe ownership,
+  duplicate-process rejection, blocked-task selection and stale-ID tests.
+- Kernel selects A-B-A-B in the established Scheduler and loads the
+  corresponding independent physical CR3 root for each selected task.
+- QEMU reads/writes the task's own private USER RW/NX page and confirms
+  the untouched foreign frame and absent foreign PML4 slot.
+- Restores Sorveth's kernel CR3 between each task selection and checks
+  preserved values when reselecting the same process.
+- This is *not yet independent ring-3 task execution*, preemption or a
+  complete process security boundary; shared supervisor lower tables
+  are still inherited from the OVMF bootstrap.

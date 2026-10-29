@@ -7,6 +7,8 @@
 mod fibers;
 mod interrupts;
 mod monitor;
+#[cfg(target_arch = "x86_64")]
+mod address_scheduler;
 mod process_roots;
 mod root;
 mod screen;

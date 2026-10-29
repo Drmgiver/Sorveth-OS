@@ -86,6 +86,7 @@ for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
+  'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -133,6 +134,7 @@ for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
+  'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
@@ -174,6 +176,7 @@ for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
+  'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \

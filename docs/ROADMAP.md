@@ -352,3 +352,30 @@ unprivileged processes. Both process PML4 roots still share inherited
 supervisor-only kernel subtrees, which rely on OVMF identity mapping. Actual
 ring-3 cross-process access denial and task execution are M2-I.3/I.4 tasks,
 not claims of this milestone.
+
+
+## M2-I.3 — Scheduler-directed process address-space switching
+
+A trusted kernel-only address-space scheduler binds generation-safe task IDs
+to the two separately owned PML4 roots. It refuses duplicate bindings,
+honors blocked tasks, rejects stale task generations, and selects runnable
+tasks through Sorveth's existing fair Scheduler rather than accepting raw
+process root pointers from userspace.
+
+The QEMU bootstrap executes four selections: process A, B, A, B. For each
+selected task the kernel loads its corresponding physical root into CR3,
+checks the selected private USER RW/NX virtual data page, updates the
+memory through that address, and returns to Sorveth's kernel CR3 before
+proceeding. It verifies the other process's physical frame was unchanged,
+the foreign user's PML4 slot remains unmapped, the correct root was active
+and the second visit resumes with the previous write intact. Scheduler
+blocking, waking and exit are checked afterward. Normal QEMU, controlled
+fault, ring-3 authorization, and interactive monitor tests require the
+A-B-A-B marker.
+
+**Scope:** CPU memory-root switching is real, but selected tasks do not
+yet execute their own ring-3 instructions. The kernel runs this deterministic
+single-core test with maskable interrupts disabled, and kernel/firmware
+subtrees remain shared. M2-I.4 will test actual user-mode access denial
+across process boundaries; full task context switching, separate user
+stacks, user-pointer validation and preemption remain future work.

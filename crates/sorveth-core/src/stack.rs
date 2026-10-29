@@ -91,6 +91,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line(
         "Sorveth private process pages: distinct user RW/NX mappings verified",
     );
+    if unsafe { crate::address_scheduler::verify_scheduled_switches() }.is_err() {
+        crate::serial::write_line("FATAL: scheduler address-space switching failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("Sorveth scheduler CR3: A B A B private address spaces verified");
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {
