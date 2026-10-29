@@ -71,3 +71,21 @@ only the current one-frame permanent process pages are supported. QEMU must
 check the new marker in every ordinary boot and the existing A/B ring-3
 memory-syscall and denial runs. This does **not** yet migrate page-table
 walking, process creation or test setup off inherited firmware mappings.
+
+
+### K.1b checkpoint: process-owned page-table reads and frame initialization
+
+The bounded M2-J.2 user page walker now only admits aligned entries inside
+four known process-owned table frames, and reads those entries through the
+scoped Sorveth-owned high-half window. The kernel does not dereference a
+PTE-derived physical pointer directly. The two process data frames are also
+zeroed through the same window at creation and their final physical values
+are checked via that window after restoring the kernel CR3.
+
+Normal, deliberate-fault, ring-3, A/B isolation, A/B transfer and interactive
+monitor acceptance must continue to pass; the new marker is emitted only
+on the verified post-process-walk boot path.
+
+**Not yet migrated:** initial PML4/static table setup and ownership audits
+still access identity-mapped memory; current processes retain permanent
+one-page data mappings. Firmware identity mappings cannot yet be removed.

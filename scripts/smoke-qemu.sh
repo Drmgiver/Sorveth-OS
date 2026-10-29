@@ -91,6 +91,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
@@ -146,6 +147,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
@@ -194,6 +196,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
@@ -247,8 +250,10 @@ for side in a b; do
     'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
     'SORVETH M2-J.1: bounded user address ranges validated' \
     'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+    'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
     'Sorveth ring-3 isolation: process-owned CR3 armed' \
     'SORVETH ISOLATION: own process memory read in ring 3' \
