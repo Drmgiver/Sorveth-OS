@@ -398,6 +398,24 @@ pub(crate) unsafe fn read_process_frame_word(process: Process) -> Option<u64> {
     .ok()
 }
 
+/// Read one byte from the *registered* process data frame at a bounded
+/// offset through Sorveth's owned supervisor frame window. The address
+/// cannot be chosen outside the currently pinned one-page test mapping.
+///
+/// # Safety
+/// Kernel CR3, one CPU, IRQs masked, process frame not reclaimed.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_frame_byte(process: Process, offset: usize) -> Option<u8> {
+    if offset >= 4096 {
+        return None;
+    }
+    let mapping = mapped_page(process)?;
+    crate::root::with_physical_window(mapping.physical_address, |window| {
+        ptr::read_volatile(window.add(offset) as *const u8)
+    })
+    .ok()
+}
+
 /// Temporarily corrupt the chosen known root's USER bit for a negative
 /// authorization test, restoring the PML4 entry before returning.
 /// The caller never receives a physical PML4 pointer.

@@ -170,48 +170,55 @@ pub unsafe fn verify_copy_to_user() -> bool {
             Some(value) => value,
             None => return false,
         };
-        let original = ptr::read_volatile(own.physical_address as *const u64);
-        let foreign_original = ptr::read_volatile(foreign.physical_address as *const u64);
+        let Some(original) = process_roots::read_process_frame_word(process) else {
+            return false;
+        };
+        let Some(foreign_original) = process_roots::read_process_frame_word(other) else {
+            return false;
+        };
         let original_bytes = original.to_le_bytes();
         let replacement = [0x5au8, 0xa5, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
 
         // Modify the actual process-private frame through the audited
-        // physical mapping, then independently read through copy-in.
+        // owned mapping, then independently read through copy-in.
         if copy_to_process(process, own.virtual_address, &replacement).is_err() {
             return false;
         }
         let mut observed = [0u8; 8];
         let matched = copy_from_process(process, own.virtual_address, &mut observed).is_ok()
             && observed == replacement
-            && ptr::read_volatile(own.physical_address as *const u64)
-                == u64::from_le_bytes(replacement);
+            && process_roots::read_process_frame_word(process)
+                == Some(u64::from_le_bytes(replacement));
 
         // Restore the original sentinel regardless of the readback result.
         if copy_to_process(process, own.virtual_address, &original_bytes).is_err() {
             return false;
         }
         if !matched
-            || ptr::read_volatile(own.physical_address as *const u64) != original
-            || ptr::read_volatile(foreign.physical_address as *const u64) != foreign_original
+            || process_roots::read_process_frame_word(process) != Some(original)
+            || process_roots::read_process_frame_word(other) != Some(foreign_original)
         {
             return false;
         }
 
         // Write a single byte at the final mapped offset, then restore it.
         let last_address = own.virtual_address + PAGE_BYTES - 1;
-        let last_physical = (own.physical_address + PAGE_BYTES - 1) as *const u8;
-        let last_before = ptr::read_volatile(last_physical);
+        let Some(last_before) =
+            process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize)
+        else {
+            return false;
+        };
         if copy_to_process(process, last_address, &[0xee]).is_err() {
             return false;
         }
         let mut last_observed = [0u8; 1];
         let end_matched = copy_from_process(process, last_address, &mut last_observed).is_ok()
             && last_observed == [0xee]
-            && ptr::read_volatile(last_physical) == 0xee;
+            && process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize) == Some(0xee);
         if copy_to_process(process, last_address, &[last_before]).is_err() {
             return false;
         }
-        if !end_matched || ptr::read_volatile(last_physical) != last_before {
+        if !end_matched || process_roots::read_process_frame_byte(process, (PAGE_BYTES - 1) as usize) != Some(last_before) {
             return false;
         }
 
@@ -256,8 +263,8 @@ pub unsafe fn verify_copy_to_user() -> bool {
             return false;
         }
 
-        if ptr::read_volatile(own.physical_address as *const u64) != original
-            || ptr::read_volatile(foreign.physical_address as *const u64) != foreign_original
+        if process_roots::read_process_frame_word(process) != Some(original)
+            || process_roots::read_process_frame_word(other) != Some(foreign_original)
         {
             return false;
         }
@@ -287,8 +294,12 @@ pub unsafe fn verify_copy_from_user() -> bool {
             Some(page) => page,
             None => return false,
         };
-        let before = ptr::read_volatile(own.physical_address as *const u64);
-        let foreign_before = ptr::read_volatile(other.physical_address as *const u64);
+        let Some(before) = process_roots::read_process_frame_word(process) else {
+            return false;
+        };
+        let Some(foreign_before) = process_roots::read_process_frame_word(foreign) else {
+            return false;
+        };
         let expected = before.to_le_bytes();
 
         let mut full = [0xa5u8; 8];
@@ -361,8 +372,8 @@ pub unsafe fn verify_copy_from_user() -> bool {
         }
 
         // Copy-in must never alter the source, or another process's data.
-        if ptr::read_volatile(own.physical_address as *const u64) != before
-            || ptr::read_volatile(other.physical_address as *const u64) != foreign_before
+        if process_roots::read_process_frame_word(process) != Some(before)
+            || process_roots::read_process_frame_word(foreign) != Some(foreign_before)
         {
             return false;
         }
