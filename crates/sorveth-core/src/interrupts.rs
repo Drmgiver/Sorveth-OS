@@ -388,8 +388,10 @@ sorveth_user_int80_entry:
     mov rdx, [rbx + 72]
     mov r8, [rbx + 32]
     mov r9, [rbx + 24]
+    mov r10, [rbx + 16]
     and rsp, -16
-    sub rsp, 32
+    sub rsp, 48
+    mov [rsp + 32], r10
     call sorveth_user_int80_rust
     mov [rbx + 48], rax
     mov rsp, rbx
@@ -442,11 +444,18 @@ pub extern "efiapi" fn sorveth_user_int80_rust(
     caller_cs: u64,
     handle: u64,
     value: u64,
+    length: u64,
 ) -> u64 {
     if caller_cs & 3 != 3 {
         crate::serial::write_line("FATAL: ring-3 trap came from wrong privilege");
         halt_fault();
     }
+    #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+    {
+        return unsafe { crate::transfer::dispatch(number, caller_cs, handle, value, length) };
+    }
+    #[cfg(not(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b")))]
+    let _ = length;
     #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
     {
         let _ = (handle, value);
