@@ -17,6 +17,7 @@ mod screen;
 mod serial;
 mod stack;
 mod supervisor_audit;
+mod supervisor_manifest;
 #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
 mod transfer;
 mod tss;
@@ -296,7 +297,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     // Never return into UEFI's stack. Both QEMU modes and the interactive
     // monitor execute on Sorveth's own statically retained kernel stack.
-    stack::enter(memory_summary)
+    stack::enter(memory_summary, *boot)
 }
 
 #[inline(never)]

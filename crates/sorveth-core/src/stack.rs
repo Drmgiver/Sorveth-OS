@@ -5,7 +5,8 @@
 //! is still inherited. After leaving the EFI entry stack, this trampoline
 //! must never return to it. Interrupts stay masked.
 
-use sorveth_memory::MapSummary;
+use sorveth_memory::{MapSummary, MemoryMap};
+use sorveth_abi::BootInfo;
 
 #[cfg(target_arch = "x86_64")]
 use core::{arch::asm, ptr};
@@ -27,12 +28,18 @@ static mut SAVED_MEMORY: MapSummary = MapSummary {
     highest_physical_end: 0,
 };
 
+#[cfg(target_arch = "x86_64")]
+static mut SAVED_BOOT: Option<BootInfo> = None;
+
 /// Transfer to the Sorveth-owned stack, preserving the memory-map summary.
 /// The EFI loader's stack is never reused by this kernel entry afterward.
-pub fn enter(memory: MapSummary) -> ! {
+pub fn enter(memory: MapSummary, boot: BootInfo) -> ! {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         ptr::write_volatile(ptr::addr_of_mut!(SAVED_MEMORY), memory);
+        // Retain an owned value copy: the original firmware entry stack
+        // is abandoned permanently when the kernel changes RSP.
+        ptr::write_volatile(ptr::addr_of_mut!(SAVED_BOOT), Some(boot));
         let base = ptr::addr_of_mut!(KERNEL_STACK).cast::<u8>() as u64;
         let top = base + STACK_BYTES as u64;
         // Win64/efiapi requires 16-byte stack alignment at the call site
@@ -51,7 +58,7 @@ pub fn enter(memory: MapSummary) -> ! {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = memory;
+        let _ = (memory, boot);
         crate::halt_forever()
     }
 }
@@ -87,6 +94,44 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         }
         _ => {
             crate::serial::write_line("FATAL: supervisor survival mapping audit failed");
+            crate::halt_forever();
+        }
+    }
+    // Build an immutable bounded physical-page inventory on the retained
+    // kernel stack, not on the abandoned UEFI entry stack. The copied
+    // BootInfo refers to the loader-owned, still-mapped descriptor buffer.
+    let boot = match unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_BOOT)) } {
+        Some(info) => info,
+        None => {
+            crate::serial::write_line("FATAL: saved handoff data unavailable");
+            crate::halt_forever();
+        }
+    };
+    let map = match unsafe { MemoryMap::from_boot_info(&boot) } {
+        Ok(value) => value,
+        Err(_) => {
+            crate::serial::write_line("FATAL: retained descriptor map unavailable");
+            crate::halt_forever();
+        }
+    };
+    let manifest = unsafe {
+        crate::supervisor_manifest::capture::<192>(&map, &boot, (base, end))
+    };
+    match manifest {
+        Ok(found) if found.len() >= 48 => {
+            crate::serial::write_line(
+                "SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited",
+            );
+            crate::serial::write("Sorveth manifest mapped pages: ");
+            crate::serial::write_u64(found.len() as u64);
+            crate::serial::write(" (legacy WX: ");
+            crate::serial::write_u64(found.legacy_writable_executable() as u64);
+            crate::serial::write(", unclassified device pages: ");
+            crate::serial::write_u64(found.unknown_device_pages() as u64);
+            crate::serial::write_line(")");
+        }
+        _ => {
+            crate::serial::write_line("FATAL: supervisor physical backing manifest failed");
             crate::halt_forever();
         }
     }
