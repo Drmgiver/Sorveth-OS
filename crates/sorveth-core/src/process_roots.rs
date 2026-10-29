@@ -156,8 +156,8 @@ pub unsafe fn prepare_and_verify() -> Result<(), Error> {
             }
         })
         .map_err(|_| Error::PageTableStorageUnavailable)?;
-        let (slot_a, slot_b) = vacant_slots(|i| entries[i])
-            .ok_or(Error::PrivateSlotsUnavailable)?;
+        let (slot_a, slot_b) =
+            vacant_slots(|i| entries[i]).ok_or(Error::PrivateSlotsUnavailable)?;
         for entry in &mut entries {
             *entry = supervisor_entry(*entry);
         }
