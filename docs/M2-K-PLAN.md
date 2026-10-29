@@ -103,3 +103,19 @@ transfer images must report an additional K.1b integrity marker.
 These remain permanent test frames on one CPU. This is not a production
 integrity mechanism, a proof of race-safe copying, or full removal of OVMF
 identity mappings used by other initialization and audit paths.
+
+
+### K.1c intermediate checkpoint: kernel PT self-alias
+
+The existing Sorveth-owned 2-MiB supervisor-only high-half subtree now
+reserves entry 510 to map its own 4-KiB PT frame RW/NX. The transient
+physical-frame window continues to occupy entry 511. The root setup
+verifies the new alias resolves to precisely the known PT frame and that
+the alias cannot be accessed as a USER mapping. The window and scratch
+page allocator now modify their PTEs through this high-half alias,
+without casting the PT's physical address into a live kernel pointer.
+Both reserved slots are excluded from ordinary scratch allocations.
+
+This is not a recursively mapped general paging hierarchy. Boot setup,
+most static/firmware root audits, and other inherited supervisor mappings
+still need a later K.1c/d migration before they can be safely removed.

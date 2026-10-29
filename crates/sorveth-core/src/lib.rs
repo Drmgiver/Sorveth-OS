@@ -123,6 +123,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     }
     serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
     serial::write_line("Sorveth private supervisor NX mapping: verified");
+    serial::write_line("SORVETH M2-K.1c: self-mapped kernel paging table verified");
 
     // M1-C: first owned x86 IDT. Keep maskable interrupts disabled until
     // timer/IRQ delivery and proper alternate fault stacks are implemented.

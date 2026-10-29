@@ -278,9 +278,7 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
             return Err(Error::VerificationFailed);
         }
         let pt_alias = high_address + PRIVATE_PT_ALIAS_INDEX as u64 * 4096;
-        let self_entry = ptr::read_volatile(
-            (pt_alias as *const u64).add(PRIVATE_PT_ALIAS_INDEX),
-        );
+        let self_entry = ptr::read_volatile((pt_alias as *const u64).add(PRIVATE_PT_ALIAS_INDEX));
         // Hardware may set Accessed/Dirty; address, USER denial and W^X
         // protection must remain identical to the installed self-alias.
         let immutable_bits = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 2);
