@@ -270,8 +270,13 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
 /// one selected process root. The foreign process root remains unchanged.
 /// The same lower-level test-code tables are also in the kernel test root,
 /// which is intentionally not a production process-loading strategy.
-#[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
-pub unsafe fn attach_isolation_probe(process: Process, entry: u64) -> Result<u64, Error> {
+#[cfg(any(
+    feature = "qemu-isolate-a",
+    feature = "qemu-isolate-b",
+    feature = "qemu-transfer-a",
+    feature = "qemu-transfer-b"
+))]
+pub unsafe fn attach_test_probe(process: Process, entry: u64) -> Result<u64, Error> {
     let (owner_root, owner_slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
     let other = match process {
         Process::First => Process::Second,

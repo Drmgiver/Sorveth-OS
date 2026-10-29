@@ -10,6 +10,8 @@ qemu-fault = []
 qemu-user = []
 qemu-isolate-a = ["qemu-user"]
 qemu-isolate-b = ["qemu-user"]
+qemu-transfer-a = ["qemu-user"]
+qemu-transfer-b = ["qemu-user"]
 
 [dependencies]
 sorveth-abi = { path = "../sorveth-abi" }

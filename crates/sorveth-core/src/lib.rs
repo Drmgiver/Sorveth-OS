@@ -17,6 +17,8 @@ mod screen;
 mod serial;
 mod stack;
 mod tss;
+#[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+mod transfer;
 #[cfg(feature = "qemu-user")]
 mod user;
 mod user_copy;

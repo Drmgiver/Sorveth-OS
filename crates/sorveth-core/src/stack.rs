@@ -153,7 +153,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
         {
             let target_root = match unsafe {
-                crate::process_roots::attach_isolation_probe(crate::isolation::owner(), probe.entry)
+                crate::process_roots::attach_test_probe(crate::isolation::owner(), probe.entry)
             } {
                 Ok(root) => root,
                 Err(_) => {
