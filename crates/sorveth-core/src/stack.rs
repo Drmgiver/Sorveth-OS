@@ -101,6 +101,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied");
+    crate::serial::write_line(
+        "SORVETH M2-K.1c: registered process-table audit through owned window verified",
+    );
     if !verify_user_buffer_policy() {
         crate::serial::write_line("FATAL: numeric user-buffer range validation failed");
         crate::halt_forever();

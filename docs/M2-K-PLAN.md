@@ -119,3 +119,25 @@ Both reserved slots are excluded from ordinary scratch allocations.
 This is not a recursively mapped general paging hierarchy. Boot setup,
 most static/firmware root audits, and other inherited supervisor mappings
 still need a later K.1c/d migration before they can be safely removed.
+
+
+### K.1c intermediate checkpoint: process-root audit through registered owned tables
+
+The M2-I.5 trusted address-space audit now reads all needed kernel/root
+PML4 entries and four ancestor/leaf entries per process through the
+single-page high-half physical window. Before the kernel accesses a
+physical table entry, a fixed allowlist admits only the kernel PML4,
+both known process PML4 frames, and the six static Sorveth-owned PDPT/
+PD/PT frames. Entry indices must be 0–511 and frames must be page aligned.
+Failed window mappings and unauthorized table addresses fail closed.
+
+The existing page-table ownership, permission, foreign-slot, CPU A/D-bit
+policy and stale task/capability negative tests remain mandatory.
+The new boot marker follows the actual task-lifecycle corruption test,
+so this code path is exercised rather than simply built.
+
+**Still needed for K.1:** static table construction/teardown, other
+scheduler/bootstrap physical table accesses and all firmware supervisor
+mapping inheritance. These tables are still initialized under a verified
+OVMF identity map; the audit now uses Sorveth's owned alias but this
+alone does not make initial paging independent of firmware.

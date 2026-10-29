@@ -89,6 +89,7 @@ for marker in \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
+  'SORVETH M2-K.1c: registered process-table audit through owned window verified' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
@@ -146,6 +147,7 @@ for marker in \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
+  'SORVETH M2-K.1c: registered process-table audit through owned window verified' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
@@ -196,6 +198,7 @@ for marker in \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
+  'SORVETH M2-K.1c: registered process-table audit through owned window verified' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
@@ -251,6 +254,7 @@ for side in a b; do
   for marker in \
     'Sorveth scheduler CR3: A B A B private address spaces verified' \
     'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
+  'SORVETH M2-K.1c: registered process-table audit through owned window verified' \
     'SORVETH M2-J.1: bounded user address ranges validated' \
     'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
