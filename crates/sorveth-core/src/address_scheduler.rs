@@ -458,7 +458,11 @@ mod tests {
         assert_eq!(s.authorize(id, |_| Some(0)), Err(Error::InvalidRoot));
         assert_eq!(s.authorize(id, |_| Some(0x1234)), Err(Error::InvalidRoot));
         assert_eq!(
-            s.authorize(id, |p| if p == Process::Second { Some(0x5000) } else { None }),
+            s.authorize(id, |p| if p == Process::Second {
+                Some(0x5000)
+            } else {
+                None
+            }),
             Ok(AuthorizedSpace {
                 task: id,
                 process: Process::Second,
