@@ -330,9 +330,9 @@ fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> 
 /// The physical values of these static table frames were checked during
 /// firmware handoff and process root/table initialization.
 #[cfg(target_arch = "x86_64")]
-unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
+fn registered_table_frames() -> Option<[u64; 9]> {
     let kernel = crate::root::kernel_root_physical()?;
-    let allowed = [
+    Some([
         kernel,
         ptr::addr_of!(FIRST).cast::<u64>() as u64,
         ptr::addr_of!(SECOND).cast::<u64>() as u64,
@@ -342,12 +342,34 @@ unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
         ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
         ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
         ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
-    ];
-    if !registered_table_word_allowed(frame, index, &allowed) {
+    ])
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
+    if !registered_table_word_allowed(frame, index, &registered_table_frames()?) {
         return None;
     }
     crate::root::with_physical_window(frame, |window| {
         ptr::read_volatile((window as *const u64).add(index))
+    })
+    .ok()
+}
+
+/// Store a PML4/PDPT/PD/PT word only in trusted bootstrap paging frames,
+/// via the same owned temporary supervisor window as the audit reader.
+/// Mapping mutations must be serialized and validated by their caller.
+///
+/// # Safety
+/// Kernel CR3 active, IRQs masked, one CPU; the caller performs a full
+/// address-space audit and CR3 transition only after tables are complete.
+#[cfg(target_arch = "x86_64")]
+unsafe fn write_registered_table_word(frame: u64, index: usize, value: u64) -> Option<()> {
+    if !registered_table_word_allowed(frame, index, &registered_table_frames()?) {
+        return None;
+    }
+    crate::root::with_physical_window(frame, |window| {
+        ptr::write_volatile((window as *mut u64).add(index), value);
     })
     .ok()
 }
@@ -677,7 +699,17 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             }
         }
         for table in tables {
-            ptr::write_bytes(table as *mut u8, 0, 4096);
+            // The six static paging frames were validated above. Initialize
+            // through a Sorveth-owned virtual mapping, not a physical pointer.
+            crate::root::with_physical_window(table, |window| {
+                ptr::write_bytes(window, 0, 4096);
+            })
+            .map_err(|_| Error::PageTableStorageUnavailable)?;
+            if read_registered_table_word(table, 0) != Some(0)
+                || read_registered_table_word(table, 511) != Some(0)
+            {
+                return Err(Error::VerificationFailed);
+            }
         }
 
         let frame_a = pool
@@ -710,32 +742,36 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             }
         }
 
-        // Each process gets physically distinct PML4/PDPT/PD/PT ancestors.
-        let a_root = first_root as *mut u64;
-        let b_root = second_root as *mut u64;
-        if ptr::read_volatile(a_root.add(first_slot as usize)) != 0
-            || ptr::read_volatile(b_root.add(second_slot as usize)) != 0
-            || ptr::read_volatile(a_root.add(second_slot as usize)) != 0
-            || ptr::read_volatile(b_root.add(first_slot as usize)) != 0
-            || ptr::read_volatile((kernel as *const u64).add(first_slot as usize)) != 0
-            || ptr::read_volatile((kernel as *const u64).add(second_slot as usize)) != 0
+        // Each process gets distinct PML4/PDPT/PD/PT ancestors; both
+        // entire root slots and private paths are preflighted before writes.
+        if read_registered_table_word(first_root, first_slot as usize) != Some(0)
+            || read_registered_table_word(second_root, second_slot as usize) != Some(0)
+            || read_registered_table_word(first_root, second_slot as usize) != Some(0)
+            || read_registered_table_word(second_root, first_slot as usize) != Some(0)
+            || read_registered_table_word(kernel, first_slot as usize) != Some(0)
+            || read_registered_table_word(kernel, second_slot as usize) != Some(0)
         {
             return Err(Error::VerificationFailed);
         }
         let (a_pdpt, a_pd, a_pt) = (tables[0], tables[1], tables[2]);
         let (b_pdpt, b_pd, b_pt) = (tables[3], tables[4], tables[5]);
-        ptr::write_volatile(a_pt as *mut u64, frame_a | USER_DATA_FLAGS);
-        ptr::write_volatile(b_pt as *mut u64, frame_b | USER_DATA_FLAGS);
-        ptr::write_volatile(a_pd as *mut u64, a_pt | USER_TABLE_FLAGS);
-        ptr::write_volatile(b_pd as *mut u64, b_pt | USER_TABLE_FLAGS);
-        ptr::write_volatile(a_pdpt as *mut u64, a_pd | USER_TABLE_FLAGS);
-        ptr::write_volatile(b_pdpt as *mut u64, b_pd | USER_TABLE_FLAGS);
-        ptr::write_volatile(a_root.add(first_slot as usize), a_pdpt | USER_TABLE_FLAGS);
-        ptr::write_volatile(b_root.add(second_slot as usize), b_pdpt | USER_TABLE_FLAGS);
+        for (table, index, value) in [
+            (a_pt, 0, frame_a | USER_DATA_FLAGS),
+            (b_pt, 0, frame_b | USER_DATA_FLAGS),
+            (a_pd, 0, a_pt | USER_TABLE_FLAGS),
+            (b_pd, 0, b_pt | USER_TABLE_FLAGS),
+            (a_pdpt, 0, a_pd | USER_TABLE_FLAGS),
+            (b_pdpt, 0, b_pd | USER_TABLE_FLAGS),
+            (first_root, first_slot as usize, a_pdpt | USER_TABLE_FLAGS),
+            (second_root, second_slot as usize, b_pdpt | USER_TABLE_FLAGS),
+        ] {
+            write_registered_table_word(table, index, value)
+                .ok_or(Error::PageTableStorageUnavailable)?;
+        }
         if !validate_user_path(first_root, first_slot, a_pdpt, a_pd, a_pt, frame_a)
             || !validate_user_path(second_root, second_slot, b_pdpt, b_pd, b_pt, frame_b)
-            || ptr::read_volatile(a_root.add(second_slot as usize)) != 0
-            || ptr::read_volatile(b_root.add(first_slot as usize)) != 0
+            || read_registered_table_word(first_root, second_slot as usize) != Some(0)
+            || read_registered_table_word(second_root, first_slot as usize) != Some(0)
         {
             return Err(Error::VerificationFailed);
         }
