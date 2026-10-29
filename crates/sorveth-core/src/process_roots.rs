@@ -311,18 +311,20 @@ pub unsafe fn attach_test_probe(process: Process, entry: u64) -> Result<u64, Err
     {
         return Err(Error::VerificationFailed);
     }
-    let source = ptr::read_volatile((kernel as *const u64).add(slot));
-    let destination = (owner_root as *mut u64).add(slot);
+    // The test-only executable probe subtree is still borrowed from the
+    // kernel, but its PML4 entry is now read and installed only through
+    // the registered, Sorveth-owned physical-frame window.
+    let source = read_registered_table_word(kernel, slot).ok_or(Error::VerificationFailed)?;
     if source & USER_TABLE_FLAGS != USER_TABLE_FLAGS
-        || ptr::read_volatile(destination) != 0
-        || ptr::read_volatile((other_root as *const u64).add(slot)) != 0
-        || ptr::read_volatile((owner_root as *const u64).add(foreign_slot as usize)) != 0
-        || ptr::read_volatile((other_root as *const u64).add(owner_slot as usize)) != 0
+        || read_registered_table_word(owner_root, slot) != Some(0)
+        || read_registered_table_word(other_root, slot) != Some(0)
+        || read_registered_table_word(owner_root, foreign_slot as usize) != Some(0)
+        || read_registered_table_word(other_root, owner_slot as usize) != Some(0)
     {
         return Err(Error::VerificationFailed);
     }
-    ptr::write_volatile(destination, source);
-    if ptr::read_volatile(destination) != source {
+    write_registered_table_word(owner_root, slot, source).ok_or(Error::VerificationFailed)?;
+    if read_registered_table_word(owner_root, slot) != Some(source) {
         return Err(Error::VerificationFailed);
     }
     Ok(owner_root)
