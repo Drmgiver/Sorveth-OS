@@ -224,7 +224,6 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     }
 }
 
-
 /// One intentionally small physical user data page mapped at offset zero
 /// of a process-owned lower-canonical PML4 slot. Not executable.
 #[cfg(target_arch = "x86_64")]
@@ -267,14 +266,7 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
 /// addresses. The QEMU bootstrap has verified identity mapping of every
 /// page-table frame, so reading these raw entries is safe *for this test*.
 #[cfg(target_arch = "x86_64")]
-unsafe fn validate_user_path(
-    root: u64,
-    slot: u16,
-    pdpt: u64,
-    pd: u64,
-    pt: u64,
-    data: u64,
-) -> bool {
+unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, data: u64) -> bool {
     let pml4_entry = ptr::read_volatile((root as *const u64).add(slot as usize));
     let pdpt_entry = ptr::read_volatile(pdpt as *const u64);
     let pd_entry = ptr::read_volatile(pd as *const u64);
@@ -304,10 +296,10 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         if MAPPED.load(Ordering::Acquire) {
             return Err(Error::AlreadyMapped);
         }
-        let (first_root, first_slot) = process_root(Process::First)
-            .ok_or(Error::KernelUnavailable)?;
-        let (second_root, second_slot) = process_root(Process::Second)
-            .ok_or(Error::KernelUnavailable)?;
+        let (first_root, first_slot) =
+            process_root(Process::First).ok_or(Error::KernelUnavailable)?;
+        let (second_root, second_slot) =
+            process_root(Process::Second).ok_or(Error::KernelUnavailable)?;
         let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
         let first_virt = user_base(first_slot).ok_or(Error::VerificationFailed)?;
         let second_virt = user_base(second_slot).ok_or(Error::VerificationFailed)?;
@@ -387,14 +379,8 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         ptr::write_volatile(b_pd as *mut u64, b_pt | USER_TABLE_FLAGS);
         ptr::write_volatile(a_pdpt as *mut u64, a_pd | USER_TABLE_FLAGS);
         ptr::write_volatile(b_pdpt as *mut u64, b_pd | USER_TABLE_FLAGS);
-        ptr::write_volatile(
-            a_root.add(first_slot as usize),
-            a_pdpt | USER_TABLE_FLAGS,
-        );
-        ptr::write_volatile(
-            b_root.add(second_slot as usize),
-            b_pdpt | USER_TABLE_FLAGS,
-        );
+        ptr::write_volatile(a_root.add(first_slot as usize), a_pdpt | USER_TABLE_FLAGS);
+        ptr::write_volatile(b_root.add(second_slot as usize), b_pdpt | USER_TABLE_FLAGS);
         if !validate_user_path(first_root, first_slot, a_pdpt, a_pd, a_pt, frame_a)
             || !validate_user_path(second_root, second_slot, b_pdpt, b_pd, b_pt, frame_b)
             || ptr::read_volatile(a_root.add(second_slot as usize)) != 0

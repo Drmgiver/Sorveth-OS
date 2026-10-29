@@ -88,7 +88,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();
     }
-    crate::serial::write_line("Sorveth private process pages: distinct user RW/NX mappings verified");
+    crate::serial::write_line(
+        "Sorveth private process pages: distinct user RW/NX mappings verified",
+    );
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {
