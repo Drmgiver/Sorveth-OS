@@ -146,21 +146,21 @@ mod tests {
         let range = validate_user_range(0x4000, 8).unwrap();
         let frames = walk(range);
         let mut destination = [0x6cu8; 7];
-        let mut touched = false;
+        let touched = core::cell::Cell::new(false);
         assert_eq!(
             copy_from_resolved(
                 range,
                 &frames,
                 &mut destination,
                 |_| {
-                    touched = true;
+                    touched.set(true);
                     true
                 },
-                |_, _| touched = true,
+                |_, _| touched.set(true),
             ),
             Err(CopyError::DestinationLength)
         );
-        assert!(!touched);
+        assert!(!touched.get());
         assert_eq!(destination, [0x6c; 7]);
     }
 
