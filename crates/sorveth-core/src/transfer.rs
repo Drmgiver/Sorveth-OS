@@ -117,10 +117,8 @@ unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> Optio
 /// # Safety
 /// The same single-core QEMU preconditions as frame_checksum apply.
 unsafe fn process_word(physical: u64) -> Option<u64> {
-    crate::root::with_physical_window(physical, |window| {
-        ptr::read_volatile(window as *const u64)
-    })
-    .ok()
+    crate::root::with_physical_window(physical, |window| ptr::read_volatile(window as *const u64))
+        .ok()
 }
 
 /// Verify *all* 4096 bytes of both physical process data pages and
@@ -546,6 +544,7 @@ pub unsafe fn dispatch(
         crate::serial::write_line(
             "SORVETH M2-J.6: full-frame and capability integrity verified after every syscall",
         );
+        crate::serial::write_line("SORVETH M2-K.1b: owned-window integrity validation verified");
         // Only after both copy operations, all denial paths, and original
         // frame restoration are verified does QEMU exit successfully.
         asm!(

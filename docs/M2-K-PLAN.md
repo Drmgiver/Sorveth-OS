@@ -89,3 +89,17 @@ on the verified post-process-walk boot path.
 **Not yet migrated:** initial PML4/static table setup and ownership audits
 still access identity-mapped memory; current processes retain permanent
 one-page data mappings. Firmware identity mappings cannot yet be removed.
+
+
+### K.1b checkpoint: QEMU full-frame integrity no longer uses identity pointers
+
+The test-only M2-J.6 ring-3 memory gateway now calculates its 4096-byte
+integrity checksums, records original frame words, and performs final
+restoration/foreign-frame checks through the same owned temporary high-half
+mapping used for ordinary kernel copy operations. An inaccessible mapping
+fails closed and cannot report the previous success marker. Both QEMU A/B
+transfer images must report an additional K.1b integrity marker.
+
+These remain permanent test frames on one CPU. This is not a production
+integrity mechanism, a proof of race-safe copying, or full removal of OVMF
+identity mappings used by other initialization and audit paths.

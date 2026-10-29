@@ -300,7 +300,8 @@ for side in a b; do
     'Sorveth ring-3 memory gateway: process CR3 armed' \
     'Sorveth ring-3 probe: user mappings and trap ready' \
     'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied' \
-    'SORVETH M2-J.6: full-frame and capability integrity verified after every syscall'; do
+    'SORVETH M2-J.6: full-frame and capability integrity verified after every syscall' \
+    'SORVETH M2-K.1b: owned-window integrity validation verified'; do
     if ! grep -Fq "$marker" "$TMP/transfer-$side-serial.log"; then
       echo "QEMU process $side syscall test failed: missing marker: $marker" >&2
       exit 1
