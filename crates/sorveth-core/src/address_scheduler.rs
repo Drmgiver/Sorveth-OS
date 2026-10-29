@@ -178,7 +178,9 @@ impl<const N: usize> AddressScheduler<N> {
 ///
 /// # Safety
 /// Requires CPL0, one CPU, interrupts disabled, stable process page roots,
-/// the verified OVMF identity window, and no concurrent task execution.
+/// and no concurrent task execution. Physical supervisor table and test
+/// frame reads use Sorveth-owned mappings; other kernel mappings still
+/// depend on the verified OVMF bootstrap environment.
 /// Not valid on physical hardware or during preemptive scheduling.
 pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     let kernel = crate::root::kernel_root_physical().ok_or(Error::MissingAddressSpace)?;
@@ -202,8 +204,8 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     if observed & CR3_ADDRESS_MASK != kernel {
         return Err(Error::HardwareMismatch);
     }
-    if ptr::read_volatile((root_a as *const u64).add(slot_b as usize)) != 0
-        || ptr::read_volatile((root_b as *const u64).add(slot_a as usize)) != 0
+    if process_roots::read_process_root_slot(Process::First, slot_b) != Some(0)
+        || process_roots::read_process_root_slot(Process::Second, slot_a) != Some(0)
     {
         return Err(Error::HardwareMismatch);
     }
@@ -211,8 +213,10 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     let mut scheduler = AddressScheduler::<2>::new();
     let a = scheduler.spawn(ObjectId(0x1_301), Process::First)?;
     let b = scheduler.spawn(ObjectId(0x1_302), Process::Second)?;
-    let mut expected_a = ptr::read_volatile(memory_a.physical_address as *const u64);
-    let mut expected_b = ptr::read_volatile(memory_b.physical_address as *const u64);
+    let mut expected_a =
+        process_roots::read_process_frame_word(Process::First).ok_or(Error::HardwareMismatch)?;
+    let mut expected_b =
+        process_roots::read_process_frame_word(Process::Second).ok_or(Error::HardwareMismatch)?;
 
     for (round, expected_process) in [
         Process::First,
@@ -243,10 +247,10 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         if authorized.task != selected_id || authorized.process != selected_process {
             return Err(Error::IncorrectSelection);
         }
-        let (root, own_page, expected_value, other_page) = if selected_process == Process::First {
-            (root_a, memory_a, expected_a, memory_b)
+        let (root, own_page, expected_value) = if selected_process == Process::First {
+            (root_a, memory_a, expected_a)
         } else {
-            (root_b, memory_b, expected_b, memory_a)
+            (root_b, memory_b, expected_b)
         };
         if authorized.root != root {
             return Err(Error::HardwareMismatch);
@@ -256,10 +260,16 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         } else {
             slot_a
         };
-        if ptr::read_volatile((root as *const u64).add(cross_slot as usize)) != 0 {
+        if process_roots::read_process_root_slot(selected_process, cross_slot) != Some(0) {
             return Err(Error::HardwareMismatch);
         }
-        let other_before = ptr::read_volatile(other_page.physical_address as *const u64);
+        let other_process = if selected_process == Process::First {
+            Process::Second
+        } else {
+            Process::First
+        };
+        let other_before =
+            process_roots::read_process_frame_word(other_process).ok_or(Error::HardwareMismatch)?;
         let next_value = expected_value ^ SENTINEL_SALT ^ ((round as u64) + 1);
 
         let process_guard = KernelRootGuard::enter(kernel, authorized.root)?;
@@ -281,8 +291,8 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         if !stored_correct
             || observed & CR3_ADDRESS_MASK != kernel
-            || ptr::read_volatile(own_page.physical_address as *const u64) != next_value
-            || ptr::read_volatile(other_page.physical_address as *const u64) != other_before
+            || process_roots::read_process_frame_word(selected_process) != Some(next_value)
+            || process_roots::read_process_frame_word(other_process) != Some(other_before)
         {
             return Err(Error::HardwareMismatch);
         }
@@ -316,8 +326,9 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
 /// changes, and the kernel CR3 must remain active for all failed requests.
 ///
 /// # Safety
-/// CPL0, single CPU, IRQs disabled, verified inherited bootstrap identity
-/// map; neither process has been entered in ring 3 or scheduled concurrently.
+/// CPL0, single CPU, IRQs disabled, verified bootstrap kernel mappings;
+/// neither process has been entered in ring 3 or scheduled concurrently.
+/// Root entry access is through the registered owned supervisor window.
 pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     let kernel = crate::root::kernel_root_physical().ok_or(Error::MissingAddressSpace)?;
     let (root_a, slot_a) =
@@ -353,16 +364,11 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
         return Err(Error::IncorrectSelection);
     }
 
-    // Tamper with the inactive root's USER PML4 bit only while the
-    // original kernel CR3 is active; always restore before deciding.
-    let entry = (root_a as *mut u64).add(slot_a as usize);
-    let saved = ptr::read_volatile(entry);
-    if saved & 0x5 != 0x5 {
-        return Err(Error::HardwareMismatch);
-    }
-    ptr::write_volatile(entry, saved & !(1u64 << 2));
-    let denied = scheduler.authorize(replacement, resolve) == Err(Error::MissingAddressSpace);
-    ptr::write_volatile(entry, saved);
+    // The owned-table helper restores this one known PML4 entry even when
+    // the negative authorization predicate returns false.
+    let denied = process_roots::verify_temporary_root_user_denial(Process::First, || {
+        scheduler.authorize(replacement, resolve) == Err(Error::MissingAddressSpace)
+    });
     if !denied || scheduler.authorize(replacement, resolve)?.root != root_a {
         return Err(Error::HardwareMismatch);
     }

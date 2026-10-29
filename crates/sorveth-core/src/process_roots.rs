@@ -373,6 +373,66 @@ unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
     .ok()
 }
 
+/// Read a known process PML4 slot through the owned supervisor window.
+/// A caller cannot supply a raw root-frame address or expand the whitelist.
+///
+/// # Safety
+/// The single QEMU bootstrap CPU has kernel CR3 active and IRQs masked.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_root_slot(process: Process, slot: u16) -> Option<u64> {
+    let (root, _) = process_root(process)?;
+    read_registered_table_word(root, slot as usize)
+}
+
+/// Read the first word of a permanently owned process test data frame.
+/// Never expose the frame as an identity-mapped pointer.
+///
+/// # Safety
+/// Only during the single-core, kernel-CR3, interrupts-off QEMU tests.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_frame_word(process: Process) -> Option<u64> {
+    let mapping = mapped_page(process)?;
+    crate::root::with_physical_window(mapping.physical_address, |window| {
+        ptr::read_volatile(window as *const u64)
+    })
+    .ok()
+}
+
+/// Temporarily corrupt the chosen known root's USER bit for a negative
+/// authorization test, restoring the PML4 entry before returning.
+/// The caller never receives a physical PML4 pointer.
+///
+/// # Safety
+/// Kernel CR3, one CPU, IRQs masked, no concurrent root switches.
+/// The predicate must neither switch CR3 nor retain physical mappings.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn verify_temporary_root_user_denial(
+    process: Process,
+    denied_while_corrupt: impl FnOnce() -> bool,
+) -> bool {
+    let (root, slot) = match process_root(process) {
+        Some(value) => value,
+        None => return false,
+    };
+    let saved = match read_registered_table_word(root, slot as usize) {
+        Some(value) if value & (PRESENT | USER) == PRESENT | USER => value,
+        _ => return false,
+    };
+    if checked_process_root(process).is_none() {
+        return false;
+    }
+    if write_registered_table_word(root, slot as usize, saved & !USER).is_none() {
+        return false;
+    }
+    let denied = denied_while_corrupt();
+    // Restore unconditionally before attempting a potentially failing audit.
+    let restored = write_registered_table_word(root, slot as usize, saved).is_some();
+    restored
+        && denied
+        && read_registered_table_word(root, slot as usize) == Some(saved)
+        && checked_process_root(process) == Some(root)
+}
+
 /// Store a PML4/PDPT/PD/PT word only in trusted bootstrap paging frames,
 /// via the same owned temporary supervisor window as the audit reader.
 /// Mapping mutations must be serialized and validated by their caller.
