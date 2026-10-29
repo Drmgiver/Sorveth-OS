@@ -1,4 +1,4 @@
-//! M1-B2: Sorveth-owned PML4 root with inherited lower-level mappings.
+//! M1-B2 / M2-K.1a: owned PML4 plus transitional high-half frame window.
 //!
 //! Only supported for the x86-64 UEFI identity-mapped QEMU bootstrap.
 //! The backing page is 4096-byte aligned and permanently retained in the
@@ -880,6 +880,16 @@ pub fn protected_kernel_address() -> Option<u64> {
 #[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
+    #[test]
+    fn reserved_window_accepts_only_aligned_physical_frames() {
+        assert!(valid_physical_window_frame(0x1000));
+        assert!(valid_physical_window_frame(0x1000_0000));
+        assert!(!valid_physical_window_frame(0));
+        assert!(!valid_physical_window_frame(0x1001));
+        assert!(!valid_physical_window_frame(0xffff_8000_0000_0000));
+        assert_eq!(PHYSICAL_WINDOW_INDEX, 511);
+    }
+
     #[test]
     fn translates_a_synthetic_four_level_page() {
         // PML4 @0x1000 -> PDPT @0x2000 -> PD @0x3000 -> PT @0x4000.
