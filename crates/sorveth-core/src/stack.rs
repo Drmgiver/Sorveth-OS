@@ -125,6 +125,15 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line("SORVETH M2-J.4: bounded writable copy-out and denial verified");
     #[cfg(feature = "qemu-user")]
     {
+        #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+        let (allowed, foreign) = match crate::transfer::initialize() {
+            Some(handles) => handles,
+            None => {
+                crate::serial::write_line("FATAL: memory syscall authority unavailable");
+                crate::halt_forever();
+            }
+        };
+        #[cfg(not(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b")))]
         let (allowed, foreign) = match crate::user::initialize_broker() {
             Some(handles) => handles,
             None => {
@@ -164,6 +173,22 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line("Sorveth ring-3 isolation: process-owned CR3 armed");
             unsafe {
                 asm!("mov cr3, {}", in(reg) target_root, options(nostack, preserves_flags));
+            }
+        }
+        #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
+        {
+            let root = match unsafe {
+                crate::process_roots::attach_test_probe(crate::transfer::owner(), probe.entry)
+            } {
+                Ok(value) => value,
+                Err(_) => {
+                    crate::serial::write_line("FATAL: memory syscall probe mapping failed");
+                    crate::halt_forever();
+                }
+            };
+            crate::serial::write_line("Sorveth ring-3 memory gateway: process CR3 armed");
+            unsafe {
+                asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
             }
         }
         crate::serial::write_line("Sorveth ring-3 probe: user mappings and trap ready");
