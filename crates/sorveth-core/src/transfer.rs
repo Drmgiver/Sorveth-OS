@@ -129,15 +129,30 @@ unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
         && process_roots::checked_process_root(other()).is_some()
         && state
             .authority
-            .authorize(state.task, state.read_handle, object(state.process), Rights::READ)
+            .authorize(
+                state.task,
+                state.read_handle,
+                object(state.process),
+                Rights::READ,
+            )
             .is_ok()
         && state
             .authority
-            .authorize(state.task, state.write_handle, object(state.process), Rights::WRITE)
+            .authorize(
+                state.task,
+                state.write_handle,
+                object(state.process),
+                Rights::WRITE,
+            )
             .is_ok()
         && state
             .authority
-            .authorize(state.task, state.foreign_handle, object(state.process), Rights::WRITE)
+            .authorize(
+                state.task,
+                state.foreign_handle,
+                object(state.process),
+                Rights::WRITE,
+            )
             .is_err()
 }
 
@@ -294,16 +309,70 @@ pub unsafe fn dispatch(
         fatal();
     }
     let expected = match state.completed {
-        0 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 8, COPY_IN_OK),
-        1 => (SYS_COPY_IN, state.read_handle, foreign.virtual_address, 8, COPY_DENIED),
-        2 => (SYS_COPY_OUT, state.read_handle, mapped.virtual_address, 8, COPY_DENIED),
-        3 => (SYS_COPY_OUT, state.foreign_handle, mapped.virtual_address, 8, COPY_DENIED),
+        0 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            8,
+            COPY_IN_OK,
+        ),
+        1 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            foreign.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        2 => (
+            SYS_COPY_OUT,
+            state.read_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        3 => (
+            SYS_COPY_OUT,
+            state.foreign_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
         4 => (SYS_COPY_IN, 0, mapped.virtual_address, 8, COPY_DENIED),
-        5 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 0, COPY_DENIED),
-        6 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address + 4095, 2, COPY_DENIED),
-        7 => (SYS_COPY_OUT, state.write_handle, foreign.virtual_address, 8, COPY_DENIED),
-        8 => (SYS_COPY_IN, state.write_handle, mapped.virtual_address, 8, COPY_DENIED),
-        9 => (SYS_COPY_IN, u64::MAX, mapped.virtual_address, 8, COPY_DENIED),
+        5 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            0,
+            COPY_DENIED,
+        ),
+        6 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            mapped.virtual_address + 4095,
+            2,
+            COPY_DENIED,
+        ),
+        7 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            foreign.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        8 => (
+            SYS_COPY_IN,
+            state.write_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        9 => (
+            SYS_COPY_IN,
+            u64::MAX,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
         10 => (SYS_COPY_IN, state.read_handle, 0, 8, COPY_DENIED),
         11 => (SYS_COPY_IN, state.read_handle, u64::MAX, 8, COPY_DENIED),
         12 => (
@@ -320,8 +389,20 @@ pub unsafe fn dispatch(
             8,
             COPY_DENIED,
         ),
-        14 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 65537, COPY_DENIED),
-        15 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address, 0, COPY_DENIED),
+        14 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            65537,
+            COPY_DENIED,
+        ),
+        15 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            mapped.virtual_address,
+            0,
+            COPY_DENIED,
+        ),
         WRITE_PHASE => (
             SYS_COPY_OUT,
             state.write_handle,
@@ -329,10 +410,34 @@ pub unsafe fn dispatch(
             8,
             COPY_OUT_OK,
         ),
-        17 => (SYS_COPY_OUT, state.read_handle, mapped.virtual_address, 8, COPY_DENIED),
-        18 => (SYS_COPY_OUT, state.foreign_handle, mapped.virtual_address, 8, COPY_DENIED),
-        19 => (SYS_COPY_OUT, state.write_handle, foreign.virtual_address, 8, COPY_DENIED),
-        20 => (UNKNOWN_SYSCALL, state.write_handle, mapped.virtual_address, 8, COPY_DENIED),
+        17 => (
+            SYS_COPY_OUT,
+            state.read_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        18 => (
+            SYS_COPY_OUT,
+            state.foreign_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        19 => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            foreign.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
+        20 => (
+            UNKNOWN_SYSCALL,
+            state.write_handle,
+            mapped.virtual_address,
+            8,
+            COPY_DENIED,
+        ),
         COMPLETE_PHASE => (SYS_COMPLETE, 0, mapped.virtual_address, 8, 0),
         _ => fatal(),
     };
@@ -424,7 +529,9 @@ pub unsafe fn dispatch(
             fatal();
         }
         crate::serial::write_line("SORVETH M2-J.5: ring-3 memory syscalls authorized and denied");
-        crate::serial::write_line("SORVETH M2-J.6: full-frame and capability integrity verified after every syscall");
+        crate::serial::write_line(
+            "SORVETH M2-J.6: full-frame and capability integrity verified after every syscall",
+        );
         // Only after both copy operations, all denial paths, and original
         // frame restoration are verified does QEMU exit successfully.
         asm!(
