@@ -492,27 +492,42 @@ pub unsafe fn verify_readonly_copy_out_denied(process: Process) -> bool {
         None => return false,
     };
     let leaf = match process {
-        Process::First => ptr::addr_of_mut!(FIRST_PT).cast::<u64>(),
-        Process::Second => ptr::addr_of_mut!(SECOND_PT).cast::<u64>(),
+        Process::First => ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
+        Process::Second => ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
     };
-    let previous = ptr::read_volatile(leaf);
+    let previous = match read_registered_table_word(leaf, 0) {
+        Some(entry) => entry,
+        None => return false,
+    };
     if previous & WRITE == 0 || checked_process_root(process).is_none() {
         return false;
     }
-    let original = ptr::read_volatile(own.physical_address as *const u64);
+    let original = match crate::root::with_physical_window(own.physical_address, |window| {
+        ptr::read_volatile(window as *const u64)
+    }) {
+        Ok(word) => word,
+        Err(_) => return false,
+    };
 
-    ptr::write_volatile(leaf, previous & !WRITE);
-    // This should fail closed at the trusted process-root audit because
-    // the private RW/NX leaf no longer matches the permitted template.
+    if write_registered_table_word(leaf, 0, previous & !WRITE).is_none() {
+        return false;
+    }
+    // Reuse the existing strict process-root audit. The change to the
+    // inactive process's private PTE must be rejected before any copying.
     let denied = crate::user_copy::copy_to_process(process, own.virtual_address, &[0xa5])
         == Err(crate::user_copy::CopyOutError::InvalidMapping(
             sorveth_paging::user_walk::WalkError::InvalidRoot,
         ));
-    // Always restore even if the rejection assertion fails.
-    ptr::write_volatile(leaf, previous);
-    denied
-        && ptr::read_volatile(leaf) == previous
-        && ptr::read_volatile(own.physical_address as *const u64) == original
+    // Restore before any further checks, including when the denial fails.
+    let restored = write_registered_table_word(leaf, 0, previous).is_some();
+    let unchanged = crate::root::with_physical_window(own.physical_address, |window| {
+        ptr::read_volatile(window as *const u64) == original
+    })
+    .unwrap_or(false);
+    restored
+        && denied
+        && read_registered_table_word(leaf, 0) == Some(previous)
+        && unchanged
         && checked_process_root(process).is_some()
 }
 
