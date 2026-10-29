@@ -410,3 +410,36 @@ concurrent userspace ABI; J.6 remains the final validation milestone.
   regressions as mandatory acceptance gates.
 
 M2-J complete only as a controlled QEMU bootstrap demonstration.
+
+
+## 2026-10-29 — M2-K.1a/b: kernel-owned frame access and PTE walking
+
+- Introduced a reserved supervisor-only high-half frame window (PT entry
+  511) for ledger-owned physical pages, with single-CPU/IF=0/kernel-CR3
+  checks, scoped teardown and TLB invalidation.
+- Migrated additional kernel scratch-frame initialization, bounded
+  process copy-in/out, process-frame initialization and A/B read-only
+  user-page walking to the owned window. The walker admits only known
+  process-owned page-table frames, not PTE-supplied arbitrary addresses.
+- Migrated ring-3 transfer-test frame checksums and data-word reads to
+  the owned window, retaining full 4096-byte pre/post checks per syscall.
+- Preserved all previous normal boot, fault, ring-3, A/B isolation,
+  memory-syscall and monitor checks.
+- Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40825974582
+  and https://github.com/Drmgiver/Sorveth-OS/actions/runs/40826311604
+
+## 2026-10-29 — M2-K.1c incremental private page-table self-alias
+
+- Reserved PT entry 510 as a permanent supervisor-only RW/NX mapping of
+  Sorveth's own private paging-table frame. PT entry 511 remains the
+  transient frame window, and both slots are excluded from scratch claims.
+- The window and scratch allocator now edit PTEs through the verified
+  high-half self-alias instead of the physical identity pointer.
+- Verified PT-frame translation, USER denial and mapping flags under
+  the active Sorveth CR3; all earlier QEMU and source gates pass.
+- Verified: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40826861153
+
+**Not accepted:** full M2-K.1, firmware-independent kernel paging,
+dynamic physical-frame reclamation, full process lifecycle, general user
+buffer ABI or physical hardware. The remaining inherited mappings must be
+replaced and separately proven before any release claim.

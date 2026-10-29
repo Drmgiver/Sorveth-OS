@@ -1,6 +1,6 @@
 # Sorveth OS development roadmap
 
-Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
+Status as of 2026-10-29. Each milestone is accepted only on observable evidence.
 
 | Phase | Deliverable | Acceptance gate | State |
 |---|---|---|---|
@@ -8,7 +8,8 @@ Status as of 2026-10-22. Each milestone is accepted only on observable evidence.
 | M0-B | First boot | EFI cross-build, QEMU reaches kernel after ExitBootServices, debug-exit signal | Verified in QEMU CI |
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
 | M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | Frame ledger, owned PML4/private pages, IDT/TSS/IST and dedicated stack verified in QEMU; most firmware mappings remain shared |
-| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..H verified in QEMU/host prototypes; independent user address spaces and production syscalls pending |
+| M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..J accepted as bounded host/QEMU proofs; actual generic process runtime and preemptive scheduling still pending |
+| M2-K | Managed memory and process lifetime | Firmware-independent mapping, dynamic frames, process lifecycle and generalized transfers | K.1 partly implemented and QEMU-verified, K.2–K.5 pending |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
 | M5 | Native app platform | Manifests, action contracts, editable resources, Forge, Atlas, Frame, Script | Pending |

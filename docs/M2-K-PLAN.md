@@ -47,14 +47,14 @@ or an arbitrary-user-program ABI without separate acceptance evidence.
 
 ## Current implementation status
 
-**K.1a candidate:** the final PT slot of the Sorveth-owned private high-half
+**K.1a verified:** the final PT slot of the Sorveth-owned private high-half
 subtree is reserved for a temporary RW/NX physical frame alias. The scoped
 guard requires kernel CR3 and interrupts disabled, rejects invalid and
 nested use, invalidates the TLB before access, then unmaps on return.
 Two early scratch claims no longer dereference their physical frame
 addresses through firmware's identity map.
 
-**Still pending:** K.1b–d, all of K.2–K.5, production process scheduling,
+**Still pending:** completion of K.1b–d, all of K.2–K.5, production process scheduling,
 page reclamation, and safe arbitrary user mappings. The root's initial
 PML4 setup, existing page-table pointers and other kernel accesses still
 rely on inherited OVMF identity mappings. This is not an independent

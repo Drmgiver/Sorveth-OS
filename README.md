@@ -8,7 +8,7 @@ resource environment and application platform are designed for human control
 and portability, whether or not Sorveth Mind (its optional AI component)
 is enabled. The code is GPL-3.0-only.
 
-> **Development status (October 24, 2026): early microkernel engineering,
+> **Development status (October 29, 2026): early microkernel engineering,
 > not a complete or safe daily-use OS.** Only QEMU/OVMF boot and controlled
 > verification programs have been tested. Do **not** boot this on real
 > hardware or entrust personal data to it.
@@ -23,22 +23,26 @@ is enabled. The code is GPL-3.0-only.
 | M2-C: message wakeups | Authorized send wakes a parked receiver with reserved dequeue and revocation rules | Kernel-internal only |
 | M2-D/E: real context switching | Native x86-64 kernel context saves and resumes, then two separate kernel workers run in A-B-A-B scheduler order | Cooperative, ring 0, no preemption or complete extended register state |
 | M2-F/G: tested user boundary | A **test-only** ring-3 program calls INT 0x80 twice and then attempts a supervisor-only memory read; the CPU generates the expected user-mode protection #PF | One hardcoded probe, shared address space | 
-| M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only resource READ/WRITE; QEMU rejects readonly WRITE, forged tokens and another task's handle | Still one hardcoded probe; no generic syscalls, user pointers or separate task address spaces |
+| M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only READ/WRITE and denies forged/foreign tokens | Hardcoded QEMU probe |
+| M2-I: isolated experimental process roots | Distinct A/B CR3 roots, per-process user frames, bidirectional ring-3 foreign-memory denial and task-root lifecycle checks | Static permanent test mappings, nonpreemptive bootstrap |
+| M2-J: bounded user-memory syscall proof | Audited user page walks, capability-gated copy-in/out and 22 real ring-3 INT80 probes per process with whole-frame integrity checks | Exactly eight bytes per syscall in current test ABI; not general user memory or production process lifecycle |
+| M2-K.1 (partial): owned frame access | High-half transient physical window, owned frame-copy/checksum paths, audited user-page reads and private PT self-alias | Firmware-inherited mappings still required by early root setup, auditing and kernel execution |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
 page. QEMU verified the hardware #PF, CR2 address and user-mode
 protection-violation bits. This establishes one concrete privilege boundary,
 not complete process isolation.
 
-The task-scoped syscall/protection tests and previous acceptance gates passed in
-[GitHub Actions run 40163063162](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40163063162).
+The latest accepted kernel changes passed host and QEMU tests in
+[GitHub Actions run 40826861153](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40826861153).
+Earlier milestone evidence remains in the development log.
 Source commits, builds, boot tests and hardware support are **separate** claims.
 
 ## What Sorveth is building
 
 | Subsystem | Intended role | Current state |
 |---|---|---|
-| **Sorveth Core** | Capability-based microkernel, memory protection, processes, IPC | Partial native kernel + controlled ring-3 probe |
+| **Sorveth Core** | Capability-based microkernel, memory protection, processes, IPC | Early kernel and controlled A/B ring-3 process, copy and security probes; no general process runtime |
 | **Sorveth Space** | Original project/activity desktop, windowing, input | Design only |
 | **Sorveth Vault** | User-owned structured resources and portable storage | Design only |
 | **Sorveth Forge** | Native app creation and editing tools | Planned |
@@ -76,7 +80,7 @@ rustup target add x86_64-unknown-uefi
 bash scripts/smoke-monitor-qemu.sh
 ```
 
-`smoke-qemu.sh` builds three independent EFI test images:
+`smoke-qemu.sh` builds seven independent EFI test images:
 
 1. **`qemu-smoke`** — post-ExitBootServices native kernel boot, physical
    memory validation, context switching, then a test-only QEMU debug exit.
@@ -101,15 +105,22 @@ Commands: help status memory paging caps halt
 sorveth>
 ```
 
+The other four test images, `qemu-isolate-a`, `qemu-isolate-b`,
+`qemu-transfer-a` and `qemu-transfer-b`, exercise A/B process-memory
+denial and capability-secured user-buffer syscalls. Their QEMU outcomes
+are verified independently before the test suite passes.
+
 The monitor is a privileged diagnostic interface, not a shell for an
 isolated user process.
 
 ## Next engineering gates
 
-The next task is to turn the ring-3 prototype into per-task address spaces
-and a defensive copy-in/copy-out mechanism for bounded user buffers, followed
-by syscall lifecycle and scheduling. The current INT 0x80 dispatch is still
-**test-only**, register-only and not a generally usable syscall interface.
+M2-I/J have proved isolated, task-bound A/B memory operations within the
+single-core bootstrap. Work now proceeds through **M2-K**: remove firmware-
+identity dependencies, implement safe dynamic frame lifetime/reclamation,
+process creation/teardown, broader buffer operations and fault recovery.
+The current INT 0x80 memory-copy ABI remains **test-only** and limited to
+eight-byte transfers. See [the active K plan](docs/M2-K-PLAN.md).
 
 Only after memory independence, process containment, services, security and
 hardware coverage are verified will Sorveth be considered an operating system
