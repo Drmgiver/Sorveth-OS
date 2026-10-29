@@ -11,7 +11,7 @@
 use core::{arch::asm, ptr};
 
 use sorveth_cap::ObjectId;
-use sorveth_task::{Error as TaskError, Scheduler, TaskId};
+use sorveth_task::{Error as TaskError, Scheduler, State, TaskId};
 
 use crate::process_roots::{self, Process};
 
@@ -26,11 +26,60 @@ pub enum Error {
     MissingAddressSpace,
     IncorrectSelection,
     HardwareMismatch,
+    BlockedTask,
+    InvalidRoot,
 }
 
 impl From<TaskError> for Error {
     fn from(value: TaskError) -> Self {
         Self::Task(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthorizedSpace {
+    task: TaskId,
+    process: Process,
+    root: u64,
+}
+
+/// Restrict CR3 switches to known kernel-owned roots. Restore kernel CR3
+/// on every normal Rust return path, including early errors.
+///
+/// # Safety
+/// The caller has already verified QEMU identity mappings and supervisor
+/// kernel/stack mappings; one CPU, interrupts disabled, no user preemption.
+struct KernelRootGuard {
+    kernel: u64,
+}
+
+impl KernelRootGuard {
+    unsafe fn enter(kernel: u64, target: u64) -> Result<Self, Error> {
+        if kernel == 0
+            || target == 0
+            || target == kernel
+            || kernel & 4095 != 0
+            || target & 4095 != 0
+        {
+            return Err(Error::InvalidRoot);
+        }
+        let active: u64;
+        asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+        if active & CR3_ADDRESS_MASK != kernel {
+            return Err(Error::HardwareMismatch);
+        }
+        asm!("mov cr3, {}", in(reg) target, options(nostack, preserves_flags));
+        Ok(Self { kernel })
+    }
+}
+
+impl Drop for KernelRootGuard {
+    fn drop(&mut self) {
+        // This guard only exists with a verified, continually mapped
+        // supervisor kernel page and stack on the single bootstrap CPU.
+        unsafe {
+            asm!("mov cr3, {}", in(reg) self.kernel, options(nostack, preserves_flags));
+        }
     }
 }
 
@@ -71,6 +120,29 @@ impl<const N: usize> AddressScheduler<N> {
             Some((owned, process)) if owned == id => Ok(process),
             _ => Err(Error::MissingBinding),
         }
+    }
+
+    /// The task must still exist with its original generation and Ready
+    /// state. The resolver is privileged kernel code that audits a root;
+    /// unprivileged tasks cannot supply an arbitrary CR3 value.
+    fn authorize(
+        &self,
+        id: TaskId,
+        resolve: impl FnOnce(Process) -> Option<u64>,
+    ) -> Result<AuthorizedSpace, Error> {
+        let process = self.lookup(id)?;
+        if self.tasks.inspect(id)?.state != State::Ready {
+            return Err(Error::BlockedTask);
+        }
+        let root = resolve(process).ok_or(Error::MissingAddressSpace)?;
+        if root == 0 || root & 4095 != 0 {
+            return Err(Error::InvalidRoot);
+        }
+        Ok(AuthorizedSpace {
+            task: id,
+            process,
+            root,
+        })
     }
 
     fn select_next(&mut self) -> Result<Option<(TaskId, Process)>, Error> {
@@ -165,11 +237,20 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         }
         // The task identity determines which of the two verified roots
         // the kernel loads. It is never specified by unprivileged code.
+        let authorized = scheduler.authorize(selected_id, |p| unsafe {
+            process_roots::checked_process_root(p)
+        })?;
+        if authorized.task != selected_id || authorized.process != selected_process {
+            return Err(Error::IncorrectSelection);
+        }
         let (root, own_page, expected_value, other_page) = if selected_process == Process::First {
             (root_a, memory_a, expected_a, memory_b)
         } else {
             (root_b, memory_b, expected_b, memory_a)
         };
+        if authorized.root != root {
+            return Err(Error::HardwareMismatch);
+        }
         let cross_slot = if selected_process == Process::First {
             slot_b
         } else {
@@ -181,7 +262,7 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         let other_before = ptr::read_volatile(other_page.physical_address as *const u64);
         let next_value = expected_value ^ SENTINEL_SALT ^ ((round as u64) + 1);
 
-        asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        let process_guard = KernelRootGuard::enter(kernel, authorized.root)?;
         asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         // These addresses were verified present by M2-I.2. Each access
         // takes place under the scheduler-selected process root.
@@ -196,7 +277,7 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
             && ptr::read_volatile(own_page.virtual_address as *const u64) == next_value;
 
         // Always restore the kernel root before inspecting or returning.
-        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+        drop(process_guard);
         asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         if !stored_correct
             || observed & CR3_ADDRESS_MASK != kernel
@@ -224,6 +305,88 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     }
     scheduler.exit(a)?;
     if scheduler.select_next()?.is_some() || scheduler.lookup(a).is_ok() {
+        return Err(Error::IncorrectSelection);
+    }
+    Ok(())
+}
+
+/// A second QEMU-only negative acceptance proof: blocked, exited,
+/// generation-stale or corrupted task/root mappings cannot be activated.
+/// The deliberately damaged inactive PML4 entry is restored before CR3
+/// changes, and the kernel CR3 must remain active for all failed requests.
+///
+/// # Safety
+/// CPL0, single CPU, IRQs disabled, verified inherited bootstrap identity
+/// map; neither process has been entered in ring 3 or scheduled concurrently.
+pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::MissingAddressSpace)?;
+    let (root_a, slot_a) =
+        process_roots::process_root(Process::First).ok_or(Error::MissingAddressSpace)?;
+    let (root_b, _) =
+        process_roots::process_root(Process::Second).ok_or(Error::MissingAddressSpace)?;
+    let resolve = |p| unsafe { process_roots::checked_process_root(p) };
+    if resolve(Process::First) != Some(root_a) || resolve(Process::Second) != Some(root_b) {
+        return Err(Error::MissingAddressSpace);
+    }
+    let mut scheduler = AddressScheduler::<2>::new();
+    let old = scheduler.spawn(ObjectId(0x1_401), Process::First)?;
+    let other = scheduler.spawn(ObjectId(0x1_402), Process::Second)?;
+    if scheduler.authorize(old, resolve)?.root != root_a {
+        return Err(Error::HardwareMismatch);
+    }
+    scheduler.block(old)?;
+    if scheduler.authorize(old, resolve) != Err(Error::BlockedTask)
+        || scheduler.select_next()? != Some((other, Process::Second))
+    {
+        return Err(Error::IncorrectSelection);
+    }
+    scheduler.wake(old)?;
+    scheduler.exit(old)?;
+    if scheduler.authorize(old, resolve) != Err(Error::Task(TaskError::InvalidTask)) {
+        return Err(Error::IncorrectSelection);
+    }
+    let replacement = scheduler.spawn(ObjectId(0x1_403), Process::First)?;
+    if replacement == old
+        || scheduler.authorize(old, resolve) != Err(Error::Task(TaskError::InvalidTask))
+        || scheduler.authorize(replacement, resolve)?.root != root_a
+    {
+        return Err(Error::IncorrectSelection);
+    }
+
+    // Tamper with the inactive root's USER PML4 bit only while the
+    // original kernel CR3 is active; always restore before deciding.
+    let entry = (root_a as *mut u64).add(slot_a as usize);
+    let saved = ptr::read_volatile(entry);
+    if saved & 0x5 != 0x5 {
+        return Err(Error::HardwareMismatch);
+    }
+    ptr::write_volatile(entry, saved & !(1u64 << 2));
+    let denied = scheduler.authorize(replacement, resolve) == Err(Error::MissingAddressSpace);
+    ptr::write_volatile(entry, saved);
+    if !denied || scheduler.authorize(replacement, resolve)?.root != root_a {
+        return Err(Error::HardwareMismatch);
+    }
+
+    let decision = scheduler.authorize(replacement, resolve)?;
+    {
+        let _guard = KernelRootGuard::enter(kernel, decision.root)?;
+        let current: u64;
+        asm!("mov {}, cr3", out(reg) current, options(nomem, nostack, preserves_flags));
+        if current & CR3_ADDRESS_MASK != root_a {
+            return Err(Error::HardwareMismatch);
+        }
+    }
+    let restored: u64;
+    asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+    if restored & CR3_ADDRESS_MASK != kernel {
+        return Err(Error::HardwareMismatch);
+    }
+    scheduler.exit(replacement)?;
+    scheduler.exit(other)?;
+    if scheduler.authorize(replacement, resolve) != Err(Error::Task(TaskError::InvalidTask))
+        || scheduler.authorize(other, resolve) != Err(Error::Task(TaskError::InvalidTask))
+        || scheduler.select_next()?.is_some()
+    {
         return Err(Error::IncorrectSelection);
     }
     Ok(())
@@ -267,6 +430,41 @@ mod tests {
         assert_eq!(s.lookup(replacement), Ok(Process::First));
         assert_eq!(s.lookup(other), Ok(Process::Second));
         assert_eq!(s.lookup(old), Err(Error::Task(TaskError::InvalidTask)));
+    }
+
+    #[test]
+    fn a_blocked_or_stale_task_cannot_authorize_a_valid_root() {
+        let mut s = AddressScheduler::<2>::new();
+        let old = s.spawn(ObjectId(3), Process::First).unwrap();
+        assert_eq!(s.authorize(old, |_| Some(0x1000)).unwrap().root, 0x1000);
+        s.block(old).unwrap();
+        assert_eq!(s.authorize(old, |_| Some(0x1000)), Err(Error::BlockedTask));
+        s.wake(old).unwrap();
+        s.exit(old).unwrap();
+        let reused = s.spawn(ObjectId(4), Process::First).unwrap();
+        assert_ne!(old, reused);
+        assert_eq!(
+            s.authorize(old, |_| Some(0x1000)),
+            Err(Error::Task(TaskError::InvalidTask))
+        );
+        assert_eq!(s.authorize(reused, |_| Some(0x3000)).unwrap().root, 0x3000);
+    }
+
+    #[test]
+    fn resolver_cannot_authorize_missing_or_misaligned_process_root() {
+        let mut s = AddressScheduler::<2>::new();
+        let id = s.spawn(ObjectId(11), Process::Second).unwrap();
+        assert_eq!(s.authorize(id, |_| None), Err(Error::MissingAddressSpace));
+        assert_eq!(s.authorize(id, |_| Some(0)), Err(Error::InvalidRoot));
+        assert_eq!(s.authorize(id, |_| Some(0x1234)), Err(Error::InvalidRoot));
+        assert_eq!(
+            s.authorize(id, |p| if p == Process::Second { Some(0x5000) } else { None }),
+            Ok(AuthorizedSpace {
+                task: id,
+                process: Process::Second,
+                root: 0x5000
+            })
+        );
     }
 
     #[test]
