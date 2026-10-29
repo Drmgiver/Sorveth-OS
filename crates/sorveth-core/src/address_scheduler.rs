@@ -331,7 +331,7 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
 /// Root entry access is through the registered owned supervisor window.
 pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     let kernel = crate::root::kernel_root_physical().ok_or(Error::MissingAddressSpace)?;
-    let (root_a, slot_a) =
+    let (root_a, _) =
         process_roots::process_root(Process::First).ok_or(Error::MissingAddressSpace)?;
     let (root_b, _) =
         process_roots::process_root(Process::Second).ok_or(Error::MissingAddressSpace)?;
