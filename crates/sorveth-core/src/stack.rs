@@ -116,9 +116,15 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     };
     let manifest = unsafe { crate::supervisor_manifest::capture::<192>(&map, &boot, (base, end)) };
     match manifest {
-        Ok(found) if found.len() >= 48 => {
+        Ok(found)
+            if found.len() >= 48
+                && found.count_kind(crate::supervisor_manifest::Kind::KernelPaging) == 4 =>
+        {
             crate::serial::write_line(
                 "SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited",
+            );
+            crate::serial::write_line(
+                "SORVETH M2-K.1d: four owned kernel paging frames provenance verified",
             );
             crate::serial::write("Sorveth manifest mapped pages: ");
             crate::serial::write_u64(found.len() as u64);

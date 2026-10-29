@@ -14,6 +14,7 @@ pub enum Kind {
     FaultStack,
     TrapStack,
     CpuTable,
+    KernelPaging,
     KernelState,
     BootHandoff,
     MemoryDescriptors,
@@ -72,6 +73,14 @@ impl<const N: usize> Manifest<N> {
 
     pub const fn unknown_device_pages(&self) -> usize {
         self.unknown_device_pages
+    }
+
+    pub fn count_kind(&self, kind: Kind) -> usize {
+        self.records[..self.len]
+            .iter()
+            .flatten()
+            .filter(|record| record.kind == kind)
+            .count()
     }
 
     pub fn get(&self, index: usize) -> Option<Record> {
@@ -266,6 +275,22 @@ pub unsafe fn capture<const N: usize>(
     for address in crate::interrupts::survival_handler_addresses() {
         record_one(&mut manifest, map, root, address, Kind::Code, false, true)?;
     }
+    for frame in crate::root::bootstrap_owned_table_frames() {
+        // A future CR3 cannot be independent if it still borrows paging
+        // frame storage whose backing and provenance were never checked.
+        if frame & (PAGE_BYTES - 1) != 0 {
+            return Err(ManifestError::InvalidRange);
+        }
+        record_one(
+            &mut manifest,
+            map,
+            root,
+            frame,
+            Kind::KernelPaging,
+            true,
+            false,
+        )?;
+    }
     record_range(
         &mut manifest,
         map,
@@ -454,6 +479,8 @@ mod tests {
         manifest.push(first).unwrap();
         assert_eq!(manifest.push(first), Ok(()));
         assert_eq!(manifest.len(), 1);
+        assert_eq!(manifest.count_kind(Kind::Code), 1);
+        assert_eq!(manifest.count_kind(Kind::KernelPaging), 0);
         let mut alias = first;
         alias.virtual_page = 0x2000;
         assert_eq!(

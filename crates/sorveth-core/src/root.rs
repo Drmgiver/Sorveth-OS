@@ -47,6 +47,19 @@ static mut SORVETH_PDPT: RootPage = RootPage([0; 512]);
 static mut SORVETH_PD: RootPage = RootPage([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static mut SORVETH_PT: RootPage = RootPage([0; 512]);
+/// Four statically retained Sorveth-owned bootstrap paging frames.
+/// Their initial virtual addresses are verified identity addresses in QEMU;
+/// this is an inventory hook, not an interface for physical memory writes.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn bootstrap_owned_table_frames() -> [u64; 4] {
+    [
+        ptr::addr_of!(SORVETH_ROOT) as u64,
+        ptr::addr_of!(SORVETH_PDPT) as u64,
+        ptr::addr_of!(SORVETH_PD) as u64,
+        ptr::addr_of!(SORVETH_PT) as u64,
+    ]
+}
+
 #[cfg(target_arch = "x86_64")]
 static ACTIVE_ROOT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
