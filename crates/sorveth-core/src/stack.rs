@@ -107,7 +107,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     crate::serial::write_line("SORVETH M2-J.1: bounded user address ranges validated");
     if !unsafe { crate::process_roots::verify_user_page_walk() } {
-        crate::serial::write_line("FATAL: process-specific user page translation validation failed");
+        crate::serial::write_line(
+            "FATAL: process-specific user page translation validation failed",
+        );
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-J.2: process-owned read/write page walks verified");
