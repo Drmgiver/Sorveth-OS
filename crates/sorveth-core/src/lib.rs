@@ -17,6 +17,7 @@ mod screen;
 mod serial;
 mod stack;
 mod tss;
+mod user_copy;
 #[cfg(feature = "qemu-user")]
 mod user;
 
