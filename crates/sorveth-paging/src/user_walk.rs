@@ -150,8 +150,7 @@ mod tests {
         let mut map = sample();
         map[4].1 = 0xd000 | PRESENT | WRITABLE | USER | NX;
         let range = validate_user_range(VA + PAGE_BYTES - 1, 2).unwrap();
-        let resolved = walk_user_pages(ROOT, range, UserAccess::Read, |at| read(&map, at))
-            .unwrap();
+        let resolved = walk_user_pages(ROOT, range, UserAccess::Read, |at| read(&map, at)).unwrap();
         assert_eq!(resolved.page_count(), 2);
         assert_eq!(resolved.physical_page(0), Some(0x9000));
         assert_eq!(resolved.physical_page(1), Some(0xd000));
@@ -207,7 +206,11 @@ mod tests {
         // admits; an unowned table is not dereferenced.
         assert_eq!(
             walk_user_pages(ROOT, across, UserAccess::Read, |at| {
-                if at == 0x3000 { None } else { read(&sample(), at) }
+                if at == 0x3000 {
+                    None
+                } else {
+                    read(&sample(), at)
+                }
             }),
             Err(WalkError::TableNotOwned)
         );
