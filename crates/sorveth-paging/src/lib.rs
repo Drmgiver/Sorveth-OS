@@ -4,6 +4,7 @@
 //! Does NOT change CR3, install tables, map frames or execute user processes.
 //! An eventual installer must prove NX support and zero owned page-table frames.
 
+pub mod user_copy;
 pub mod user_range;
 pub mod user_walk;
 
