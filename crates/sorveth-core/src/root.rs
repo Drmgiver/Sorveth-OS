@@ -57,6 +57,10 @@ static PRIVATE_BASE: AtomicU64 = AtomicU64::new(0);
 static NEXT_PRIVATE_PAGE: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 const PHYSICAL_WINDOW_INDEX: usize = 511;
+// Reserve the preceding upper-half leaf for direct kernel access to its own
+// private PT page. The leaf itself is not user accessible.
+#[cfg(target_arch = "x86_64")]
+const PRIVATE_PT_ALIAS_INDEX: usize = 510;
 #[cfg(target_arch = "x86_64")]
 static PHYSICAL_WINDOW_BUSY: AtomicBool = AtomicBool::new(false);
 
@@ -242,6 +246,12 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE);
         ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE);
         ptr::write_volatile(pt as *mut u64, scratch.start | PRESENT | WRITE | NO_EXECUTE);
+        // Self-alias for editing this PT through Sorveth's own upper-half
+        // page tables instead of via its inherited identity address.
+        ptr::write_volatile(
+            (pt as *mut u64).add(PRIVATE_PT_ALIAS_INDEX),
+            pt | PRESENT | WRITE | NO_EXECUTE,
+        );
         ptr::write_volatile(dest.add(slot), pdpt | PRESENT | WRITE);
         let high_address = 0xffff_0000_0000_0000u64 | ((slot as u64) << 39);
 
@@ -264,6 +274,21 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         if translate(fresh_root, high_address, |phys| {
             Some(ptr::read_volatile(phys as *const u64))
         }) != Some(scratch.start)
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let pt_alias = high_address + PRIVATE_PT_ALIAS_INDEX as u64 * 4096;
+        let self_entry = ptr::read_volatile(
+            (pt_alias as *const u64).add(PRIVATE_PT_ALIAS_INDEX),
+        );
+        // Hardware may set Accessed/Dirty; address, USER denial and W^X
+        // protection must remain identical to the installed self-alias.
+        let immutable_bits = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 2);
+        if self_entry & immutable_bits != pt | PRESENT | WRITE | NO_EXECUTE
+            || ptr::read_volatile(pt_alias as *const u64) & ADDRESS_MASK != scratch.start
+            || translate(fresh_root, pt_alias, |phys| {
+                Some(ptr::read_volatile(phys as *const u64))
+            }) != Some(pt)
         {
             return Err(Error::VerificationFailed);
         }
@@ -310,7 +335,8 @@ impl Drop for PhysicalWindowGuard {
 }
 
 /// Temporarily access an owned physical frame through Sorveth's high-half PT.
-/// The page-table storage still uses the inherited bootstrap identity mapping.
+/// The PT entry is changed through its own supervisor RW/NX virtual alias,
+/// not through the inherited identity address for the paging frame.
 ///
 /// # Safety
 /// The caller owns the complete frame, is on the only CPU with IRQs masked and
@@ -338,9 +364,8 @@ pub(crate) unsafe fn with_physical_window<R>(
     {
         return Err(Error::PhysicalWindowBusy);
     }
-    let pte = ptr::addr_of_mut!(SORVETH_PT)
-        .cast::<u64>()
-        .add(PHYSICAL_WINDOW_INDEX);
+    let pte = (base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096) as *mut u64;
+    let pte = pte.add(PHYSICAL_WINDOW_INDEX);
     if ptr::read_volatile(pte) != 0 {
         PHYSICAL_WINDOW_BUSY.store(false, Ordering::Release);
         return Err(Error::PhysicalWindowBusy);
@@ -363,9 +388,10 @@ pub(crate) unsafe fn with_physical_window<R>(
 /// Sorveth's private 2 MiB upper-half bootstrap window. Slot one is reserved
 /// as an intentionally absent page for the controlled #PF acceptance test.
 ///
-/// This is **not** a general heap: only one CPU may call it; its paging
-/// tables still use inherited firmware identity mappings, and pages are never
-/// reclaimed. The claimed frame itself uses the owned K.1a virtual window.
+/// This is **not** a general heap: only one CPU may call it, and pages
+/// are never reclaimed. The owned PT alias and frame window avoid direct
+/// physical address dereferences in this method, but other boot paths
+/// still rely on inherited firmware page tables.
 pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -373,7 +399,7 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
             return Err(Error::RootNotInstalled);
         }
         let slot = NEXT_PRIVATE_PAGE.load(Ordering::Acquire);
-        if !(2..PHYSICAL_WINDOW_INDEX as u64).contains(&slot) {
+        if !(2..PRIVATE_PT_ALIAS_INDEX as u64).contains(&slot) {
             return Err(Error::NoFreeVirtualSlot);
         }
         let physical = pool
@@ -384,9 +410,9 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         // K.1a: access this newly claimed frame through the Sorveth-owned
         // high-half window instead of dereferencing a physical address.
         with_physical_window(physical, |window| ptr::write_bytes(window, 0, 4096))?;
-        let pte = ptr::addr_of_mut!(SORVETH_PT)
-            .cast::<u64>()
-            .add(slot as usize);
+        let base = PRIVATE_BASE.load(Ordering::Acquire);
+        let pte = (base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096) as *mut u64;
+        let pte = pte.add(slot as usize);
         if ptr::read_volatile(pte) != 0 {
             return Err(Error::VerificationFailed);
         }
@@ -410,8 +436,7 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
                 Some(ptr::read_volatile(address as *const u64))
             }) != Some(physical)
             || ptr::read_volatile(
-                ptr::addr_of_mut!(SORVETH_PT)
-                    .cast::<u64>()
+                ((base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096) as *const u64)
                     .add(PHYSICAL_WINDOW_INDEX),
             ) != 0
         {
@@ -886,6 +911,8 @@ mod tests {
         assert!(!valid_physical_window_frame(0x1001));
         assert!(!valid_physical_window_frame(0xffff_8000_0000_0000));
         assert_eq!(PHYSICAL_WINDOW_INDEX, 511);
+        assert_eq!(PRIVATE_PT_ALIAS_INDEX, 510);
+        assert!(PRIVATE_PT_ALIAS_INDEX < PHYSICAL_WINDOW_INDEX);
     }
 
     #[test]
