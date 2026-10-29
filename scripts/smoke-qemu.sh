@@ -93,6 +93,7 @@ for marker in \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -147,6 +148,7 @@ for marker in \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
@@ -194,6 +196,7 @@ for marker in \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \
@@ -246,6 +249,7 @@ for side in a b; do
     'SORVETH M2-J.2: process-owned read/write page walks verified' \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1b: user copy via owned frame window verified' \
     'Sorveth ring-3 isolation: process-owned CR3 armed' \
     'SORVETH ISOLATION: own process memory read in ring 3' \
     'SORVETH EXCEPTION: PAGE FAULT' \
@@ -287,6 +291,7 @@ for side in a b; do
   for marker in \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1b: user copy via owned frame window verified' \
     'Sorveth ring-3 memory gateway: process CR3 armed' \
     'Sorveth ring-3 probe: user mappings and trap ready' \
     'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied' \
