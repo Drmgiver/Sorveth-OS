@@ -86,6 +86,7 @@ for marker in \
   'Sorveth native context switch: two worker roundtrips verified' \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
+  'SORVETH M2-K.1d: owned PML4 root clone and verification complete' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
@@ -145,6 +146,7 @@ for marker in \
   'Sorveth native context switch: two worker roundtrips verified' \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
+  'SORVETH M2-K.1d: owned PML4 root clone and verification complete' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
@@ -197,6 +199,7 @@ fi
 for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
+  'SORVETH M2-K.1d: owned PML4 root clone and verification complete' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \

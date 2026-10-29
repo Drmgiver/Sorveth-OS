@@ -176,3 +176,22 @@ map, framebuffer and all CPU-required mappings through kernel-owned tables.
 Do not infer that switching the user-table builder removes those remaining
 bootstrap dependencies; the owned frame window itself still needs the
 initial Sorveth private supervisor subtree installed during handoff.
+
+
+### K.1d incremental checkpoint — owned PML4 cloning and verification
+
+The two bootstrap process PML4 roots are now constructed by snapshotting
+the active kernel PML4 through Sorveth's owned high-half physical window,
+sanitizing all present supervisor entries, and writing/verifying each full
+512-entry process root through the same temporary window. All vacant-slot,
+foreign-slot, supervisor USER-bit and CR3-switch tests remain required.
+The physical root frames themselves are statically allocated; this is not
+new process allocation or a production loader. QEMU verifies the new root
+clone marker in normal, intentional fault and legacy ring-3 modes, plus
+the existing isolation/transfer/monitor acceptance tests.
+
+**Remaining K.1d blocker:** kernel code/stack, IDT/TSS handlers and early
+boot data still execute through supervisor mappings inherited from OVMF.
+This commit does not unmap inherited firmware tables, reclaim them or
+establish a fully independent kernel CR3 hierarchy. Those need a separate,
+carefully staged mapping-audit and switched-root QEMU proof.

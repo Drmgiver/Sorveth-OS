@@ -84,6 +84,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth process roots: two distinct supervisor PML4 roots verified");
+    crate::serial::write_line("SORVETH M2-K.1d: owned PML4 root clone and verification complete");
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();
