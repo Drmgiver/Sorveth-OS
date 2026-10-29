@@ -261,3 +261,19 @@ prove user-to-user denial, and replace firmware inherited memory assumptions.
 - This is *not yet independent ring-3 task execution*, preemption or a
   complete process security boundary; shared supervisor lower tables
   are still inherited from the OVMF bootstrap.
+
+
+## 2026-10-28 — M2-I.4 CPL3 bidirectional process-memory probes
+
+Added two test-only UEFI build features to prove process A can access
+its own private data from ring 3 but cannot read B's data address, and
+vice versa. Each run attaches a restricted unprivileged test-code/stack
+subtree only to the selected process CR3. The program validates its
+own page contents before entering the kernel via INT80, then attempts
+a foreign-page read which must trigger a precise nonpresent user-read
+#PF (PFEC=0x4) at CR2 with the expected CR3 and an active IST1 stack.
+The existing normal boot, intentional fault, ring-3 capability syscall
+and interactive monitor checks remain acceptance requirements.
+
+Only deterministic proof, not general task execution or process-lifetime
+management; M2-I.5 remains the integration/hardening target.

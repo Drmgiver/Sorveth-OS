@@ -379,3 +379,25 @@ single-core test with maskable interrupts disabled, and kernel/firmware
 subtrees remain shared. M2-I.4 will test actual user-mode access denial
 across process boundaries; full task context switching, separate user
 stacks, user-pointer validation and preemption remain future work.
+
+
+## M2-I.4 — Bidirectional CPL3 cross-process memory denial
+
+Two QEMU-only EFI builds, qemu-isolate-a and qemu-isolate-b, execute under
+independently owned process CR3 roots. Each executable reads its own private
+RW/NX user page in ring 3, compares its expected value, signals successful
+reading through a one-shot INT80 and then deliberately reads the foreign
+process's private address. That address must fault because the other
+process's PML4 user slot is absent.
+
+Success requires a real x86 page fault on Sorveth's IST1, CR2 identifying
+the foreign address, page-fault error low bits exactly 0x4 (nonpresent
+user-mode read), the selected CR3 still active, and the foreign PML4 slot
+nonpresent. Each direction has a separate emulator run and success marker.
+No unexpected fault, successful foreign access, or failure to read the own
+page may produce a passing debug exit.
+
+This is a deterministic security acceptance test, NOT a production
+process loader, general userspace fault recovery or independently running
+ring-3 scheduler. The experimental kernel still shares inherited supervisor
+mappings and depends on OVMF identity mapping for bootstrap table inspection.

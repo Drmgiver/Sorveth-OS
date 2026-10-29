@@ -39,7 +39,7 @@ fi
 save_diagnostics() {
   local result=$?
   if [[ -n "$ARTIFACT_DIR" ]]; then
-    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err user-serial.log user-qemu.out user-qemu.err; do
+    for name in serial.log qemu.out qemu.err fault-serial.log fault-qemu.out fault-qemu.err user-serial.log user-qemu.out user-qemu.err isolation-a-serial.log isolation-a-qemu.out isolation-a-qemu.err isolation-b-serial.log isolation-b-qemu.out isolation-b-qemu.err; do
       if [[ -f "$TMP/$name" ]]; then
         cp "$TMP/$name" "$ARTIFACT_DIR/$name"
       fi
@@ -190,3 +190,50 @@ for marker in \
   fi
 done
 echo 'PASS: ring-3 task-scoped capability syscalls denied forged/foreign/write handles before supervisor-memory fault.'
+
+
+# M2-I.4: each QEMU image must prove it can read its own private USER
+# page from ring 3 but cannot read the other process's private page.
+# Only the matching hardware #PF permits the kernel to exit with status 33.
+for side in a b; do
+  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
+    --features "qemu-isolate-$side"
+  cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
+  cp "$VARS" "$TMP/OVMF_VARS.fd"
+  set +e
+  timeout --signal=TERM --kill-after=5s 55s qemu-system-x86_64 \
+    -machine q35 -m 512M -no-reboot -display none \
+    -drive "if=pflash,format=raw,readonly=on,file=$CODE" \
+    -drive "if=pflash,format=raw,file=$TMP/OVMF_VARS.fd" \
+    -drive "if=ide,format=raw,file=fat:rw:$TMP/esp" \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+    -serial "file:$TMP/isolation-$side-serial.log" -monitor none -net none \
+    >"$TMP/isolation-$side-qemu.out" 2>"$TMP/isolation-$side-qemu.err"
+  ISOLATION_STATUS=$?
+  set -e
+  cat "$TMP/isolation-$side-serial.log" 2>/dev/null || true
+  if [[ "$ISOLATION_STATUS" -ne 33 ]]; then
+    echo "QEMU process $side isolation failed: expected exit 33, got $ISOLATION_STATUS" >&2
+    cat "$TMP/isolation-$side-qemu.err" >&2 || true
+    exit 1
+  fi
+  if [[ "$side" == a ]]; then
+    isolation_marker='SORVETH PROCESS A -> B USER ACCESS DENIED: verified'
+  else
+    isolation_marker='SORVETH PROCESS B -> A USER ACCESS DENIED: verified'
+  fi
+  for marker in \
+    'Sorveth scheduler CR3: A B A B private address spaces verified' \
+    'Sorveth ring-3 isolation: process-owned CR3 armed' \
+    'SORVETH ISOLATION: own process memory read in ring 3' \
+    'SORVETH EXCEPTION: PAGE FAULT' \
+    'Sorveth page fault IST1: active' \
+    'Page fault error code: 0x4' \
+    "$isolation_marker"; do
+    if ! grep -Fq "$marker" "$TMP/isolation-$side-serial.log"; then
+      echo "QEMU process $side isolation failed: missing marker: $marker" >&2
+      exit 1
+    fi
+  done
+  echo "PASS: process $side read its own page and CPU denied cross-process ring-3 read."
+done
