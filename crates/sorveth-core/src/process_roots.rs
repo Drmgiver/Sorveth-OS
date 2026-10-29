@@ -313,13 +313,53 @@ pub unsafe fn attach_test_probe(process: Process, entry: u64) -> Result<u64, Err
     Ok(owner_root)
 }
 
+/// Whitelist individual words of Sorveth's registered PML4/PDPT/PD/PT
+/// frames, rejecting arbitrary physical addresses and out-of-page indices.
+/// The policy is independent of the mapping used to access the frame.
+#[cfg(target_arch = "x86_64")]
+fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> bool {
+    frame != 0 && frame & 4095 == 0 && index < 512 && pages.contains(&frame)
+}
+
+/// Read one word of a *registered* kernel/process paging frame using the
+/// high-half Sorveth-owned physical window. Never dereference a physical
+/// table address supplied by a PTE or by ring-3 code.
+///
+/// # Safety
+/// Requires the existing single-core, IRQ-masked, kernel-CR3 bootstrap.
+/// The physical values of these static table frames were checked during
+/// firmware handoff and process root/table initialization.
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
+    let kernel = crate::root::kernel_root_physical()?;
+    let allowed = [
+        kernel,
+        ptr::addr_of!(FIRST).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND).cast::<u64>() as u64,
+        ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
+        ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
+        ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+    ];
+    if !registered_table_word_allowed(frame, index, &allowed) {
+        return None;
+    }
+    crate::root::with_physical_window(frame, |window| {
+        ptr::read_volatile((window as *const u64).add(index))
+    })
+    .ok()
+}
+
 /// M2-I.5: audit both private page-table paths immediately before a
 /// kernel-controlled CR3 transition. Reject missing, aliased, malformed or
 /// shared user data mappings before untrusted code could run.
 ///
 /// # Safety
 /// Restricted to the single QEMU bootstrap CPU, with IRQs disabled,
-/// inherited identity mappings verified and no concurrent page-table edits.
+/// registered static table frames and no concurrent page-table edits.
+/// Reads use the Sorveth-owned window, not raw physical-pointer casts.
 pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     if !MAPPED.load(Ordering::Acquire) {
         return None;
@@ -337,10 +377,10 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
         || page_a.physical_address == page_b.physical_address
         || page_a.virtual_address != user_base(slot_a)?
         || page_b.virtual_address != user_base(slot_b)?
-        || ptr::read_volatile((kernel as *const u64).add(slot_a as usize)) != 0
-        || ptr::read_volatile((kernel as *const u64).add(slot_b as usize)) != 0
-        || ptr::read_volatile((root_a as *const u64).add(slot_b as usize)) != 0
-        || ptr::read_volatile((root_b as *const u64).add(slot_a as usize)) != 0
+        || read_registered_table_word(kernel, slot_a as usize) != Some(0)
+        || read_registered_table_word(kernel, slot_b as usize) != Some(0)
+        || read_registered_table_word(root_a, slot_b as usize) != Some(0)
+        || read_registered_table_word(root_b, slot_a as usize) != Some(0)
     {
         return None;
     }
@@ -357,7 +397,6 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     for (i, table) in tables_a.iter().chain(tables_b.iter()).enumerate() {
         if *table == 0
             || *table & 4095 != 0
-            || !crate::root::identity_mapped(*table)
             || tables_a
                 .iter()
                 .chain(tables_b.iter())
@@ -568,14 +607,18 @@ pub unsafe fn verify_user_page_walk() -> bool {
 }
 
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
-/// addresses. The QEMU bootstrap has verified identity mapping of every
-/// page-table frame, so reading these raw entries is safe *for this test*.
+/// addresses or a physical identity-pointer dereference. Only the known
+/// registered static paging frames can be read through the owned window.
 #[cfg(target_arch = "x86_64")]
 unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, data: u64) -> bool {
-    let pml4_entry = ptr::read_volatile((root as *const u64).add(slot as usize));
-    let pdpt_entry = ptr::read_volatile(pdpt as *const u64);
-    let pd_entry = ptr::read_volatile(pd as *const u64);
-    let leaf_entry = ptr::read_volatile(pt as *const u64);
+    let (Some(pml4_entry), Some(pdpt_entry), Some(pd_entry), Some(leaf_entry)) = (
+        read_registered_table_word(root, slot as usize),
+        read_registered_table_word(pdpt, 0),
+        read_registered_table_word(pd, 0),
+        read_registered_table_word(pt, 0),
+    ) else {
+        return false;
+    };
     entry_matches(pml4_entry, pdpt | USER_TABLE_FLAGS, false)
         && entry_matches(pdpt_entry, pd | USER_TABLE_FLAGS, false)
         && entry_matches(pd_entry, pt | USER_TABLE_FLAGS, false)
@@ -770,6 +813,21 @@ mod tests {
         assert!(!approved_table_entry(&owned, 0x1001));
         assert!(!approved_table_entry(&owned, 0x1fff));
         assert!(!approved_table_entry(&owned, u64::MAX));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn registered_table_word_policy_rejects_foreign_frames_and_oob_indices() {
+        let allowed = [
+            0x1000, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000, 0x9000,
+        ];
+        assert!(registered_table_word_allowed(0x1000, 0, &allowed));
+        assert!(registered_table_word_allowed(0x9000, 511, &allowed));
+        assert!(!registered_table_word_allowed(0x1000, 512, &allowed));
+        assert!(!registered_table_word_allowed(0x1001, 0, &allowed));
+        assert!(!registered_table_word_allowed(0, 0, &allowed));
+        assert!(!registered_table_word_allowed(0xa000, 0, &allowed));
+        assert!(!registered_table_word_allowed(u64::MAX, 0, &allowed));
     }
 
     #[cfg(target_arch = "x86_64")]
