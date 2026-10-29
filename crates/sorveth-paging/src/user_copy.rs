@@ -113,14 +113,8 @@ pub fn copy_to_resolved(
         let frame = pages
             .physical_page(index)
             .ok_or(CopyError::IncompleteMapping)?;
-        let bytes = core::cmp::min(
-            source.len() - copied,
-            PAGE_BYTES as usize - page_offset,
-        );
-        write_bytes(
-            frame + page_offset as u64,
-            &source[copied..copied + bytes],
-        );
+        let bytes = core::cmp::min(source.len() - copied, PAGE_BYTES as usize - page_offset);
+        write_bytes(frame + page_offset as u64, &source[copied..copied + bytes]);
         copied += bytes;
         page_offset = 0;
     }
@@ -325,5 +319,4 @@ mod tests {
         .unwrap();
         assert_eq!(calls, 1);
     }
-
 }

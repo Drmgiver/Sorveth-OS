@@ -421,13 +421,10 @@ pub unsafe fn verify_readonly_copy_out_denied(process: Process) -> bool {
     ptr::write_volatile(leaf, previous & !WRITE);
     // This should fail closed at the trusted process-root audit because
     // the private RW/NX leaf no longer matches the permitted template.
-    let denied = crate::user_copy::copy_to_process(
-        process,
-        own.virtual_address,
-        &[0xa5],
-    ) == Err(crate::user_copy::CopyOutError::InvalidMapping(
-        sorveth_paging::user_walk::WalkError::InvalidRoot,
-    ));
+    let denied = crate::user_copy::copy_to_process(process, own.virtual_address, &[0xa5])
+        == Err(crate::user_copy::CopyOutError::InvalidMapping(
+            sorveth_paging::user_walk::WalkError::InvalidRoot,
+        ));
     // Always restore even if the rejection assertion fails.
     ptr::write_volatile(leaf, previous);
     denied

@@ -132,8 +132,8 @@ pub unsafe fn copy_to_process(
         return Err(CopyOutError::WrongCpuContext);
     }
 
-    let owner = process_roots::mapped_page(process)
-        .ok_or(CopyOutError::UnmappedPhysicalDestination)?;
+    let owner =
+        process_roots::mapped_page(process).ok_or(CopyOutError::UnmappedPhysicalDestination)?;
     // This explicitly requests write permission at *every* page-table level.
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Write)
         .map_err(CopyOutError::InvalidMapping)?;
@@ -153,11 +153,7 @@ pub unsafe fn copy_to_process(
             // Safe only for the permanently allocated, verified,
             // kernel-writable QEMU identity-mapped process data page.
             // The source is nonaliasing kernel storage by contract.
-            ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                physical_address as *mut u8,
-                bytes.len(),
-            );
+            ptr::copy_nonoverlapping(bytes.as_ptr(), physical_address as *mut u8, bytes.len());
         },
     )
     .map_err(CopyOutError::PhysicalDestination)
@@ -245,7 +241,9 @@ pub unsafe fn verify_copy_to_user() -> bool {
             return false;
         }
         if copy_to_process(process, u64::MAX, &source)
-            != Err(CopyOutError::InvalidRange(UserRangeError::ArithmeticOverflow))
+            != Err(CopyOutError::InvalidRange(
+                UserRangeError::ArithmeticOverflow,
+            ))
         {
             return false;
         }
