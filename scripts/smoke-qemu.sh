@@ -90,6 +90,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -141,6 +142,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
@@ -186,6 +188,7 @@ for marker in \
   'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH M2-J.1: bounded user address ranges validated' \
   'SORVETH M2-J.2: process-owned read/write page walks verified' \
+  'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \
@@ -236,6 +239,7 @@ for side in a b; do
     'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
     'SORVETH M2-J.1: bounded user address ranges validated' \
     'SORVETH M2-J.2: process-owned read/write page walks verified' \
+    'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'Sorveth ring-3 isolation: process-owned CR3 armed' \
     'SORVETH ISOLATION: own process memory read in ring 3' \
     'SORVETH EXCEPTION: PAGE FAULT' \

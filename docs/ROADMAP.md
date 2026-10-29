@@ -489,3 +489,43 @@ remain mandatory.
 
 No copying, frame pinning, concurrent process execution or general-purpose
 user-memory service is claimed. M2-J.3 will address safe copy-from-user.
+
+
+## M2-J.3 — Bounded copy-in from process-owned user data
+
+Sorveth now performs real reads from user process A/B private data into a
+borrowed, kernel-owned byte slice. The kernel-only entry point accepts a
+trusted Process enum, a user virtual start address and the destination,
+with the destination length defining the entire bounded transfer.
+
+First, M2-J.1 validates the full numeric user range, including 64-KiB
+policy limit, user/kernel boundary and zero length. M2-J.2 then walks the
+selected process root for *every* page, verifying supervisor/user rights.
+Before any destination byte changes, the M2-J.3 policy checks every
+resolved physical page against the selected process's permanent owned
+data frame; the kernel confirms an existing physical identity mapping
+across the frame, checks its own CR3 and masked interrupts, then reads
+source bytes through that known physical mapping. It does NOT directly
+dereference the user virtual pointer or accept a user-supplied CR3.
+All rejection paths leave the destination unchanged.
+
+The generic no-heap byte-span helper can copy across multiple distinct
+physical 4-KiB frames after all have been admitted, and its host tests
+check a misaligned two-page transfer with noncontiguous physical frames,
+rejection of the second frame *before any data copy*, length mismatch,
+and the final byte of a page. The live kernel QEMU implementation is
+deliberately more restrictive: it only permits the one currently registered
+private 4-KiB frame for each process. QEMU tests copy the existing
+per-process sentinel, read an offset substring, access the page's final
+byte, deny the foreign process's data, deny a buffer crossing into an
+unmapped adjacent page, and reject null, overflow and empty requests
+without changing kernel destination bytes or user data.
+
+The source frames and paging tables are permanently retained and not
+reclaimed; only one QEMU bootstrap CPU is running with interrupts masked.
+This is the narrow lifetime guarantee that keeps a validated mapping
+stable during a copy. The implementation is NOT yet safe for arbitrary
+concurrently remappable user buffers, multiple CPUs, page reclaim,
+general user syscalls, or recoverable user faults. Later milestones
+must implement those conditions and user-facing authority binding.
+Next: M2-J.4 bounded kernel-to-user copying.

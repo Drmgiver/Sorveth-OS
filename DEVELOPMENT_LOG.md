@@ -323,3 +323,26 @@ this is not a production userspace scheduler or a general lifetime manager.
 
 The returned mapping is a snapshot only. M2-J.3 must add copying and
 ensure user mappings and physical frames cannot change during transfer.
+
+
+## 2026-10-29 — M2-J.3 bounded copy from user process data
+
+- Added allocation-free copy policy for all-page ownership preflight,
+  scatter-copy of validated page spans and destination preservation on
+  any validation error.
+- Added kernel-only copy_from_process bounded by M2-J.1/M2-J.2 virtual
+  range and permission validation and existing M2-I.5 process-owned roots.
+- Enforced selected-process physical frame allowlist and full-frame
+  identity mapping before copying from physical memory into a kernel
+  buffer. Verified the kernel CR3 and disabled maskable interrupts.
+- Added host tests of two-page scatter, rejected second frame, wrong
+  destination length, and exact end-of-page access.
+- Added QEMU acceptance tests for A/B copied bytes, offset reads,
+  foreign-process denial, unmapped-page crossing, null/overflow/zero,
+  and unchanged kernel/user memory on rejection.
+- Preserved normal boot, controlled faults, ring-3 capability/isolation
+  tests and interactive monitor acceptance.
+
+Scope remains narrow: one 4-KiB permanently allocated data frame per
+process under single-core, nonpreemptive, identity-mapped QEMU bootstrap.
+No general user buffer lifetime tracking, page pinning or syscall copy-in.
