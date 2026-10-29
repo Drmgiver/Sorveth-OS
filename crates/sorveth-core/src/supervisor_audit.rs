@@ -163,7 +163,9 @@ unsafe fn audit_range(
         if address == last {
             break;
         }
-        address = address.checked_add(PAGE).ok_or(AuditError::InvalidAddress)?;
+        address = address
+            .checked_add(PAGE)
+            .ok_or(AuditError::InvalidAddress)?;
     }
     Ok(())
 }
@@ -198,8 +200,12 @@ pub unsafe fn verify_bootstrap_survival(
     let idt_bytes = idt.limit as u64 + 1;
     let gdt_base = gdt.base;
     let gdt_bytes = gdt.limit as u64 + 1;
-    if idt_base == 0 || gdt_base == 0 || idt_bytes < 16 || idt_bytes > 4096
-        || gdt_bytes < 24 || gdt_bytes > 4096
+    if idt_base == 0
+        || gdt_base == 0
+        || idt_bytes < 16
+        || idt_bytes > 4096
+        || gdt_bytes < 24
+        || gdt_bytes > 4096
     {
         return Err(AuditError::InvalidDescriptorTable);
     }
@@ -216,7 +222,13 @@ pub unsafe fn verify_bootstrap_survival(
     }
     // The CPU can call into any of these after a root switch. Audit all
     // pages of stacks, not only their first and last bytes.
-    audit_range(root, kernel_stack_start, kernel_stack_end, true, &mut report)?;
+    audit_range(
+        root,
+        kernel_stack_start,
+        kernel_stack_end,
+        true,
+        &mut report,
+    )?;
     audit_one(root, rsp, true, false, &mut report)?;
     let (worker_start, worker_end) = crate::fibers::survival_stack_bounds();
     audit_range(root, worker_start, worker_end, true, &mut report)?;
@@ -229,7 +241,13 @@ pub unsafe fn verify_bootstrap_survival(
     }
     audit_range(root, idt_base, idt_base + idt_bytes, true, &mut report)?;
     audit_range(root, gdt_base, gdt_base + gdt_bytes, true, &mut report)?;
-    audit_one(root, crate::tss::survival_tss_address(), true, false, &mut report)?;
+    audit_one(
+        root,
+        crate::tss::survival_tss_address(),
+        true,
+        false,
+        &mut report,
+    )?;
     Ok(report)
 }
 
@@ -257,7 +275,10 @@ mod tests {
         };
         assert!(walk(0x1000, v, user).unwrap().user_accessible);
         assert_eq!(walk(0x1000, v, |_| None), Err(AuditError::MissingTable));
-        assert_eq!(walk(0x1000, v, |_| Some(0)), Err(AuditError::MissingMapping));
+        assert_eq!(
+            walk(0x1000, v, |_| Some(0)),
+            Err(AuditError::MissingMapping)
+        );
     }
 
     #[test]
@@ -267,15 +288,19 @@ mod tests {
             0x2000 => Some(0x3003),
             0x3000 => Some(0x20_0083),
             _ => None,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(page.leaf_size, 2 * 1024 * 1024);
         assert_eq!(page.physical_address, 0x20_0000 + 0x12345);
-        assert_eq!(walk(0x1000, 0x12345, |p| match p {
-            0x1000 => Some(0x2003),
-            0x2000 => Some(0x3003),
-            0x3000 => Some(0x21_0083),
-            _ => None,
-        }), Err(AuditError::InvalidHugePage));
+        assert_eq!(
+            walk(0x1000, 0x12345, |p| match p {
+                0x1000 => Some(0x2003),
+                0x2000 => Some(0x3003),
+                0x3000 => Some(0x21_0083),
+                _ => None,
+            }),
+            Err(AuditError::InvalidHugePage)
+        );
     }
 
     #[test]
@@ -286,11 +311,15 @@ mod tests {
             0x3000 => Some(0x4003),
             0x4040 => Some(0x9003),
             _ => None,
-        }).unwrap();
+        })
+        .unwrap();
         assert!(!page.writable);
         assert!(!page.executable);
         assert!(!page.user_accessible);
         assert_eq!(walk(0, 0x8000, |_| None), Err(AuditError::InvalidAddress));
-        assert_eq!(walk(0x1000, 0x0000_8000_0000_0000, |_| None), Err(AuditError::InvalidAddress));
+        assert_eq!(
+            walk(0x1000, 0x0000_8000_0000_0000, |_| None),
+            Err(AuditError::InvalidAddress)
+        );
     }
 }
