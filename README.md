@@ -26,7 +26,7 @@ is enabled. The code is GPL-3.0-only.
 | M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only READ/WRITE and denies forged/foreign tokens | Hardcoded QEMU probe |
 | M2-I: isolated experimental process roots | Distinct A/B CR3 roots, per-process user frames, bidirectional ring-3 foreign-memory denial and task-root lifecycle checks | Static permanent test mappings, nonpreemptive bootstrap |
 | M2-J: bounded user-memory syscall proof | Audited user page walks, capability-gated copy-in/out and 22 real ring-3 INT80 probes per process with whole-frame integrity checks | Exactly eight bytes per syscall in current test ABI; not general user memory or production process lifecycle |
-| M2-K.1 (partial): owned frame access | High-half physical window, copy/checksum paths, process-root audits, paging-tree initialization and private PT self-alias | Firmware-inherited mappings still required by early boot/root setup and kernel execution |
+| M2-K.1 (partial): owned supervisor frame access | High-half frame window; secure copy/checksum paths; private PT self-alias; process PML4 cloning, private table construction, probe mapping and permission-tamper tests through owned aliases | Early kernel execution/stack, supervisor mappings and firmware handoff still depend on OVMF inheritance |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
 page. QEMU verified the hardware #PF, CR2 address and user-mode
@@ -34,7 +34,7 @@ protection-violation bits. This establishes one concrete privilege boundary,
 not complete process isolation.
 
 The latest accepted kernel changes passed host and QEMU tests in
-[GitHub Actions run 40826861153](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40826861153).
+[GitHub Actions run 40914232264](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40914232264).
 Earlier milestone evidence remains in the development log.
 Source commits, builds, boot tests and hardware support are **separate** claims.
 

@@ -469,3 +469,27 @@ rest of firmware-dependent supervisor root/table initialization and CPU
 kernel mappings, followed by an explicit no-inherited-mapping test mode.
 Both K.1c increments remain single-core, nonpreemptive, QEMU-specific;
 not full general process creation or safe page reclamation.
+
+
+## 2026-10-29 — M2-K.1d incremental owned root, probe and denial paths
+
+- Cloned both test process PML4 roots using an owned high-half frame
+  window, with a full 512-entry supervisor-only snapshot, absent-slot
+  selection and readback verification. Previously direct physical root
+  pointers have been eliminated from this process-root construction path.
+- Migrated QEMU ring-3 probe PML4 attachment to registered-table reads
+  and writes, requiring both process A/B isolation and syscall transfer
+  test images to demonstrate the new path.
+- Migrated the M2-J.4 controlled read-only PTE tamper, restoration and
+  data-integrity check onto Sorveth-owned frame aliases. All negative
+  access checks and earlier QEMU acceptance markers remain mandatory.
+- Accepted host/QEMU evidence:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40913347669
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40913856622
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/40914232264
+
+**M2-K.1d is not complete.** Kernel code, stacks, IDT/TSS handlers,
+firmware-provided lower-level supervisor mappings and some bootstrap
+address-space checks still require inherited OVMF mappings. No claim
+of dynamically allocated/reclaimed frames, general process lifecycle,
+SMP, preemption or real-hardware acceptance is made here.
