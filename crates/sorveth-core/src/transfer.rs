@@ -32,6 +32,9 @@ pub const SYS_COMPLETE: u64 = 0x72;
 pub const COPY_IN_OK: u64 = 0x5356_4a52;
 pub const COPY_OUT_OK: u64 = 0x5356_4a57;
 pub const COPY_DENIED: u64 = REPLY_DENIED;
+const WRITE_PHASE: u8 = 16;
+const COMPLETE_PHASE: u8 = 21;
+const UNKNOWN_SYSCALL: u64 = 0x7f;
 
 struct State {
     authority: MemoryAuthority<2, 4>,
@@ -43,6 +46,9 @@ struct State {
     foreign_handle: u64,
     original: u64,
     foreign_original: u64,
+    original_checksum: u64,
+    written_checksum: u64,
+    foreign_checksum: u64,
     completed: u8,
 }
 
@@ -76,6 +82,63 @@ fn object(process: Process) -> ObjectId {
         Process::First => OBJECT_A,
         Process::Second => OBJECT_B,
     }
+}
+
+/// Hash the entire permanently owned frame, not just the sentinel word.
+/// The optional eight-byte override computes the *expected* post-write
+/// image without modifying the frame. In this QEMU bootstrap the frames
+/// remain identity-mapped, pinned by the permanent ledger and unshared.
+///
+/// # Safety
+/// Requires permanent 4-KiB identity mappings, CPL0 and no concurrent
+/// modifications; this is an integrity oracle for tests, not cryptography.
+unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> u64 {
+    let mut checksum = 0xcbf2_9ce4_8422_2325u64;
+    for offset in 0..4096usize {
+        let value = if offset < 8 {
+            match override_word {
+                Some(word) => word[offset],
+                None => ptr::read_volatile((physical + offset as u64) as *const u8),
+            }
+        } else {
+            ptr::read_volatile((physical + offset as u64) as *const u8)
+        };
+        checksum = (checksum ^ value as u64).wrapping_mul(0x100_0000_01b3);
+    }
+    checksum
+}
+
+/// Verify *all* 4096 bytes of both physical process data pages and
+/// revalidate the live capability grants and page-table ownership. This
+/// is run before AND after every real CPL3 syscall, including failures.
+///
+/// # Safety
+/// Single core, IF=0, active Sorveth kernel root, stable page tables.
+unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
+    let own = match process_roots::mapped_page(state.process) {
+        Some(page) => page,
+        None => return false,
+    };
+    let foreign = match process_roots::mapped_page(other()) {
+        Some(page) => page,
+        None => return false,
+    };
+    frame_checksum(own.physical_address, None) == expected_owner
+        && frame_checksum(foreign.physical_address, None) == state.foreign_checksum
+        && process_roots::checked_process_root(state.process) == Some(state.root)
+        && process_roots::checked_process_root(other()).is_some()
+        && state
+            .authority
+            .authorize(state.task, state.read_handle, object(state.process), Rights::READ)
+            .is_ok()
+        && state
+            .authority
+            .authorize(state.task, state.write_handle, object(state.process), Rights::WRITE)
+            .is_ok()
+        && state
+            .authority
+            .authorize(state.task, state.foreign_handle, object(state.process), Rights::WRITE)
+            .is_err()
 }
 
 fn fatal() -> ! {
@@ -113,6 +176,9 @@ pub fn initialize() -> Option<(u64, u64)> {
         .raw();
     let original = unsafe { ptr::read_volatile(own.physical_address as *const u64) };
     let foreign_original = unsafe { ptr::read_volatile(foreign.physical_address as *const u64) };
+    let original_checksum = unsafe { frame_checksum(own.physical_address, None) };
+    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN)) };
+    let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) };
     unsafe {
         ptr::write(
             ptr::addr_of_mut!(STATE),
@@ -126,6 +192,9 @@ pub fn initialize() -> Option<(u64, u64)> {
                 foreign_handle,
                 original,
                 foreign_original,
+                original_checksum,
+                written_checksum,
+                foreign_checksum,
                 completed: 0,
             }),
         );
@@ -214,58 +283,57 @@ pub unsafe fn dispatch(
         Some(m) => m,
         None => fatal(),
     };
+    // In all denied phases, the physical pages and trusted authority
+    // must be *identical* before and after entering the syscall.
+    let pre_expected = if state.completed > WRITE_PHASE {
+        state.written_checksum
+    } else {
+        state.original_checksum
+    };
+    if !integrity_holds(state, pre_expected) {
+        fatal();
+    }
     let expected = match state.completed {
-        0 => (
-            SYS_COPY_IN,
-            state.read_handle,
-            mapped.virtual_address,
-            8,
-            COPY_IN_OK,
-        ),
-        1 => (
-            SYS_COPY_IN,
-            state.read_handle,
-            foreign.virtual_address,
-            8,
-            COPY_DENIED,
-        ),
-        2 => (
-            SYS_COPY_OUT,
-            state.read_handle,
-            mapped.virtual_address,
-            8,
-            COPY_DENIED,
-        ),
-        3 => (
-            SYS_COPY_OUT,
-            state.foreign_handle,
-            mapped.virtual_address,
-            8,
-            COPY_DENIED,
-        ),
+        0 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 8, COPY_IN_OK),
+        1 => (SYS_COPY_IN, state.read_handle, foreign.virtual_address, 8, COPY_DENIED),
+        2 => (SYS_COPY_OUT, state.read_handle, mapped.virtual_address, 8, COPY_DENIED),
+        3 => (SYS_COPY_OUT, state.foreign_handle, mapped.virtual_address, 8, COPY_DENIED),
         4 => (SYS_COPY_IN, 0, mapped.virtual_address, 8, COPY_DENIED),
-        5 => (
-            SYS_COPY_IN,
-            state.read_handle,
-            mapped.virtual_address,
-            0,
-            COPY_DENIED,
-        ),
-        6 => (
+        5 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 0, COPY_DENIED),
+        6 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address + 4095, 2, COPY_DENIED),
+        7 => (SYS_COPY_OUT, state.write_handle, foreign.virtual_address, 8, COPY_DENIED),
+        8 => (SYS_COPY_IN, state.write_handle, mapped.virtual_address, 8, COPY_DENIED),
+        9 => (SYS_COPY_IN, u64::MAX, mapped.virtual_address, 8, COPY_DENIED),
+        10 => (SYS_COPY_IN, state.read_handle, 0, 8, COPY_DENIED),
+        11 => (SYS_COPY_IN, state.read_handle, u64::MAX, 8, COPY_DENIED),
+        12 => (
             SYS_COPY_OUT,
             state.write_handle,
-            mapped.virtual_address + 4095,
-            2,
+            0xffff_8000_0000_0000,
+            8,
             COPY_DENIED,
         ),
-        7 => (
+        13 => (
+            SYS_COPY_IN,
+            state.read_handle,
+            0x0000_7fff_ffff_fffc,
+            8,
+            COPY_DENIED,
+        ),
+        14 => (SYS_COPY_IN, state.read_handle, mapped.virtual_address, 65537, COPY_DENIED),
+        15 => (SYS_COPY_OUT, state.write_handle, mapped.virtual_address, 0, COPY_DENIED),
+        WRITE_PHASE => (
             SYS_COPY_OUT,
             state.write_handle,
             mapped.virtual_address,
             8,
             COPY_OUT_OK,
         ),
-        8 => (SYS_COMPLETE, 0, mapped.virtual_address, 8, 0),
+        17 => (SYS_COPY_OUT, state.read_handle, mapped.virtual_address, 8, COPY_DENIED),
+        18 => (SYS_COPY_OUT, state.foreign_handle, mapped.virtual_address, 8, COPY_DENIED),
+        19 => (SYS_COPY_OUT, state.write_handle, foreign.virtual_address, 8, COPY_DENIED),
+        20 => (UNKNOWN_SYSCALL, state.write_handle, mapped.virtual_address, 8, COPY_DENIED),
+        COMPLETE_PHASE => (SYS_COMPLETE, 0, mapped.virtual_address, 8, 0),
         _ => fatal(),
     };
     if (number, raw_handle, user_address, length)
@@ -308,7 +376,7 @@ pub unsafe fn dispatch(
             }
         }
         SYS_COMPLETE => {
-            if state.completed != 8 {
+            if state.completed != COMPLETE_PHASE {
                 fatal();
             }
             let mut read_back = [0u8; 8];
@@ -337,17 +405,26 @@ pub unsafe fn dispatch(
             }
             0
         }
-        _ => fatal(),
+        _ => COPY_DENIED,
     };
     if result != expected.4 {
         fatal();
     }
+    let post_expected = if state.completed >= WRITE_PHASE && state.completed < COMPLETE_PHASE {
+        state.written_checksum
+    } else {
+        state.original_checksum
+    };
+    if !integrity_holds(state, post_expected) {
+        fatal();
+    }
     state.completed += 1;
     if number == SYS_COMPLETE {
-        if state.completed != 9 {
+        if state.completed != COMPLETE_PHASE + 1 {
             fatal();
         }
         crate::serial::write_line("SORVETH M2-J.5: ring-3 memory syscalls authorized and denied");
+        crate::serial::write_line("SORVETH M2-J.6: full-frame and capability integrity verified after every syscall");
         // Only after both copy operations, all denial paths, and original
         // frame restoration are verified does QEMU exit successfully.
         asm!(
