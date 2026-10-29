@@ -304,6 +304,83 @@ pub unsafe fn attach_isolation_probe(process: Process, entry: u64) -> Result<u64
     Ok(owner_root)
 }
 
+/// M2-I.5: audit both private page-table paths immediately before a
+/// kernel-controlled CR3 transition. Reject missing, aliased, malformed or
+/// shared user data mappings before untrusted code could run.
+///
+/// # Safety
+/// Restricted to the single QEMU bootstrap CPU, with IRQs disabled,
+/// inherited identity mappings verified and no concurrent page-table edits.
+pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
+    if !MAPPED.load(Ordering::Acquire) {
+        return None;
+    }
+    let (root_a, slot_a) = process_root(Process::First)?;
+    let (root_b, slot_b) = process_root(Process::Second)?;
+    let page_a = mapped_page(Process::First)?;
+    let page_b = mapped_page(Process::Second)?;
+    let kernel = crate::root::kernel_root_physical()?;
+    if root_a == root_b
+        || root_a == kernel
+        || root_b == kernel
+        || slot_a == slot_b
+        || page_a.virtual_address == page_b.virtual_address
+        || page_a.physical_address == page_b.physical_address
+        || page_a.virtual_address != user_base(slot_a)?
+        || page_b.virtual_address != user_base(slot_b)?
+        || ptr::read_volatile((kernel as *const u64).add(slot_a as usize)) != 0
+        || ptr::read_volatile((kernel as *const u64).add(slot_b as usize)) != 0
+        || ptr::read_volatile((root_a as *const u64).add(slot_b as usize)) != 0
+        || ptr::read_volatile((root_b as *const u64).add(slot_a as usize)) != 0
+    {
+        return None;
+    }
+    let tables_a = [
+        ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
+        ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
+        ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
+    ];
+    let tables_b = [
+        ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
+        ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+    ];
+    for (i, table) in tables_a.iter().chain(tables_b.iter()).enumerate() {
+        if *table == 0
+            || *table & 4095 != 0
+            || !crate::root::identity_mapped(*table)
+            || tables_a
+                .iter()
+                .chain(tables_b.iter())
+                .take(i)
+                .any(|previous| previous == table)
+        {
+            return None;
+        }
+    }
+    if !validate_user_path(
+        root_a,
+        slot_a,
+        tables_a[0],
+        tables_a[1],
+        tables_a[2],
+        page_a.physical_address,
+    ) || !validate_user_path(
+        root_b,
+        slot_b,
+        tables_b[0],
+        tables_b[1],
+        tables_b[2],
+        page_b.physical_address,
+    ) {
+        return None;
+    }
+    Some(match process {
+        Process::First => root_a,
+        Process::Second => root_b,
+    })
+}
+
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
 /// addresses. The QEMU bootstrap has verified identity mapping of every
 /// page-table frame, so reading these raw entries is safe *for this test*.
