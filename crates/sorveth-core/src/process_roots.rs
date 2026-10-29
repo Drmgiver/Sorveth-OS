@@ -124,9 +124,10 @@ fn vacant_slots(mut entry: impl FnMut(usize) -> u64) -> Option<(usize, usize)> {
 /// back while verifying the existing supervisor scratch mapping.
 ///
 /// # Safety
-/// Requires CPL0, Sorveth's active root, single CPU, disabled IRQs and
-/// validated identity mappings of static page-table storage. Never call
-/// concurrently, after scheduling starts or on physical hardware.
+/// Requires CPL0, Sorveth's active root, one CPU, IRQs masked and static
+/// PML4 frame ownership. The PML4 pages are copied through an owned virtual
+/// frame window; supervisor executable/stack mapping inheritance remains.
+
 pub unsafe fn prepare_and_verify() -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
@@ -140,36 +141,50 @@ pub unsafe fn prepare_and_verify() -> Result<(), Error> {
         if a == b || a == kernel || b == kernel || a & 4095 != 0 || b & 4095 != 0 {
             return Err(Error::VerificationFailed);
         }
-        if !crate::root::identity_mapped(a) || !crate::root::identity_mapped(b) {
-            return Err(Error::IdentityMapMissing);
-        }
         let mut active: u64;
         asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
         if active & ADDRESS_MASK != kernel {
             return Err(Error::KernelUnavailable);
         }
-        let source = kernel as *const u64;
-        let (slot_a, slot_b) = vacant_slots(|i| ptr::read_volatile(source.add(i)))
-            .ok_or(Error::PrivateSlotsUnavailable)?;
-        let a_ptr = a as *mut u64;
-        let b_ptr = b as *mut u64;
-        for index in 0..512 {
-            let entry = supervisor_entry(ptr::read_volatile(source.add(index)));
-            ptr::write_volatile(a_ptr.add(index), entry);
-            ptr::write_volatile(b_ptr.add(index), entry);
-        }
-        for root in [a_ptr, b_ptr] {
-            if ptr::read_volatile(root.add(slot_a)) != 0
-                || ptr::read_volatile(root.add(slot_b)) != 0
-            {
-                return Err(Error::VerificationFailed);
+        // Snapshot Sorveth's known kernel PML4 while its own CR3 is active.
+        // Only the existing owned window may dereference physical table RAM.
+        let mut entries = [0u64; 512];
+        crate::root::with_physical_window(kernel, |window| {
+            let source = window as *const u64;
+            for (index, entry) in entries.iter_mut().enumerate() {
+                *entry = ptr::read_volatile(source.add(index));
             }
-            for index in 0..512 {
-                let present = ptr::read_volatile(root.add(index));
-                let expected = supervisor_entry(ptr::read_volatile(source.add(index)));
-                if present != expected || (present & PRESENT != 0 && present & USER != 0) {
-                    return Err(Error::VerificationFailed);
+        })
+        .map_err(|_| Error::PageTableStorageUnavailable)?;
+        let (slot_a, slot_b) = vacant_slots(|i| entries[i])
+            .ok_or(Error::PrivateSlotsUnavailable)?;
+        for entry in &mut entries {
+            *entry = supervisor_entry(*entry);
+        }
+        // The entire process root is initialized and verified through the
+        // Sorveth-owned high-half alias, without physical-pointer dereference.
+        for process_root in [a, b] {
+            let verified = crate::root::with_physical_window(process_root, |window| {
+                let destination = window as *mut u64;
+                for (index, entry) in entries.iter().enumerate() {
+                    ptr::write_volatile(destination.add(index), *entry);
                 }
+                if ptr::read_volatile(destination.add(slot_a)) != 0
+                    || ptr::read_volatile(destination.add(slot_b)) != 0
+                {
+                    return false;
+                }
+                for (index, expected) in entries.iter().enumerate() {
+                    let actual = ptr::read_volatile(destination.add(index));
+                    if actual != *expected || (actual & PRESENT != 0 && actual & USER != 0) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map_err(|_| Error::PageTableStorageUnavailable)?;
+            if !verified {
+                return Err(Error::VerificationFailed);
             }
         }
         let expected = ptr::read_volatile(scratch as *const u64);
