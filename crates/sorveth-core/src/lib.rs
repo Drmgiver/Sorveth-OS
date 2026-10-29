@@ -139,6 +139,21 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     serial::write_line("Sorveth IDT: installed; breakpoint roundtrip verified");
     serial::write_line("Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed");
 
+    // M2-K.1d: inventory live BootInfo/descriptor and optional framebuffer
+    // translations before changing or reclaiming any inherited page tables.
+    // This is a read-only audit; kernel CR3 still shares OVMF lower levels.
+    match unsafe { supervisor_audit::verify_boot_handoff(boot) } {
+        Ok(report) if report.inspected_pages >= 2 => {
+            serial::write_line(
+                "SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited",
+            );
+        }
+        _ => {
+            serial::write_line("FATAL: boot handoff supervisor mapping audit failed");
+            halt_forever();
+        }
+    }
+
     // Exercise two distinct supervisor NX mappings after the IDT is active.
     let first_page = root::claim_kernel_scratch(&FRAME_POOL);
     let second_page = root::claim_kernel_scratch(&FRAME_POOL);

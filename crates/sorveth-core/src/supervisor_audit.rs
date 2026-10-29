@@ -170,6 +170,69 @@ unsafe fn audit_range(
     Ok(())
 }
 
+/// Validate an already checked handoff range before walking page tables.
+fn checked_range_end(start: u64, bytes: u64) -> Result<u64, AuditError> {
+    if start == 0 || bytes == 0 || !canonical_48(start) {
+        return Err(AuditError::InvalidAddress);
+    }
+    let end = start.checked_add(bytes).ok_or(AuditError::InvalidAddress)?;
+    if !canonical_48(end - 1) {
+        return Err(AuditError::InvalidAddress);
+    }
+    Ok(end)
+}
+
+/// Inventory handoff structures while BootInfo and descriptor-buffer
+/// lifetimes are known. The framebuffer is device memory: check only its
+/// first and last address for presence and write access, and never read its
+/// contents through the normal-RAM physical window.
+///
+/// # Safety
+/// Caller has verified BootInfo, retained the loader's map buffer, and is
+/// running on the single bootstrap CPU at CPL0 with IF=0, kernel CR3
+/// active and immutable inherited lower-level paging tables.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_boot_handoff(info: &sorveth_abi::BootInfo) -> Result<Summary, AuditError> {
+    if !info.is_valid() {
+        return Err(AuditError::InvalidAddress);
+    }
+    let root = crate::root::kernel_root_physical().ok_or(AuditError::UnexpectedCpuRoot)?;
+    let actual: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) actual, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if actual & ADDRESS_MASK != root || flags & (1 << 9) != 0 {
+        return Err(AuditError::UnexpectedCpuRoot);
+    }
+
+    let mut report = Summary::default();
+    let boot_start = info as *const sorveth_abi::BootInfo as u64;
+    let boot_end = checked_range_end(
+        boot_start,
+        core::mem::size_of::<sorveth_abi::BootInfo>() as u64,
+    )?;
+    audit_range(root, boot_start, boot_end, false, &mut report)?;
+
+    // Every page of the retained UEFI descriptor buffer is required to
+    // reconstruct the physical ownership policy, not merely its endpoints.
+    let map_end = checked_range_end(info.memory_map_address, info.memory_map_size)?;
+    audit_range(
+        root,
+        info.memory_map_address,
+        map_end,
+        false,
+        &mut report,
+    )?;
+
+    if info.framebuffer.is_usable() {
+        let start = info.framebuffer.address;
+        let end = checked_range_end(start, info.framebuffer.size_bytes)?;
+        audit_one(root, start, true, false, &mut report)?;
+        audit_one(root, end - 1, true, false, &mut report)?;
+    }
+    Ok(report)
+}
+
 /// Audit CPU descriptor tables, executable fault paths and all pages of
 /// current/kernel worker/IST stacks. No write to live page tables occurs.
 ///
@@ -254,6 +317,18 @@ pub unsafe fn verify_bootstrap_survival(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handoff_ranges_reject_null_empty_overflow_and_canonical_holes() {
+        assert_eq!(checked_range_end(0x1000, 4096), Ok(0x2000));
+        assert_eq!(checked_range_end(0, 8), Err(AuditError::InvalidAddress));
+        assert_eq!(checked_range_end(0x1000, 0), Err(AuditError::InvalidAddress));
+        assert_eq!(checked_range_end(u64::MAX, 2), Err(AuditError::InvalidAddress));
+        assert_eq!(
+            checked_range_end(0x0000_7fff_ffff_ffff, 2),
+            Err(AuditError::InvalidAddress)
+        );
+    }
 
     #[test]
     fn rejects_missing_and_user_accessible_paths() {
