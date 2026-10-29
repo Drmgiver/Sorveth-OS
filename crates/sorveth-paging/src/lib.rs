@@ -4,6 +4,8 @@
 //! Does NOT change CR3, install tables, map frames or execute user processes.
 //! An eventual installer must prove NX support and zero owned page-table frames.
 
+pub mod user_range;
+
 pub const PAGE_BYTES: u64 = 4096;
 pub const KERNEL_BASE: u64 = 0xffff_8000_0000_0000;
 pub const USER_LIMIT: u64 = 0x0000_8000_0000_0000;
