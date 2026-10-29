@@ -113,7 +113,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-J.2: process-owned read/write page walks verified");
-    crate::serial::write_line("SORVETH M2-K.1b: owned page-table reads and process frames verified");
+    crate::serial::write_line(
+        "SORVETH M2-K.1b: owned page-table reads and process frames verified",
+    );
     if !unsafe { crate::user_copy::verify_copy_from_user() } {
         crate::serial::write_line("FATAL: bounded process-owned user copy-in failed");
         crate::halt_forever();
