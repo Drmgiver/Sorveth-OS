@@ -394,6 +394,48 @@ fn entry_matches(actual: u64, expected: u64, leaf: bool) -> bool {
     actual & !volatile == expected
 }
 
+/// Controlled QEMU M2-J.4 regression: temporarily remove write access
+/// from the inactive process's owned private data leaf. The general
+/// M2-I.5 root audit should deny this altered mapping before any write.
+///
+/// # Safety
+/// Must only run with the original kernel CR3 active on one CPU with
+/// interrupts masked and no concurrent use of either user address space.
+/// The original PTE is always restored before returning.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_readonly_copy_out_denied(process: Process) -> bool {
+    let own = match mapped_page(process) {
+        Some(value) => value,
+        None => return false,
+    };
+    let leaf = match process {
+        Process::First => ptr::addr_of_mut!(FIRST_PT).cast::<u64>(),
+        Process::Second => ptr::addr_of_mut!(SECOND_PT).cast::<u64>(),
+    };
+    let previous = ptr::read_volatile(leaf);
+    if previous & WRITE == 0 || checked_process_root(process).is_none() {
+        return false;
+    }
+    let original = ptr::read_volatile(own.physical_address as *const u64);
+
+    ptr::write_volatile(leaf, previous & !WRITE);
+    // This should fail closed at the trusted process-root audit because
+    // the private RW/NX leaf no longer matches the permitted template.
+    let denied = crate::user_copy::copy_to_process(
+        process,
+        own.virtual_address,
+        &[0xa5],
+    ) == Err(crate::user_copy::CopyOutError::InvalidMapping(
+        sorveth_paging::user_walk::WalkError::InvalidRoot,
+    ));
+    // Always restore even if the rejection assertion fails.
+    ptr::write_volatile(leaf, previous);
+    denied
+        && ptr::read_volatile(leaf) == previous
+        && ptr::read_volatile(own.physical_address as *const u64) == original
+        && checked_process_root(process).is_some()
+}
+
 /// M2-J.2: inspect a validated user byte range under one trusted
 /// process-owned PML4 root, without switching CR3 or touching user data.
 /// Only known Sorveth-owned PML4/PDPT/PD/PT table pages can be read.
