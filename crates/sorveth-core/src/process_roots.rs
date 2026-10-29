@@ -262,6 +262,48 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
     })
 }
 
+/// Test-only: make the QEMU harness code/stack subtree visible in *only*
+/// one selected process root. The foreign process root remains unchanged.
+/// The same lower-level test-code tables are also in the kernel test root,
+/// which is intentionally not a production process-loading strategy.
+#[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+pub unsafe fn attach_isolation_probe(process: Process, entry: u64) -> Result<u64, Error> {
+    let (owner_root, owner_slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
+    let other = match process {
+        Process::First => Process::Second,
+        Process::Second => Process::First,
+    };
+    let (other_root, foreign_slot) = process_root(other).ok_or(Error::KernelUnavailable)?;
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    if entry >= 0x0000_8000_0000_0000 || entry & ((1u64 << 39) - 1) != 0 {
+        return Err(Error::VerificationFailed);
+    }
+    let slot = (entry >> 39) as usize;
+    if slot == 0
+        || slot >= 256
+        || slot == owner_slot as usize
+        || slot == foreign_slot as usize
+        || owner_root == other_root
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let source = ptr::read_volatile((kernel as *const u64).add(slot));
+    let destination = (owner_root as *mut u64).add(slot);
+    if source & USER_TABLE_FLAGS != USER_TABLE_FLAGS
+        || ptr::read_volatile(destination) != 0
+        || ptr::read_volatile((other_root as *const u64).add(slot)) != 0
+        || ptr::read_volatile((owner_root as *const u64).add(foreign_slot as usize)) != 0
+        || ptr::read_volatile((other_root as *const u64).add(owner_slot as usize)) != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+    ptr::write_volatile(destination, source);
+    if ptr::read_volatile(destination) != source {
+        return Err(Error::VerificationFailed);
+    }
+    Ok(owner_root)
+}
+
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
 /// addresses. The QEMU bootstrap has verified identity mapping of every
 /// page-table frame, so reading these raw entries is safe *for this test*.

@@ -8,6 +8,8 @@
 mod address_scheduler;
 mod fibers;
 mod interrupts;
+#[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+mod isolation;
 mod monitor;
 mod process_roots;
 mod root;

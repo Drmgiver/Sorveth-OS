@@ -277,7 +277,24 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
             }
         }
     }
-    #[cfg(feature = "qemu-user")]
+    #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+    {
+        if crate::isolation::expected_foreign_fault(address, error) {
+            crate::serial::write_line(crate::isolation::success_marker());
+            unsafe {
+                core::arch::asm!(
+                    "out dx, al",
+                    in("dx") 0xf4u16,
+                    in("al") 0x10u8,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+        }
+    }
+    #[cfg(all(
+        feature = "qemu-user",
+        not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))
+    ))]
     {
         // P=1, W=0, U=1: privilege-protected supervisor mapping.
         // This must be a protection failure, not merely an absent page.
@@ -429,6 +446,17 @@ pub extern "efiapi" fn sorveth_user_int80_rust(
     if caller_cs & 3 != 3 {
         crate::serial::write_line("FATAL: ring-3 trap came from wrong privilege");
         halt_fault();
+    }
+    #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+    {
+        let _ = (handle, value);
+        match crate::isolation::confirm_own_page(number, caller_cs) {
+            Some(reply) => return reply,
+            None => {
+                crate::serial::write_line("FATAL: invalid ring-3 isolation test call");
+                halt_fault();
+            }
+        }
     }
     if number == 7 && USER_TRAP_PHASE.load(Ordering::Acquire) == 0 {
         USER_TRAP_PHASE.store(1, Ordering::Release);

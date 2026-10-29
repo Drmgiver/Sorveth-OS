@@ -123,6 +123,22 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line("FATAL: ring-3 trap gateway unavailable");
             crate::halt_forever();
         }
+        #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+        {
+            let target_root = match unsafe {
+                crate::process_roots::attach_isolation_probe(crate::isolation::owner(), probe.entry)
+            } {
+                Ok(root) => root,
+                Err(_) => {
+                    crate::serial::write_line("FATAL: cannot attach selected process test code");
+                    crate::halt_forever();
+                }
+            };
+            crate::serial::write_line("Sorveth ring-3 isolation: process-owned CR3 armed");
+            unsafe {
+                asm!("mov cr3, {}", in(reg) target_root, options(nostack, preserves_flags));
+            }
+        }
         crate::serial::write_line("Sorveth ring-3 probe: user mappings and trap ready");
         unsafe { crate::user::enter(probe.entry, probe.stack, cs, ss) }
     }

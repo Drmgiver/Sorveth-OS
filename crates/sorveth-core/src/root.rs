@@ -508,6 +508,36 @@ fn build_probe(allowed: u64, foreign: u64, protected: u64) -> Result<ProbeProgra
     Ok(program)
 }
 
+/// Test-only CPL3 program: prove own memory read then fault on foreign
+/// private user address. Any incorrect own-page value loops in ring 3.
+#[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+fn build_isolation_probe() -> Result<ProbeProgram, Error> {
+    let own = crate::process_roots::mapped_page(crate::isolation::owner())
+        .ok_or(Error::VerificationFailed)?;
+    let foreign = crate::process_roots::mapped_page(crate::isolation::foreign())
+        .ok_or(Error::VerificationFailed)?;
+    if own.virtual_address == foreign.virtual_address
+        || own.physical_address == foreign.physical_address
+    {
+        return Err(Error::VerificationFailed);
+    }
+    // Only the verified QEMU identity-map bootstrap may dereference this
+    // physical page directly. The expected value was populated by M2-I.3.
+    let expected = unsafe { ptr::read_volatile(own.physical_address as *const u64) };
+    let mut program = ProbeProgram::new();
+    program.emit(&[0x48, 0xb8])?; // movabs rax, own virtual address
+    program.emit(&own.virtual_address.to_le_bytes())?;
+    program.emit(&[0x48, 0x8b, 0x08])?; // mov rcx, [rax]
+    program.emit(&[0x48, 0xba])?; // movabs rdx, expected
+    program.emit(&expected.to_le_bytes())?;
+    program.emit(&[0x48, 0x39, 0xd1, 0x75, 0xfe])?; // cmp rcx,rdx; jne self
+    program.trap(crate::isolation::SIGNAL as u32, crate::isolation::REPLY as u32)?;
+    program.emit(&[0x48, 0xb8])?; // movabs rax, foreign virtual address
+    program.emit(&foreign.virtual_address.to_le_bytes())?;
+    program.emit(&[0x48, 0x8b, 0x00, 0xeb, 0xfe])?; // mov rax,[rax]; spin
+    Ok(program)
+}
+
 #[cfg(feature = "qemu-user")]
 pub struct UserProbe {
     pub entry: u64,
@@ -536,15 +566,28 @@ pub fn prepare_user_probe(
         if protected == 0 {
             return Err(Error::VerificationFailed);
         }
+        #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+        let code_bytes = build_isolation_probe()?;
+        #[cfg(not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b")))]
         let code_bytes = build_probe(read_handle, foreign_handle, protected)?;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         if root == 0 {
             return Err(Error::RootNotInstalled);
         }
         let pml4 = root as *mut u64;
+        // In isolation images do not collide with process A/B data slots.
+        #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+        let avoided = [
+            crate::process_roots::process_root(crate::process_roots::Process::First)
+                .ok_or(Error::VerificationFailed)?.1 as usize,
+            crate::process_roots::process_root(crate::process_roots::Process::Second)
+                .ok_or(Error::VerificationFailed)?.1 as usize,
+        ];
+        #[cfg(not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b")))]
+        let avoided = [0usize; 2];
         let slot = match (1usize..256)
             .rev()
-            .find(|&i| ptr::read_volatile(pml4.add(i)) & PRESENT == 0)
+            .find(|&i| ptr::read_volatile(pml4.add(i)) & PRESENT == 0 && !avoided.contains(&i))
         {
             Some(i) => i,
             None => return Err(Error::NoFreeVirtualSlot),

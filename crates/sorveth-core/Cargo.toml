@@ -8,6 +8,8 @@ license.workspace = true
 qemu-smoke = []
 qemu-fault = []
 qemu-user = []
+qemu-isolate-a = ["qemu-user"]
+qemu-isolate-b = ["qemu-user"]
 
 [dependencies]
 sorveth-abi = { path = "../sorveth-abi" }

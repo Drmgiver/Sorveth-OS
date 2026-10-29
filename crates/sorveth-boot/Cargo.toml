@@ -14,6 +14,8 @@ bench = false
 qemu-smoke = ["sorveth-core/qemu-smoke"]
 qemu-fault = ["sorveth-core/qemu-fault"]
 qemu-user = ["sorveth-core/qemu-user"]
+qemu-isolate-a = ["sorveth-core/qemu-isolate-a"]
+qemu-isolate-b = ["sorveth-core/qemu-isolate-b"]
 
 [dependencies]
 sorveth-abi = { path = "../sorveth-abi" }
