@@ -7,11 +7,7 @@
 //!
 //! Validation must complete before any output byte is overwritten.
 
-use crate::{
-    user_range::UserRange,
-    user_walk::ResolvedPages,
-    PAGE_BYTES,
-};
+use crate::{user_range::UserRange, user_walk::ResolvedPages, PAGE_BYTES};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyError {
@@ -60,8 +56,14 @@ pub fn copy_from_resolved(
         let frame = pages
             .physical_page(index)
             .ok_or(CopyError::IncompleteMapping)?;
-        let bytes = core::cmp::min(destination.len() - copied, PAGE_BYTES as usize - page_offset);
-        read_bytes(frame + page_offset as u64, &mut destination[copied..copied + bytes]);
+        let bytes = core::cmp::min(
+            destination.len() - copied,
+            PAGE_BYTES as usize - page_offset,
+        );
+        read_bytes(
+            frame + page_offset as u64,
+            &mut destination[copied..copied + bytes],
+        );
         copied += bytes;
         page_offset = 0;
     }
