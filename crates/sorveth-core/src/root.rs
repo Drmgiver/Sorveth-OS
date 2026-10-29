@@ -375,7 +375,6 @@ pub fn deliberate_fault_address() -> Option<u64> {
     }
 }
 
-
 /// The active Sorveth-owned bootstrap PML4 physical address.
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn kernel_root_physical() -> Option<u64> {
