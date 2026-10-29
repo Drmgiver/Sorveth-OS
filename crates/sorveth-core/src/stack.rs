@@ -164,6 +164,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 crate::halt_forever();
             }
         };
+        crate::serial::write_line("SORVETH M2-K.1d: owned ring-3 code stack and paging verified");
         let (cs, ss) = match crate::tss::user_selectors() {
             Some(selectors) => selectors,
             None => {

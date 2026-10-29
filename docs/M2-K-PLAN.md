@@ -264,3 +264,24 @@ both A/B cases checked before the new QEMU success marker is printed.
 
 This does not address dynamic data-frame pinning, multiple user pages,
 preemption or removing inherited supervisor code and stack mappings.
+
+
+### K.1d incremental checkpoint — owned ring-3 test loader mappings
+
+The QEMU-only ring-3 program builder now finds its unused kernel PML4
+slot by reading the registered root through Sorveth's high-half window.
+It zeros its two *ledger-claimed* 4-KiB code/stack frames and populates
+the generated program bytes through the owned window, with no direct
+physical frame pointer or requirement that OVMF identity map those frames.
+Its three static test paging-table frames are also initialized and linked
+through the owned window. The new USER PML4 entry is installed and both
+code/stack translations verified by a 4-level page walk that accepts only
+the four known root/PDPT/PD/PT frames. Foreign PTE-derived physical
+addresses cannot expand this verification whitelist.
+
+The legacy ring-3 probe, A/B hardware-isolation probes, and both 22-call
+memory-syscall probes must report a dedicated post-construction marker.
+The static test paging-table frames continue to be identity-validated
+at their early bootstrap physical addresses. This is not a general
+process loader, and active kernel code/stack/IDT mapping independence
+remains a separate K.1d acceptance target.

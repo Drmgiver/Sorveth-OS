@@ -723,10 +723,9 @@ fn build_isolation_probe() -> Result<ProbeProgram, Error> {
     }
     // Expected contents are read via the owned supervisor frame alias.
     // The test frame was populated by the real M2-I.3 CR3 switches.
-    let expected = unsafe {
-        crate::process_roots::read_process_frame_word(crate::isolation::owner())
-    }
-    .ok_or(Error::VerificationFailed)?;
+    let expected =
+        unsafe { crate::process_roots::read_process_frame_word(crate::isolation::owner()) }
+            .ok_or(Error::VerificationFailed)?;
     let mut program = ProbeProgram::new();
     program.emit(&[0x48, 0xb8])?; // movabs rax, own virtual address
     program.emit(&own.virtual_address.to_le_bytes())?;
@@ -833,7 +832,10 @@ pub fn prepare_user_probe(
             .claim_unmapped(1)
             .map_err(|_| Error::FrameUnavailable)?
             .start;
-        if code == stack || !valid_physical_window_frame(code) || !valid_physical_window_frame(stack) {
+        if code == stack
+            || !valid_physical_window_frame(code)
+            || !valid_physical_window_frame(stack)
+        {
             return Err(Error::FrameUnavailable);
         }
         // Both frames are permanent claims in the physical frame ledger.
@@ -857,10 +859,7 @@ pub fn prepare_user_probe(
         with_physical_window(pt, |window| {
             let entries = window as *mut u64;
             ptr::write_volatile(entries, code | PRESENT | U);
-            ptr::write_volatile(
-                entries.add(1),
-                stack | PRESENT | WRITE | U | NO_EXECUTE,
-            );
+            ptr::write_volatile(entries.add(1), stack | PRESENT | WRITE | U | NO_EXECUTE);
         })?;
         with_physical_window(root, |window| {
             ptr::write_volatile((window as *mut u64).add(slot), pdpt | PRESENT | WRITE | U);
