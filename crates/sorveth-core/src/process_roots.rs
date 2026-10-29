@@ -29,6 +29,10 @@ const USER_TABLE_FLAGS: u64 = PRESENT | WRITE | USER;
 #[cfg(target_arch = "x86_64")]
 const USER_DATA_FLAGS: u64 = USER_TABLE_FLAGS | NO_EXECUTE;
 #[cfg(target_arch = "x86_64")]
+const ACCESSED: u64 = 1 << 5;
+#[cfg(target_arch = "x86_64")]
+const DIRTY: u64 = 1 << 6;
+#[cfg(target_arch = "x86_64")]
 const FIRST_TEST_WORD: u64 = 0x534f_5256_4541_4f4e;
 #[cfg(target_arch = "x86_64")]
 const SECOND_TEST_WORD: u64 = 0x534f_5256_4542_4f4e;
@@ -313,7 +317,6 @@ pub unsafe fn attach_isolation_probe(process: Process, entry: u64) -> Result<u64
 /// inherited identity mappings verified and no concurrent page-table edits.
 pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     if !MAPPED.load(Ordering::Acquire) {
-        crate::serial::write_line("M2I5 AUDIT FAILED: stage 1");
         return None;
     }
     let (root_a, slot_a) = process_root(Process::First)?;
@@ -334,7 +337,6 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
         || ptr::read_volatile((root_a as *const u64).add(slot_b as usize)) != 0
         || ptr::read_volatile((root_b as *const u64).add(slot_a as usize)) != 0
     {
-        crate::serial::write_line("M2I5 AUDIT FAILED: stage 2");
         return None;
     }
     let tables_a = [
@@ -357,45 +359,39 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
                 .take(i)
                 .any(|previous| previous == table)
         {
-            crate::serial::write_line("M2I5 AUDIT FAILED: stage 3");
             return None;
         }
     }
-    let valid_a = validate_user_path(
-        root_a, slot_a, tables_a[0], tables_a[1], tables_a[2], page_a.physical_address,
-    );
-    let valid_b = validate_user_path(
-        root_b, slot_b, tables_b[0], tables_b[1], tables_b[2], page_b.physical_address,
-    );
-    if !valid_a || !valid_b {
-        crate::serial::write_line("M2I5 AUDIT FAILED: stage 4");
-        for (root, slot, tables, data) in [
-            (root_a, slot_a, tables_a, page_a.physical_address),
-            (root_b, slot_b, tables_b, page_b.physical_address),
-        ] {
-            crate::serial::write("Root address: ");
-            crate::serial::write_hex_u64(root);
-            crate::serial::write_line("");
-            for (label, actual, expected) in [
-                ("PML4", ptr::read_volatile((root as *const u64).add(slot as usize)), tables[0] | USER_TABLE_FLAGS),
-                ("PDPT", ptr::read_volatile(tables[0] as *const u64), tables[1] | USER_TABLE_FLAGS),
-                ("PD", ptr::read_volatile(tables[1] as *const u64), tables[2] | USER_TABLE_FLAGS),
-                ("PT", ptr::read_volatile(tables[2] as *const u64), data | USER_DATA_FLAGS),
-            ] {
-                crate::serial::write(label);
-                crate::serial::write(" observed ");
-                crate::serial::write_hex_u64(actual);
-                crate::serial::write(" expected ");
-                crate::serial::write_hex_u64(expected);
-                crate::serial::write_line("");
-            }
-        }
+    if !validate_user_path(
+        root_a,
+        slot_a,
+        tables_a[0],
+        tables_a[1],
+        tables_a[2],
+        page_a.physical_address,
+    ) || !validate_user_path(
+        root_b,
+        slot_b,
+        tables_b[0],
+        tables_b[1],
+        tables_b[2],
+        page_b.physical_address,
+    ) {
         return None;
     }
     Some(match process {
         Process::First => root_a,
         Process::Second => root_b,
     })
+}
+
+/// The processor sets A on page-table ancestors and A/D on data leaves
+/// during legitimate reads and writes. Compare only the immutable address,
+/// permissions and NX policy; never forgive changes to P/W/U or the frame.
+#[cfg(target_arch = "x86_64")]
+fn entry_matches(actual: u64, expected: u64, leaf: bool) -> bool {
+    let volatile = if leaf { ACCESSED | DIRTY } else { ACCESSED };
+    actual & !volatile == expected
 }
 
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
@@ -407,11 +403,10 @@ unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, 
     let pdpt_entry = ptr::read_volatile(pdpt as *const u64);
     let pd_entry = ptr::read_volatile(pd as *const u64);
     let leaf_entry = ptr::read_volatile(pt as *const u64);
-    pml4_entry == (pdpt | USER_TABLE_FLAGS)
-        && pdpt_entry == (pd | USER_TABLE_FLAGS)
-        && pd_entry == (pt | USER_TABLE_FLAGS)
-        && leaf_entry == (data | USER_DATA_FLAGS)
-        && (leaf_entry & NO_EXECUTE) != 0
+    entry_matches(pml4_entry, pdpt | USER_TABLE_FLAGS, false)
+        && entry_matches(pdpt_entry, pd | USER_TABLE_FLAGS, false)
+        && entry_matches(pd_entry, pt | USER_TABLE_FLAGS, false)
+        && entry_matches(leaf_entry, data | USER_DATA_FLAGS, true)
 }
 
 /// Claim two distinct conventional physical frames from the permanent ledger,
@@ -575,6 +570,24 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
 mod tests {
     #[cfg(target_arch = "x86_64")]
     use super::*;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn audit_allows_cpu_accessed_dirty_bits_but_rejects_permission_drift() {
+        let ancestor = 0x1234_5000 | USER_TABLE_FLAGS;
+        assert!(entry_matches(ancestor, ancestor, false));
+        assert!(entry_matches(ancestor | ACCESSED, ancestor, false));
+        assert!(!entry_matches(ancestor | DIRTY, ancestor, false));
+        assert!(!entry_matches(ancestor & !USER, ancestor, false));
+        assert!(!entry_matches(ancestor & !WRITE, ancestor, false));
+
+        let leaf = 0x5678_9000 | USER_DATA_FLAGS;
+        assert!(entry_matches(leaf | ACCESSED | DIRTY, leaf, true));
+        assert!(!entry_matches(leaf & !USER, leaf, true));
+        assert!(!entry_matches(leaf & !WRITE, leaf, true));
+        assert!(!entry_matches(leaf & !NO_EXECUTE, leaf, true));
+        assert!(!entry_matches(leaf ^ 0x1000, leaf, true));
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
