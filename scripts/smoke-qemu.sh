@@ -95,6 +95,7 @@ for marker in \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'Capability table: initialized' \
@@ -153,6 +154,7 @@ for marker in \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
@@ -204,6 +206,7 @@ for marker in \
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
@@ -260,6 +263,7 @@ for side in a b; do
   'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
     'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
@@ -304,6 +308,7 @@ for side in a b; do
   for marker in \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+  'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
     'Sorveth ring-3 memory gateway: process CR3 armed' \

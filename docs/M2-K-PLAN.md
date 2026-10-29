@@ -141,3 +141,20 @@ scheduler/bootstrap physical table accesses and all firmware supervisor
 mapping inheritance. These tables are still initialized under a verified
 OVMF identity map; the audit now uses Sorveth's owned alias but this
 alone does not make initial paging independent of firmware.
+
+
+### K.1c intermediate checkpoint: construct private paging trees via owned aliases
+
+During M2-I.2 private page setup, Sorveth now zeroes all six registered
+PDPT/PD/PT pages through its own temporary high-half frame window.
+It writes the eight private paging entries (the two data leaves, four
+ancestor links, and two process PML4 root slots) using the same fixed,
+registered-table whitelist and temporary window as the audit reader.
+The initial empty-slot checks and final A/B ownership/permission audit
+also use the registered high-half reader, avoiding raw physical table
+pointer casts during this portion of process mapping installation.
+
+Firmware identity mappings remain necessary for early static frame address
+validation and existing root/stack and supervisor boot mappings. These
+changes are single-core, nonpreemptive, permanently backed bootstrap
+experiments, not general concurrent address-space creation.
