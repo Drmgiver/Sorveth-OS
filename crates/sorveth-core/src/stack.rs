@@ -179,6 +179,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     crate::halt_forever();
                 }
             };
+            crate::serial::write_line("SORVETH M2-K.1d: owned ring-3 probe root attachment verified");
             crate::serial::write_line("Sorveth ring-3 isolation: process-owned CR3 armed");
             unsafe {
                 asm!("mov cr3, {}", in(reg) target_root, options(nostack, preserves_flags));
@@ -195,6 +196,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     crate::halt_forever();
                 }
             };
+            crate::serial::write_line("SORVETH M2-K.1d: owned ring-3 probe root attachment verified");
             crate::serial::write_line("Sorveth ring-3 memory gateway: process CR3 armed");
             unsafe {
                 asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));

@@ -270,6 +270,7 @@ for side in a b; do
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
     'SORVETH M2-K.1b: owned page-table reads and process frames verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
+    'SORVETH M2-K.1d: owned ring-3 probe root attachment verified' \
     'Sorveth ring-3 isolation: process-owned CR3 armed' \
     'SORVETH ISOLATION: own process memory read in ring 3' \
     'SORVETH EXCEPTION: PAGE FAULT' \
@@ -314,6 +315,7 @@ for side in a b; do
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
+    'SORVETH M2-K.1d: owned ring-3 probe root attachment verified' \
     'Sorveth ring-3 memory gateway: process CR3 armed' \
     'Sorveth ring-3 probe: user mappings and trap ready' \
     'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied' \

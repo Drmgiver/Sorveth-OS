@@ -195,3 +195,20 @@ boot data still execute through supervisor mappings inherited from OVMF.
 This commit does not unmap inherited firmware tables, reclaim them or
 establish a fully independent kernel CR3 hierarchy. Those need a separate,
 carefully staged mapping-audit and switched-root QEMU proof.
+
+
+### K.1d incremental checkpoint — isolated ring-3 probe PML4 attachments
+
+The QEMU-only process probe-attachment path now audits the kernel source
+PML4 slot, selected process destination slot, foreign process slot and
+cross-process private slots using the registered high-half table reader.
+Only after all ownership/permission checks pass does it install the
+selected test probe's PML4 slot using the registered high-half table
+writer, then verify the exact entry. Neither the destination nor the
+source is dereferenced as an identity-mapped physical pointer.
+
+The A/B ring-3 isolation and 22-call transfer variants must emit the
+new proof marker before loading their selected process CR3; they
+continue to test forbidden cross-process accesses and unauthorized
+user-memory operations. The test probe still borrows a kernel test-code
+subtree, and the general-purpose userspace loader does not exist.
