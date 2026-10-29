@@ -81,6 +81,7 @@ for marker in \
   'Sorveth IDT: installed; breakpoint roundtrip verified' \
   'Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed' \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
+  'SORVETH M2-K.1a: owned physical frame window verified' \
   'Sorveth dedicated kernel stack: active' \
   'Sorveth native context switch: two worker roundtrips verified' \
   'Sorveth scheduled kernel contexts: A B A B verified' \
@@ -131,6 +132,7 @@ fi
 for marker in \
   'Sorveth IDT: installed; breakpoint roundtrip verified' \
   'Sorveth dynamic private pages: 2 additional mappings verified' \
+  'SORVETH M2-K.1a: owned physical frame window verified' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
   'Sorveth exchange: authorized send wakes a parked task' \
