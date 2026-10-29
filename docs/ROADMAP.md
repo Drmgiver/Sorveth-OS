@@ -313,3 +313,20 @@ remain unimplemented. Per-process CR3, task lifetimes, real services,
 preemption and hardware support are also pending.
 
 **M2-H acceptance:** [successful GitHub Actions run 40163063162](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40163063162), including Rust host unit tests, UEFI compilation, code-format checks, native QEMU boot, deliberate page fault, serial monitor and real ring-3 authorization/denial checks. The implementation is not production userspace.
+
+
+## M2-I.1 — Separate supervisor-only process root pages
+
+Sorveth prepares two distinct, 4 KiB-aligned physical PML4 root pages from
+its kernel root. Present inherited mappings have their top-level USER flag
+cleared; absent entries remain zero. Two unused lower-canonical PML4 slots
+are identified for future private user-space mappings but are deliberately
+left nonpresent. Hardware QEMU acceptance temporarily loads each process
+root through CR3, validates the physical root and shared supervisor scratch
+mapping, then restores the original kernel root before resuming boot.
+
+This is only the **root-page foundation**, not independent user execution.
+Lower-level kernel/firmware page tables are still shared and the identity
+mapping of loader storage still depends on OVMF. Process-private physical
+frames, individual user mapping subtrees and memory isolation are the next
+M2-I goals.

@@ -375,6 +375,39 @@ pub fn deliberate_fault_address() -> Option<u64> {
     }
 }
 
+
+/// The active Sorveth-owned bootstrap PML4 physical address.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn kernel_root_physical() -> Option<u64> {
+    let root = ACTIVE_ROOT.load(Ordering::Acquire);
+    if root == 0 {
+        None
+    } else {
+        Some(root)
+    }
+}
+
+/// First supervisor-only private high-half page.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn kernel_private_address() -> Option<u64> {
+    let address = PRIVATE_BASE.load(Ordering::Acquire);
+    if address == 0 {
+        None
+    } else {
+        Some(address)
+    }
+}
+
+/// The bootstrap can only use static PML4 pages as CR3 if their physical
+/// addresses remain accessible through OVMF's verified identity mapping.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn identity_mapped(address: u64) -> bool {
+    match kernel_root_physical() {
+        Some(root) => unsafe { inherited_translate(root, address) == Some(address) },
+        None => false,
+    }
+}
+
 pub fn active() -> bool {
     #[cfg(target_arch = "x86_64")]
     {

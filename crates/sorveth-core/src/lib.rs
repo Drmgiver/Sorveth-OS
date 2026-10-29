@@ -7,6 +7,7 @@
 mod fibers;
 mod interrupts;
 mod monitor;
+mod process_roots;
 mod root;
 mod screen;
 mod serial;

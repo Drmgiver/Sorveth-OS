@@ -84,6 +84,7 @@ for marker in \
   'Sorveth dedicated kernel stack: active' \
   'Sorveth native context switch: two worker roundtrips verified' \
   'Sorveth scheduled kernel contexts: A B A B verified' \
+  'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -129,6 +130,7 @@ for marker in \
   'Sorveth dedicated kernel stack: active' \
   'Sorveth native context switch: two worker roundtrips verified' \
   'Sorveth scheduled kernel contexts: A B A B verified' \
+  'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
@@ -168,6 +170,7 @@ if [[ "$USER_STATUS" -ne 33 ]]; then
 fi
 for marker in \
   'Sorveth scheduled kernel contexts: A B A B verified' \
+  'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \

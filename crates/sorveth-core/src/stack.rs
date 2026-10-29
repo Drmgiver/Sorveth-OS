@@ -79,6 +79,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth scheduled kernel contexts: A B A B verified");
+    if unsafe { crate::process_roots::prepare_and_verify() }.is_err() {
+        crate::serial::write_line("FATAL: private process PML4 roots did not pass validation");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("Sorveth process roots: two distinct supervisor PML4 roots verified");
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {

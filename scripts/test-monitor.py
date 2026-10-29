@@ -67,6 +67,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Native worker context never resumed across switches")
     if b"Sorveth scheduled kernel contexts: A B A B verified" not in transcript:
         raise AssertionError("Round-robin task selection did not drive live kernel contexts")
+    if b"Sorveth process roots: two distinct supervisor PML4 roots verified" not in transcript:
+        raise AssertionError("Two independent PML4 roots did not survive real CR3 transitions")
     if b"Sorveth IPC: capability-checked mailbox and revocation validated" not in transcript:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
     if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:
