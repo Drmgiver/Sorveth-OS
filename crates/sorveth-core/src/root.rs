@@ -721,9 +721,12 @@ fn build_isolation_probe() -> Result<ProbeProgram, Error> {
     {
         return Err(Error::VerificationFailed);
     }
-    // Only the verified QEMU identity-map bootstrap may dereference this
-    // physical page directly. The expected value was populated by M2-I.3.
-    let expected = unsafe { ptr::read_volatile(own.physical_address as *const u64) };
+    // Expected contents are read via the owned supervisor frame alias.
+    // The test frame was populated by the real M2-I.3 CR3 switches.
+    let expected = unsafe {
+        crate::process_roots::read_process_frame_word(crate::isolation::owner())
+    }
+    .ok_or(Error::VerificationFailed)?;
     let mut program = ProbeProgram::new();
     program.emit(&[0x48, 0xb8])?; // movabs rax, own virtual address
     program.emit(&own.virtual_address.to_le_bytes())?;
@@ -784,7 +787,6 @@ pub fn prepare_user_probe(
         if root == 0 {
             return Err(Error::RootNotInstalled);
         }
-        let pml4 = root as *mut u64;
         // In isolation images do not collide with process A/B data slots.
         #[cfg(any(
             feature = "qemu-isolate-a",
@@ -807,13 +809,13 @@ pub fn prepare_user_probe(
             feature = "qemu-transfer-b"
         )))]
         let avoided = [0usize; 2];
-        let slot = match (1usize..256)
-            .rev()
-            .find(|&i| ptr::read_volatile(pml4.add(i)) & PRESENT == 0 && !avoided.contains(&i))
-        {
-            Some(i) => i,
-            None => return Err(Error::NoFreeVirtualSlot),
-        };
+        let slot = with_physical_window(root, |window| {
+            let entries = window as *const u64;
+            (1usize..256).rev().find(|&i| {
+                ptr::read_volatile(entries.add(i)) & PRESENT == 0 && !avoided.contains(&i)
+            })
+        })?
+        .ok_or(Error::NoFreeVirtualSlot)?;
         let pdpt = ptr::addr_of_mut!(USER_PDPT).cast::<u64>() as u64;
         let pd = ptr::addr_of_mut!(USER_PD).cast::<u64>() as u64;
         let pt = ptr::addr_of_mut!(USER_PT).cast::<u64>() as u64;
@@ -831,27 +833,38 @@ pub fn prepare_user_probe(
             .claim_unmapped(1)
             .map_err(|_| Error::FrameUnavailable)?
             .start;
-        if code == stack
-            || inherited_translate(root, code) != Some(code)
-            || inherited_translate(root, stack) != Some(stack)
-        {
-            return Err(Error::TestFrameNotIdentityMapped);
+        if code == stack || !valid_physical_window_frame(code) || !valid_physical_window_frame(stack) {
+            return Err(Error::FrameUnavailable);
         }
-        ptr::write_bytes(code as *mut u8, 0, 4096);
-        ptr::write_bytes(stack as *mut u8, 0, 4096);
-        ptr::copy_nonoverlapping(code_bytes.bytes.as_ptr(), code as *mut u8, code_bytes.len);
-        ptr::write_bytes(pdpt as *mut u8, 0, 4096);
-        ptr::write_bytes(pd as *mut u8, 0, 4096);
-        ptr::write_bytes(pt as *mut u8, 0, 4096);
+        // Both frames are permanent claims in the physical frame ledger.
+        // Initialize code and stack via the kernel-owned supervisor window,
+        // without requiring identity mappings of either data frame.
+        with_physical_window(code, |window| {
+            ptr::write_bytes(window, 0, 4096);
+            ptr::copy_nonoverlapping(code_bytes.bytes.as_ptr(), window, code_bytes.len);
+        })?;
+        with_physical_window(stack, |window| ptr::write_bytes(window, 0, 4096))?;
+        for table in [pdpt, pd, pt] {
+            with_physical_window(table, |window| ptr::write_bytes(window, 0, 4096))?;
+        }
 
-        ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE | U);
-        ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE | U);
-        ptr::write_volatile(pt as *mut u64, code | PRESENT | U);
-        ptr::write_volatile(
-            (pt as *mut u64).add(1),
-            stack | PRESENT | WRITE | U | NO_EXECUTE,
-        );
-        ptr::write_volatile(pml4.add(slot), pdpt | PRESENT | WRITE | U);
+        with_physical_window(pdpt, |window| {
+            ptr::write_volatile(window as *mut u64, pd | PRESENT | WRITE | U);
+        })?;
+        with_physical_window(pd, |window| {
+            ptr::write_volatile(window as *mut u64, pt | PRESENT | WRITE | U);
+        })?;
+        with_physical_window(pt, |window| {
+            let entries = window as *mut u64;
+            ptr::write_volatile(entries, code | PRESENT | U);
+            ptr::write_volatile(
+                entries.add(1),
+                stack | PRESENT | WRITE | U | NO_EXECUTE,
+            );
+        })?;
+        with_physical_window(root, |window| {
+            ptr::write_volatile((window as *mut u64).add(slot), pdpt | PRESENT | WRITE | U);
+        })?;
         let entry = (slot as u64) << 39;
         let user_stack = entry + 8192 - 16;
         core::arch::asm!("invlpg [{}]", in(reg) entry, options(nostack, preserves_flags));
@@ -860,12 +873,21 @@ pub fn prepare_user_probe(
             in(reg) (entry + 4096),
             options(nostack, preserves_flags),
         );
-        if translate(root, entry, |address| {
-            Some(ptr::read_volatile(address as *const u64))
-        }) != Some(code)
-            || translate(root, entry + 4096, |address| {
-                Some(ptr::read_volatile(address as *const u64))
-            }) != Some(stack)
+        // Read back the actual four-level translation through only the
+        // newly registered test paging frames. A malformed PTE cannot
+        // redirect the verifier to an arbitrary physical memory address.
+        let mut read_entry = |address: u64| {
+            let page = address & !4095;
+            if address & 7 != 0 || ![root, pdpt, pd, pt].contains(&page) {
+                return None;
+            }
+            with_physical_window(page, |window| {
+                ptr::read_volatile(window.add((address - page) as usize) as *const u64)
+            })
+            .ok()
+        };
+        if translate(root, entry, &mut read_entry) != Some(code)
+            || translate(root, entry + 4096, &mut read_entry) != Some(stack)
         {
             return Err(Error::VerificationFailed);
         }
