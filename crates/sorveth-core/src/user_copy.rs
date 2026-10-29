@@ -118,9 +118,7 @@ pub unsafe fn verify_copy_from_user() -> bool {
         let expected = before.to_le_bytes();
 
         let mut full = [0xa5u8; 8];
-        if copy_from_process(process, own.virtual_address, &mut full).is_err()
-            || full != expected
-        {
+        if copy_from_process(process, own.virtual_address, &mut full).is_err() || full != expected {
             return false;
         }
         let mut partial = [0xa5u8; 7];
@@ -130,8 +128,12 @@ pub unsafe fn verify_copy_from_user() -> bool {
             return false;
         }
         let mut final_byte = [0x5au8; 1];
-        if copy_from_process(process, own.virtual_address + PAGE_BYTES - 1, &mut final_byte)
-            .is_err()
+        if copy_from_process(
+            process,
+            own.virtual_address + PAGE_BYTES - 1,
+            &mut final_byte,
+        )
+        .is_err()
             || final_byte != [0]
         {
             return false;
@@ -164,7 +166,9 @@ pub unsafe fn verify_copy_from_user() -> bool {
             return false;
         }
         if copy_from_process(process, u64::MAX, &mut invalid)
-            != Err(CopyInError::InvalidRange(UserRangeError::ArithmeticOverflow))
+            != Err(CopyInError::InvalidRange(
+                UserRangeError::ArithmeticOverflow,
+            ))
             || invalid != [0xc7; 8]
         {
             return false;
