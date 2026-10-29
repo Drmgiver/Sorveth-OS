@@ -123,7 +123,10 @@ mod tests {
             assert_eq!(validate_user_range(addr, 1), Err(UserRangeError::NullPage));
         }
         for addr in [0, PAGE_BYTES, USER_LIMIT, u64::MAX] {
-            assert_eq!(validate_user_range(addr, 0), Err(UserRangeError::ZeroLength));
+            assert_eq!(
+                validate_user_range(addr, 0),
+                Err(UserRangeError::ZeroLength)
+            );
         }
     }
 
