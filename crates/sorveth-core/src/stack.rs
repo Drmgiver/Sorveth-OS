@@ -123,6 +123,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-J.4: bounded writable copy-out and denial verified");
+    crate::serial::write_line("SORVETH M2-K.1b: user copy via owned frame window verified");
     #[cfg(feature = "qemu-user")]
     {
         #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]

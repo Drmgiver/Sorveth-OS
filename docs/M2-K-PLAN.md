@@ -59,3 +59,15 @@ page reclamation, and safe arbitrary user mappings. The root's initial
 PML4 setup, existing page-table pointers and other kernel accesses still
 rely on inherited OVMF identity mappings. This is not an independent
 kernel memory subsystem yet.
+
+
+### K.1b intermediate checkpoint: user-copy frame access
+
+The M2-J.3/J.4 kernel copy helpers now map the specific process-owned data
+frame through the scoped high-half window for both directions, rather than
+casting the PTE-resolved physical data address into a kernel pointer.
+Existing full-range page-walk/ownership preflight remains before any writes;
+only the current one-frame permanent process pages are supported. QEMU must
+check the new marker in every ordinary boot and the existing A/B ring-3
+memory-syscall and denial runs. This does **not** yet migrate page-table
+walking, process creation or test setup off inherited firmware mappings.

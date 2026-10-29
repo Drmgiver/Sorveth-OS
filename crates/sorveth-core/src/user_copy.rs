@@ -5,8 +5,9 @@
 //! kernel code. Every byte's range is checked, all page-table entries are
 //! walked under the selected process PML4, then every physical frame is
 //! checked against its permanent ledger-owned data frame before any read.
-//! The kernel copies through a verified identity mapping while its own
-//! CR3 remains active. An invalid request leaves the destination intact.
+//! The kernel copies through a transient Sorveth-owned high-half window
+//! while its own CR3 remains active. An invalid request leaves the
+//! destination intact.
 //!
 //! This implementation requires the single-core QEMU bootstrap, interrupts
 //! off, permanently allocated data frames and no concurrent page-table
@@ -68,27 +69,23 @@ pub unsafe fn copy_from_process(
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Read)
         .map_err(CopyInError::InvalidMapping)?;
 
-    // The frame ledger never releases these distinct process pages. The
-    // QEMU identity map must also contain the WHOLE physical data frame;
-    // no unchecked PTE-derived pointer can ever pass the allowlist.
-    if !crate::root::identity_mapped(owner.physical_address)
-        || !crate::root::identity_mapped(owner.physical_address + PAGE_BYTES - 1)
-    {
-        return Err(CopyInError::UnmappedPhysicalSource);
-    }
-
-    copy_from_resolved(
-        range,
-        &pages,
-        destination,
-        |page| page == owner.physical_address,
-        |physical_address, out| unsafe {
-            // Safe only under the strict QEMU bootstrap + ownership
-            // preconditions above. ptr::copy tolerates overlap.
-            ptr::copy(physical_address as *const u8, out.as_mut_ptr(), out.len());
-        },
-    )
-    .map_err(CopyInError::PhysicalSource)
+    // All physical spans are checked against this permanently owned frame
+    // before any destination byte changes. The frame's physical address is
+    // never cast to a pointer: it is accessed through the scoped owned alias.
+    let result = crate::root::with_physical_window(owner.physical_address, |window| {
+        copy_from_resolved(
+            range,
+            &pages,
+            destination,
+            |page| page == owner.physical_address,
+            |physical_address, out| unsafe {
+                let offset = (physical_address - owner.physical_address) as usize;
+                ptr::copy(window.add(offset), out.as_mut_ptr(), out.len());
+            },
+        )
+    })
+    .map_err(|_| CopyInError::UnmappedPhysicalSource)?;
+    result.map_err(CopyInError::PhysicalSource)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,8 +102,8 @@ pub enum CopyOutError {
 ///
 /// Every virtual destination page must pass M2-J.1 range validation and
 /// M2-J.2 UserAccess::Write walking. Every resolved physical frame must
-/// belong to this specific process, with a verified writable identity
-/// mapping for the entire permanently owned page. The kernel must be
+/// belong to this specific process and be accessed through an owned
+/// temporary high-half mapping. The kernel must be
 /// active with maskable interrupts off. Preflight precedes ALL writes.
 ///
 /// # Safety
@@ -138,25 +135,20 @@ pub unsafe fn copy_to_process(
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Write)
         .map_err(CopyOutError::InvalidMapping)?;
 
-    if !crate::root::identity_mapped(owner.physical_address)
-        || !crate::root::identity_mapped(owner.physical_address + PAGE_BYTES - 1)
-    {
-        return Err(CopyOutError::UnmappedPhysicalDestination);
-    }
-
-    copy_to_resolved(
-        range,
-        &pages,
-        source,
-        |page| page == owner.physical_address,
-        |physical_address, bytes| unsafe {
-            // Safe only for the permanently allocated, verified,
-            // kernel-writable QEMU identity-mapped process data page.
-            // The source is nonaliasing kernel storage by contract.
-            ptr::copy_nonoverlapping(bytes.as_ptr(), physical_address as *mut u8, bytes.len());
-        },
-    )
-    .map_err(CopyOutError::PhysicalDestination)
+    let result = crate::root::with_physical_window(owner.physical_address, |window| {
+        copy_to_resolved(
+            range,
+            &pages,
+            source,
+            |page| page == owner.physical_address,
+            |physical_address, bytes| unsafe {
+                let offset = (physical_address - owner.physical_address) as usize;
+                ptr::copy_nonoverlapping(bytes.as_ptr(), window.add(offset), bytes.len());
+            },
+        )
+    })
+    .map_err(|_| CopyOutError::UnmappedPhysicalDestination)?;
+    result.map_err(CopyOutError::PhysicalDestination)
 }
 
 /// QEMU acceptance for the restricted copy-to-user path. Both process

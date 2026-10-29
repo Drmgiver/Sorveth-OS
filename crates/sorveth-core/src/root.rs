@@ -316,7 +316,7 @@ impl Drop for PhysicalWindowGuard {
 /// The caller owns the complete frame, is on the only CPU with IRQs masked and
 /// kernel CR3 loaded, and does not retain the visitor pointer or change CR3.
 #[cfg(target_arch = "x86_64")]
-unsafe fn with_physical_window<R>(
+pub(crate) unsafe fn with_physical_window<R>(
     frame: u64,
     visit: impl FnOnce(*mut u8) -> R,
 ) -> Result<R, Error> {
