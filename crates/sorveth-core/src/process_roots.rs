@@ -716,7 +716,6 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             // process root. Physical-frame verification follows after the
             // kernel CR3 is restored, through its own mapped window.
             if ptr::read_volatile(address as *const u64) != expected {
-
                 valid = false;
                 break;
             }
