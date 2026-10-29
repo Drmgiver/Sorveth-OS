@@ -531,7 +531,10 @@ fn build_isolation_probe() -> Result<ProbeProgram, Error> {
     program.emit(&[0x48, 0xba])?; // movabs rdx, expected
     program.emit(&expected.to_le_bytes())?;
     program.emit(&[0x48, 0x39, 0xd1, 0x75, 0xfe])?; // cmp rcx,rdx; jne self
-    program.trap(crate::isolation::SIGNAL as u32, crate::isolation::REPLY as u32)?;
+    program.trap(
+        crate::isolation::SIGNAL as u32,
+        crate::isolation::REPLY as u32,
+    )?;
     program.emit(&[0x48, 0xb8])?; // movabs rax, foreign virtual address
     program.emit(&foreign.virtual_address.to_le_bytes())?;
     program.emit(&[0x48, 0x8b, 0x00, 0xeb, 0xfe])?; // mov rax,[rax]; spin
@@ -579,9 +582,11 @@ pub fn prepare_user_probe(
         #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
         let avoided = [
             crate::process_roots::process_root(crate::process_roots::Process::First)
-                .ok_or(Error::VerificationFailed)?.1 as usize,
+                .ok_or(Error::VerificationFailed)?
+                .1 as usize,
             crate::process_roots::process_root(crate::process_roots::Process::Second)
-                .ok_or(Error::VerificationFailed)?.1 as usize,
+                .ok_or(Error::VerificationFailed)?
+                .1 as usize,
         ];
         #[cfg(not(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b")))]
         let avoided = [0usize; 2];
