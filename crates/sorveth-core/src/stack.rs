@@ -96,6 +96,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth scheduler CR3: A B A B private address spaces verified");
+    if unsafe { crate::address_scheduler::verify_lifecycle_hardening() }.is_err() {
+        crate::serial::write_line("FATAL: task address-space lifecycle guards failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied");
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {

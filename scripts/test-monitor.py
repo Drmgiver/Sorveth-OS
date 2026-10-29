@@ -73,6 +73,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Process-private physical pages did not pass CR3 mapping checks")
     if b"Sorveth scheduler CR3: A B A B private address spaces verified" not in transcript:
         raise AssertionError("Task selector failed to drive A/B/A/B CR3 switches")
+    if b"SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied" not in transcript:
+        raise AssertionError("Task/root lifecycle hardening was not verified")
     if b"Sorveth IPC: capability-checked mailbox and revocation validated" not in transcript:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
     if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:

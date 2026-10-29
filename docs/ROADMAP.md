@@ -401,3 +401,30 @@ This is a deterministic security acceptance test, NOT a production
 process loader, general userspace fault recovery or independently running
 ring-3 scheduler. The experimental kernel still shares inherited supervisor
 mappings and depends on OVMF identity mapping for bootstrap table inspection.
+
+
+## M2-I.5 — Task identity and process-address-space lifecycle hardening
+
+Before a task-owned address space can activate, the kernel now requires a
+**Ready**, generation-matched task identity bound to that process. It
+rejects blocked, retired or stale identities and missing or misaligned
+page-table roots. A trusted physical-root audit verifies distinct process
+PML4 roots, Sorveth-owned PDPT/PD/PT ancestry, independent physical
+frames, exact USER RW/NX leaf flags and absent foreign/kernel user slots.
+
+CR3 switches are wrapped in a restricted guard that verifies the active
+kernel root before entering and restores kernel CR3 on normal Rust
+return. A deterministic QEMU acceptance check blocks a task, retires it,
+reuses its slot with a new generation and confirms stale IDs cannot
+activate memory. It then deliberately clears the USER bit of an
+**inactive** process root's PML4 mapping, checks that the ownership audit
+fails closed, restores the original entry, and verifies the replacement
+task can safely activate the restored root. Post-exit activations must
+also be denied.
+
+This closes M2-I's sequence of QEMU bootstrap proofs (independent top
+roots, private memory mappings, scheduler-directed CR3, bidirectional
+CPL3 isolation and lifecycle validation). It does **not** implement
+fully scheduled ring-3 processes, automatic frame reclamation,
+firmware-independent supervisor paging, general fault recovery, or
+production user-memory services. Those remain later milestones.

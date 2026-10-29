@@ -277,3 +277,21 @@ and interactive monitor checks remain acceptance requirements.
 
 Only deterministic proof, not general task execution or process-lifetime
 management; M2-I.5 remains the integration/hardening target.
+
+
+## 2026-10-29 — M2-I.5 task/root ownership and lifecycle hardening
+
+- Added generation-checked, Ready-only task authorization of process roots.
+- Added private page-table ownership audits before CR3 changes, checking
+  Sorveth-owned intermediate tables, leaf permissions, exact physical
+  frames and absent foreign/kernel user mappings.
+- Added a restricted CR3 guard that restores Sorveth's kernel root on
+  normal return, including error paths.
+- Added live QEMU negative acceptance tests for blocked, retired and stale
+  task generations, a deliberately damaged inactive PML4 user mapping,
+  restored page-table contents, and rejection after final retirement.
+- Preserved the regular kernel boot, deliberate fault, task-scoped syscall,
+  bidirectional ring-3 hardware isolation and interactive monitor tests.
+
+Scope remains restricted to the verified single-CPU OVMF/QEMU bootstrap;
+this is not a production userspace scheduler or a general lifetime manager.

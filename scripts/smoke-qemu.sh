@@ -87,6 +87,7 @@ for marker in \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
+  'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -135,6 +136,7 @@ for marker in \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
+  'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
@@ -177,6 +179,7 @@ for marker in \
   'Sorveth process roots: two distinct supervisor PML4 roots verified' \
   'Sorveth private process pages: distinct user RW/NX mappings verified' \
   'Sorveth scheduler CR3: A B A B private address spaces verified' \
+  'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
   'Sorveth ring-3 probe: user mappings and trap ready' \
   'Sorveth ring-3 syscall: entered kernel from user mode' \
   'SORVETH RING3 ROUNDTRIP: verified' \
@@ -224,6 +227,7 @@ for side in a b; do
   fi
   for marker in \
     'Sorveth scheduler CR3: A B A B private address spaces verified' \
+    'SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied' \
     'Sorveth ring-3 isolation: process-owned CR3 armed' \
     'SORVETH ISOLATION: own process memory read in ring 3' \
     'SORVETH EXCEPTION: PAGE FAULT' \
