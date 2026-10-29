@@ -75,6 +75,8 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
         raise AssertionError("Task selector failed to drive A/B/A/B CR3 switches")
     if b"SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied" not in transcript:
         raise AssertionError("Task/root lifecycle hardening was not verified")
+    if b"SORVETH M2-J.1: bounded user address ranges validated" not in transcript:
+        raise AssertionError("M2-J.1 numeric user-buffer validation did not execute")
     if b"Sorveth IPC: capability-checked mailbox and revocation validated" not in transcript:
         raise AssertionError("Kernel IPC capability and mailbox test did not complete")
     if b"Sorveth task registry: fair selection and stale IDs validated" not in transcript:

@@ -101,6 +101,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied");
+    if !verify_user_buffer_policy() {
+        crate::serial::write_line("FATAL: numeric user-buffer range validation failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("SORVETH M2-J.1: bounded user address ranges validated");
     #[cfg(feature = "qemu-user")]
     {
         let (allowed, foreign) = match crate::user::initialize_broker() {
@@ -186,6 +191,37 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
 
     #[cfg(any(feature = "qemu-fault", feature = "qemu-user"))]
     crate::halt_forever()
+}
+
+/// QEMU bootstrap self-test for M2-J.1's numeric-only user range policy.
+/// Even a valid numeric range can still be unmapped or belong to a different
+/// process. No pointer dereference or page-table walk occurs here.
+#[cfg(target_arch = "x86_64")]
+fn verify_user_buffer_policy() -> bool {
+    use sorveth_paging::user_range::{
+        validate_user_range, UserRangeError, MAX_USER_TRANSFER_BYTES,
+    };
+    use sorveth_paging::{PAGE_BYTES, USER_LIMIT};
+    let a = match crate::process_roots::mapped_page(crate::process_roots::Process::First) {
+        Some(value) => value,
+        None => return false,
+    };
+    let b = match crate::process_roots::mapped_page(crate::process_roots::Process::Second) {
+        Some(value) => value,
+        None => return false,
+    };
+    let valid_a = validate_user_range(a.virtual_address, 8);
+    let valid_b = validate_user_range(b.virtual_address, PAGE_BYTES);
+    let cross_page = validate_user_range(a.virtual_address + PAGE_BYTES - 1, 2);
+    matches!(valid_a, Ok(range) if range.start() == a.virtual_address && range.page_count() == 1)
+        && matches!(valid_b, Ok(range) if range.start() == b.virtual_address && range.page_count() == 1)
+        && matches!(cross_page, Ok(range) if range.page_count() == 2)
+        && validate_user_range(0xfff, 1) == Err(UserRangeError::NullPage)
+        && validate_user_range(USER_LIMIT - 1, 2) == Err(UserRangeError::OutsideUserSpace)
+        && validate_user_range(u64::MAX, 1) == Err(UserRangeError::ArithmeticOverflow)
+        && validate_user_range(a.virtual_address, 0) == Err(UserRangeError::ZeroLength)
+        && validate_user_range(a.virtual_address, MAX_USER_TRANSFER_BYTES + 1)
+            == Err(UserRangeError::TooLarge)
 }
 
 #[cfg(test)]

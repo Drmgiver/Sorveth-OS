@@ -428,3 +428,33 @@ CPL3 isolation and lifecycle validation). It does **not** implement
 fully scheduled ring-3 processes, automatic frame reclamation,
 firmware-independent supervisor paging, general fault recovery, or
 production user-memory services. Those remain later milestones.
+
+
+## M2-J.1 — Numeric validation of bounded user-buffer ranges
+
+New standalone allocation-free policy module in sorveth-paging:
+validate_user_range(start, length) returns an opaque UserRange with a
+half-open byte interval and first/last 4 KiB user-page addresses, or an
+explicit error. Each request must satisfy the following conditions:
+
+- Nonzero byte length: zero length is always rejected, not an exception
+  for an invalid or otherwise dangerous address.
+- At most 64 KiB per operation (an eventual larger transfer must be
+  divided into individually checked bounded requests).
+- Checked 64-bit end computation that rejects wraparound.
+- Every accessed byte lies from virtual 0x1000 inclusive to the 48-bit,
+  four-level USER_LIMIT exclusive; the first page is deliberately excluded.
+  End-exclusive equal to USER_LIMIT is valid.
+- Unaligned buffers and two-page crossings are valid *numeric* requests.
+  A misaligned maximal buffer covers at most 17 distinct 4-KiB pages.
+
+Host unit tests check valid boundary bytes, unaligned crossings, maximum
+length, null/zero-length, overflow, kernel/noncanonical pointers and
+page-span invariants. Each QEMU mode and the interactive monitor also
+require a boot-time policy self-check using both existing private process
+numeric virtual addresses, with no memory access.
+
+**Out of scope:** success does not imply the page exists, has USER/WRITE
+permission, belongs to the calling task, or stays mapped. No untrusted
+pointer is dereferenced. Process-specific page-table walking follows in
+M2-J.2, while copy-in/copy-out safety comes in M2-J.3 and M2-J.4.

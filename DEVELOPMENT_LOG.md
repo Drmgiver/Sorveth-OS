@@ -295,3 +295,16 @@ management; M2-I.5 remains the integration/hardening target.
 
 Scope remains restricted to the verified single-CPU OVMF/QEMU bootstrap;
 this is not a production userspace scheduler or a general lifetime manager.
+
+
+## 2026-10-29 — M2-J.1 numeric user-buffer policy
+
+- Introduced a reusable no_std user_range module in sorveth-paging.
+- Rejected the null page, zero lengths, >64 KiB requests, u64 wraparound,
+  noncanonical kernel addresses and crossings of the user/kernel boundary.
+- Exposed first/last 4-KiB pages in private-field validated range records,
+  for later process-specific page-table checks.
+- Added thorough host unit tests and a serial boot policy self-check.
+- Required the policy marker in all existing QEMU and monitor modes.
+- Did not add any pointer dereferencing, process permission lookups,
+  general page-table access or copying. Those require M2-J.2–J.4.
