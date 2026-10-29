@@ -5,8 +5,8 @@
 //! is still inherited. After leaving the EFI entry stack, this trampoline
 //! must never return to it. Interrupts stay masked.
 
-use sorveth_memory::{MapSummary, MemoryMap};
 use sorveth_abi::BootInfo;
+use sorveth_memory::{MapSummary, MemoryMap};
 
 #[cfg(target_arch = "x86_64")]
 use core::{arch::asm, ptr};
@@ -114,9 +114,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
     };
-    let manifest = unsafe {
-        crate::supervisor_manifest::capture::<192>(&map, &boot, (base, end))
-    };
+    let manifest = unsafe { crate::supervisor_manifest::capture::<192>(&map, &boot, (base, end)) };
     match manifest {
         Ok(found) if found.len() >= 48 => {
             crate::serial::write_line(

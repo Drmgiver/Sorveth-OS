@@ -130,10 +130,7 @@ impl<const N: usize> Default for Manifest<N> {
 /// Resolve one complete 4-KiB physical page to exactly one UEFI descriptor.
 /// Gaps and partial descriptor crossings remain UNKNOWN, never allocatable.
 /// Inconsistent overlapping descriptor types fail closed.
-pub fn uefi_type_of(
-    map: &MemoryMap<'_>,
-    physical_page: u64,
-) -> Result<Option<u32>, ManifestError> {
+pub fn uefi_type_of(map: &MemoryMap<'_>, physical_page: u64) -> Result<Option<u32>, ManifestError> {
     if physical_page & (PAGE_BYTES - 1) != 0 {
         return Err(ManifestError::InvalidRange);
     }
@@ -179,9 +176,7 @@ unsafe fn record_one<const N: usize>(
         crate::root::read_bootstrap_supervisor_entry(entry)
     })
     .map_err(|_| ManifestError::MissingMapping)?;
-    if leaf.user_accessible || needs_write && !leaf.writable
-        || needs_execute && !leaf.executable
-    {
+    if leaf.user_accessible || needs_write && !leaf.writable || needs_execute && !leaf.executable {
         return Err(ManifestError::Permission);
     }
     let phys_page = leaf.physical_address & !(PAGE_BYTES - 1);
@@ -281,13 +276,37 @@ pub unsafe fn capture<const N: usize>(
         true,
     )?;
     let (worker, worker_end) = crate::fibers::survival_stack_bounds();
-    record_range(&mut manifest, map, root, worker, worker_end - worker, Kind::WorkerStack, true)?;
+    record_range(
+        &mut manifest,
+        map,
+        root,
+        worker,
+        worker_end - worker,
+        Kind::WorkerStack,
+        true,
+    )?;
     let (faults, trap) = crate::tss::survival_stack_bounds();
     for (start, end) in faults {
-        record_range(&mut manifest, map, root, start, end - start, Kind::FaultStack, true)?;
+        record_range(
+            &mut manifest,
+            map,
+            root,
+            start,
+            end - start,
+            Kind::FaultStack,
+            true,
+        )?;
     }
     if let Some((start, end)) = trap {
-        record_range(&mut manifest, map, root, start, end - start, Kind::TrapStack, true)?;
+        record_range(
+            &mut manifest,
+            map,
+            root,
+            start,
+            end - start,
+            Kind::TrapStack,
+            true,
+        )?;
     }
 
     // CPU descriptor memory is required after a CR3 change; it belongs to
@@ -306,8 +325,24 @@ pub unsafe fn capture<const N: usize>(
     if !(16..=4096).contains(&idt_len) || !(24..=4096).contains(&gdt_len) {
         return Err(ManifestError::InvalidRange);
     }
-    record_range(&mut manifest, map, root, idt_start, idt_len, Kind::CpuTable, true)?;
-    record_range(&mut manifest, map, root, gdt_start, gdt_len, Kind::CpuTable, true)?;
+    record_range(
+        &mut manifest,
+        map,
+        root,
+        idt_start,
+        idt_len,
+        Kind::CpuTable,
+        true,
+    )?;
+    record_range(
+        &mut manifest,
+        map,
+        root,
+        gdt_start,
+        gdt_len,
+        Kind::CpuTable,
+        true,
+    )?;
     record_one(
         &mut manifest,
         map,
@@ -357,7 +392,15 @@ pub unsafe fn capture<const N: usize>(
             false,
         )?;
         let last = boot.framebuffer.address + boot.framebuffer.size_bytes - 1;
-        record_one(&mut manifest, map, root, last, Kind::FramebufferDevice, true, false)?;
+        record_one(
+            &mut manifest,
+            map,
+            root,
+            last,
+            Kind::FramebufferDevice,
+            true,
+            false,
+        )?;
     }
     Ok(manifest)
 }
@@ -434,7 +477,8 @@ mod tests {
             kind: Kind::Code,
             writable: true,
             executable: true,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(m.legacy_writable_executable(), 1);
         assert_eq!(m.unknown_device_pages(), 0);
     }
