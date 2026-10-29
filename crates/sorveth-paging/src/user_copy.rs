@@ -70,6 +70,63 @@ pub fn copy_from_resolved(
     Ok(())
 }
 
+/// Transfer kernel-owned source bytes into prevalidated, process-owned
+/// writable user pages. The caller must have walked every destination
+/// with UserAccess::Write and must guarantee the mapping and frames stay
+/// stable for the entire operation.
+///
+/// This policy deliberately makes no raw pointer dereferences. Every page
+/// is preflighted before write_bytes is invoked, so a returned rejection
+/// leaves ALL destination bytes untouched. The kernel-only callbacks must
+/// guarantee physical access is infallible after validation; hardware
+/// faults and concurrent remapping are not recoverable in this bootstrap.
+///
+/// The supplied source is trusted, valid kernel memory and must not alias
+/// destination physical frames through another virtual mapping.
+pub fn copy_to_resolved(
+    range: UserRange,
+    pages: &ResolvedPages,
+    source: &[u8],
+    mut allow_page: impl FnMut(u64) -> bool,
+    mut write_bytes: impl FnMut(u64, &[u8]),
+) -> Result<(), CopyError> {
+    if source.len() as u64 != range.len() {
+        return Err(CopyError::DestinationLength);
+    }
+    if pages.page_count() != range.page_count() as usize {
+        return Err(CopyError::IncompleteMapping);
+    }
+    // The complete destination is preflighted; never begin a partial
+    // write just because the first of multiple pages is writable.
+    for index in 0..pages.page_count() {
+        let page = pages
+            .physical_page(index)
+            .ok_or(CopyError::IncompleteMapping)?;
+        if page == 0 || page & (PAGE_BYTES - 1) != 0 || !allow_page(page) {
+            return Err(CopyError::UnownedPhysicalPage);
+        }
+    }
+
+    let mut copied = 0usize;
+    let mut page_offset = (range.start() & (PAGE_BYTES - 1)) as usize;
+    for index in 0..pages.page_count() {
+        let frame = pages
+            .physical_page(index)
+            .ok_or(CopyError::IncompleteMapping)?;
+        let bytes = core::cmp::min(
+            source.len() - copied,
+            PAGE_BYTES as usize - page_offset,
+        );
+        write_bytes(
+            frame + page_offset as u64,
+            &source[copied..copied + bytes],
+        );
+        copied += bytes;
+        page_offset = 0;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,4 +241,89 @@ mod tests {
         .unwrap();
         assert_eq!(destination, [0x42]);
     }
+
+    #[test]
+    fn copy_out_handles_misaligned_noncontiguous_physical_pages() {
+        let range = validate_user_range(0x4ffd, 7).unwrap();
+        let frames = walk(range);
+        let source = [1u8, 2, 3, 4, 5, 6, 7];
+        let mut calls = 0;
+        let mut writes = [(0u64, [0u8; 4]); 2];
+        copy_to_resolved(
+            range,
+            &frames,
+            &source,
+            |page| page == 0x9000 || page == 0xb000,
+            |address, bytes| {
+                let i = calls;
+                calls += 1;
+                writes[i].0 = address;
+                writes[i].1[..bytes.len()].copy_from_slice(bytes);
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(writes[0], (0x9ffd, [1, 2, 3, 0]));
+        assert_eq!(writes[1], (0xb000, [4, 5, 6, 7]));
+    }
+
+    #[test]
+    fn copy_out_rejected_second_page_never_writes_first_page() {
+        let range = validate_user_range(0x4fff, 2).unwrap();
+        let frames = walk(range);
+        let writes = core::cell::Cell::new(0);
+        assert_eq!(
+            copy_to_resolved(
+                range,
+                &frames,
+                &[3, 4],
+                |page| page == 0x9000,
+                |_, _| writes.set(writes.get() + 1),
+            ),
+            Err(CopyError::UnownedPhysicalPage)
+        );
+        assert_eq!(writes.get(), 0);
+    }
+
+    #[test]
+    fn copy_out_rejects_mismatched_source_length_without_page_reads() {
+        let range = validate_user_range(0x4000, 8).unwrap();
+        let frames = walk(range);
+        let touched = core::cell::Cell::new(false);
+        assert_eq!(
+            copy_to_resolved(
+                range,
+                &frames,
+                &[0u8; 7],
+                |_| {
+                    touched.set(true);
+                    true
+                },
+                |_, _| touched.set(true),
+            ),
+            Err(CopyError::DestinationLength)
+        );
+        assert!(!touched.get());
+    }
+
+    #[test]
+    fn copy_out_last_byte_of_page_does_not_touch_adjacent_frame() {
+        let range = validate_user_range(0x4fff, 1).unwrap();
+        let frames = walk(range);
+        let mut calls = 0;
+        copy_to_resolved(
+            range,
+            &frames,
+            &[0x42],
+            |page| page == 0x9000,
+            |address, bytes| {
+                assert_eq!(address, 0x9fff);
+                assert_eq!(bytes, &[0x42]);
+                calls += 1;
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+    }
+
 }
