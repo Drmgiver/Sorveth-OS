@@ -157,3 +157,14 @@ native context switches. A future stage must capture the entire linked
 image layout and all required page-table ancestry, retain the validated
 metadata, reconcile ownership with actual frame claims, then construct
 a fully Sorveth-owned replacement supervisor hierarchy.
+
+
+### Bootstrap paging frames included in provenance (incremental)
+
+The kernel manifest now also proves the physical backing, 4-KiB alignment,
+accessible writable supervisor mappings and UEFI loader/boot-services
+provenance for all four statically retained Sorveth paging frames: its
+PML4, private PDPT, private PD and private PT. These four records must be
+present as distinct pages (no hidden aliases), and a dedicated QEMU success
+marker is required across every smoke variant. This remains a bootstrap
+inventory, not a page-table ownership transfer or an independent CR3.

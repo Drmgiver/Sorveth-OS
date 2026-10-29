@@ -100,6 +100,7 @@ for marker in \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited' \
+  'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -166,6 +167,7 @@ for marker in \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited' \
+  'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -225,6 +227,7 @@ for marker in \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited' \
+  'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -289,6 +292,7 @@ for side in a b; do
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited' \
+  'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -342,6 +346,7 @@ for side in a b; do
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
   'SORVETH M2-K.1d: physical backing and UEFI provenance manifest audited' \
+  'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
