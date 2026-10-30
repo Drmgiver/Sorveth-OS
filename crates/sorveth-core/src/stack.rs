@@ -242,9 +242,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             } {
                 Ok(evidence) if evidence.unique_table_frames > 0 => evidence,
                 _ => {
-                    crate::serial::write_line(
-                        "FATAL: candidate page-table ownership audit failed",
-                    );
+                    crate::serial::write_line("FATAL: candidate page-table ownership audit failed");
                     crate::halt_forever();
                 }
             };
@@ -320,11 +318,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             );
             #[cfg(feature = "qemu-independent-root")]
             {
-                if unsafe {
-                    crate::image_page_tables::activate_verified_survival_root()
-                }
-                .is_err()
-                {
+                if unsafe { crate::image_page_tables::activate_verified_survival_root() }.is_err() {
                     crate::serial::write_line(
                         "FATAL: independent candidate root activation failed",
                     );

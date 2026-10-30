@@ -796,9 +796,7 @@ pub unsafe fn audit_candidate_table_ancestry(
     let flags: u64;
     core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
     core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
-    if flags & (1 << 9) != 0
-        || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK)
-    {
+    if flags & (1 << 9) != 0 || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK) {
         return Err(Error::WrongCpuContext);
     }
     let image_end = boot
