@@ -565,7 +565,8 @@ pub(crate) unsafe fn audit_inherited_page_tables(
         } else {
             let first_root_visits = visits & 0x55;
             let second_root_visits = (visits >> 1) & 0x55;
-            if roots_seen != 3 || first_root_visits == 0 || first_root_visits != second_root_visits {
+            if roots_seen != 3 || first_root_visits == 0 || first_root_visits != second_root_visits
+            {
                 return Err(Error::InheritedRootAncestryMismatch);
             }
             shared = shared
