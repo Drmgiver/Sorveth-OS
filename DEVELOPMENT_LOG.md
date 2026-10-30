@@ -682,3 +682,10 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - Generalized the candidate hierarchy to accept all verified planner mappings, including mappings that require additional PML4/PDPT/PD branches. New tables come from a bounded pool in writable, identity-mapped PE pages.
 - The candidate now fails closed on pool exhaustion, untrusted table frames, huge-page collisions, and occupied leaf entries, then walks every planned mapping and checks translation and permissions. The private-window self-alias remains rebound to the candidate's own PT; framebuffer UC validation remains in place.
 - The candidate remains inactive. This does not establish complete runtime survival coverage or authorize a persistent CR3 transition.
+
+
+## 2026-10-30 — M2-K.1k candidate survival coverage and temporary activation
+
+- The expanded candidate now walks every record in the captured runtime survival manifest. PE pages use the section W^X policy, non-image pages must match the plan, and device endpoints must lie in the verified UC framebuffer range.
+- Added a second atomic CR3 probe after candidate construction. It briefly executes and reads the owned stack under the expanded candidate, then restores the inherited Sorveth root before returning to Rust. The earlier PE-only probe remains as a separate checkpoint.
+- The full candidate is never kept active. This verifies the captured bootstrap survival set, not all dynamic or future kernel dependencies.

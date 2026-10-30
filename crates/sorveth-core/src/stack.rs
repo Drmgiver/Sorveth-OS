@@ -215,10 +215,13 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 "SORVETH M2-K.1g: audited high-half mappings added to candidate plan",
             );
             let candidate_evidence = match unsafe {
-                crate::image_page_tables::extend_and_verify_survival_plan(&boot, &map, &plan)
+                crate::image_page_tables::extend_and_verify_survival_plan(
+                    &boot, &map, &plan, &found,
+                )
             } {
                 Ok(evidence)
                     if evidence.planner_mappings == plan.mapping_count()
+                        && evidence.survival_records_verified == found.len()
                         && evidence.framebuffer_pages
                             == plan
                                 .framebuffer()
@@ -234,7 +237,23 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 }
             };
             crate::serial::write_line(
-                "SORVETH M2-K.1j: inactive complete planned mappings verified",
+                "SORVETH M2-K.1k: every survival manifest record verified in candidate",
+            );
+            if unsafe {
+                crate::image_page_tables::verify_temporary_survival_root(
+                    boot.image_base,
+                    boot.image_size,
+                    base,
+                    end,
+                )
+            }
+            .is_err()
+            {
+                crate::serial::write_line("FATAL: temporary supervisor candidate CR3 probe failed");
+                crate::halt_forever();
+            }
+            crate::serial::write_line(
+                "SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely",
             );
             crate::serial::write("Sorveth verified planner leaves: ");
             crate::serial::write_u64(candidate_evidence.planner_mappings as u64);

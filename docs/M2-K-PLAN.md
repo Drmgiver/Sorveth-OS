@@ -462,9 +462,10 @@ for PAT selection and memory-type rules.
 Host checks, UEFI cross-build, formatting and QEMU passed in
 [run 41010104216](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216).
 
-**Next:** generalize the candidate hierarchy to include every verified
-non-image supervisor mapping, then audit the complete survival set before
-considering any persistent root transition.
+**Next:** walk the runtime survival manifest against the expanded candidate,
+then briefly activate and restore that candidate under a dedicated QEMU
+acceptance gate. Persistent CR3 migration remains blocked on dynamic mapping
+lifecycle and a complete dependency inventory.
 
 
 
@@ -482,3 +483,18 @@ Table-pool exhaustion, collisions, huge-page ancestry, or an untrusted table
 frame fail closed. The candidate remains inactive; this does not prove that
 the bounded manifest includes every runtime dependency or permit a persistent
 CR3 transition.
+
+
+### K.1k candidate survival-manifest audit and temporary CR3 probe
+
+After building the expanded inactive candidate, the kernel now checks every
+record in the captured survival manifest against candidate translations and
+effective supervisor permissions. Image records follow the strict PE section
+policy, non-image records must match the compiled plan, and framebuffer
+endpoints must fall within the fully mapped UC range. The boot path then
+briefly activates the expanded candidate on Sorveth's owned stack, reads CR3
+and a stack word in one assembly sequence, and restores the prior root before
+returning to Rust. QEMU must observe both the manifest-coverage marker and the
+CR3 restoration marker. This proves the captured boot survival set can execute
+through the candidate; it does not establish complete dynamic runtime
+coverage or leave the candidate active.

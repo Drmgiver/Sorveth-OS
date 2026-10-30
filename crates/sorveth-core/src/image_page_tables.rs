@@ -60,6 +60,7 @@ pub struct Evidence {
 pub struct CandidateEvidence {
     pub planner_mappings: usize,
     pub framebuffer_pages: u64,
+    pub survival_records_verified: usize,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -323,7 +324,7 @@ struct MappingTablePool<'a> {
     start: usize,
     frames_used: usize,
     boot: &'a BootInfo,
-    layout: image_sections::Layout,
+    layout: &'a image_sections::Layout,
     pts: u64,
 }
 
@@ -443,10 +444,11 @@ unsafe fn map_additional_planner_mapping(
 /// Single CPU on the active Sorveth kernel root, IF=0, after the PE-only
 /// candidate and supervisor mapping plan have both been verified.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn extend_and_verify_survival_plan<const N: usize>(
+pub unsafe fn extend_and_verify_survival_plan<const N: usize, const M: usize>(
     boot: &BootInfo,
     map: &MemoryMap<'_>,
     plan: &Plan<N>,
+    manifest: &supervisor_manifest::Manifest<M>,
 ) -> Result<CandidateEvidence, Error> {
     if !BUILT.load(Ordering::Acquire)
         || WINDOW_BUILT.swap(true, Ordering::AcqRel)
@@ -563,7 +565,7 @@ pub unsafe fn extend_and_verify_survival_plan<const N: usize>(
         start: MAPPING_POOL_START,
         frames_used: 0,
         boot,
-        layout,
+        layout: &layout,
         pts,
     };
     for index in 0..plan.mapping_count() {
@@ -625,9 +627,68 @@ pub unsafe fn extend_and_verify_survival_plan<const N: usize>(
             return Err(Error::ValidationFailed);
         }
     }
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    let framebuffer = plan.framebuffer();
+    let mut survival_records_verified = 0usize;
+    for index in 0..manifest.len() {
+        let record = manifest.get(index).ok_or(Error::ValidationFailed)?;
+        let (physical, writable, executable) = if record.kind
+            == supervisor_manifest::Kind::FramebufferDevice
+        {
+            let fb = framebuffer.ok_or(Error::InvalidFramebuffer)?;
+            let fb_end = fb
+                .virtual_start
+                .checked_add(fb.pages * PAGE)
+                .ok_or(Error::InvalidFramebuffer)?;
+            if record.virtual_page < fb.virtual_start || record.virtual_page >= fb_end {
+                return Err(Error::InvalidFramebuffer);
+            }
+            (record.physical_page, true, false)
+        } else if record.virtual_page >= boot.image_base && record.virtual_page < image_end {
+            let bits = leaf_flags(layout.classify(record.virtual_page - boot.image_base))
+                .ok_or(Error::ValidationFailed)?;
+            (record.physical_page, bits & WRITE != 0, bits & NX == 0)
+        } else {
+            let mapping = (0..plan.mapping_count())
+                .filter_map(|mapping_index| plan.mapping(mapping_index))
+                .find(|mapping| mapping.virtual_page == record.virtual_page)
+                .ok_or(Error::ValidationFailed)?;
+            (mapping.physical_page, mapping.writable, mapping.executable)
+        };
+        if physical != record.physical_page {
+            return Err(Error::ValidationFailed);
+        }
+        let observed = supervisor_audit::walk(root, record.virtual_page, |entry| {
+            read_extended_candidate_entry(
+                entry,
+                root,
+                ptr::addr_of!(IMAGE_PDPT) as u64,
+                ptr::addr_of!(IMAGE_PD) as u64,
+                pts,
+                MAX_PT,
+                window_pdpt,
+                window_pd,
+                window_pt,
+            )
+        })
+        .map_err(|_| Error::ValidationFailed)?;
+        if observed.physical_address != physical
+            || observed.user_accessible
+            || observed.leaf_size != PAGE
+            || observed.writable != writable
+            || observed.executable != executable
+        {
+            return Err(Error::ValidationFailed);
+        }
+        survival_records_verified += 1;
+    }
     Ok(CandidateEvidence {
         planner_mappings: verified,
         framebuffer_pages,
+        survival_records_verified,
     })
 }
 
@@ -930,7 +991,34 @@ pub unsafe fn verify_temporary_image_root(
     stack_start: u64,
     stack_end: u64,
 ) -> Result<(), Error> {
-    if !BUILT.load(Ordering::Acquire) {
+    verify_temporary_root(false, image_base, image_size, stack_start, stack_end)
+}
+
+/// Temporarily run the same atomic CR3/stack probe under the expanded
+/// supervisor candidate after every manifest record has passed its walk.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+pub unsafe fn verify_temporary_survival_root(
+    image_base: u64,
+    image_size: u64,
+    stack_start: u64,
+    stack_end: u64,
+) -> Result<(), Error> {
+    verify_temporary_root(true, image_base, image_size, stack_start, stack_end)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+unsafe fn verify_temporary_root(
+    require_survival_plan: bool,
+    image_base: u64,
+    image_size: u64,
+    stack_start: u64,
+    stack_end: u64,
+) -> Result<(), Error> {
+    if !BUILT.load(Ordering::Acquire)
+        || require_survival_plan && !WINDOW_BUILT.load(Ordering::Acquire)
+    {
         return Err(Error::InvalidImage);
     }
     let image_end = image_base
