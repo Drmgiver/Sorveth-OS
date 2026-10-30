@@ -329,24 +329,23 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
             let mapping = plan
                 .mapping(index)
                 .ok_or(Error::SupervisorMappingMismatch)?;
-            let observed = match crate::supervisor_audit::walk(
-                root,
-                mapping.virtual_page,
-                |entry| read_supervisor_table_entry(entry),
-            ) {
-                Ok(observed) => observed,
-                Err(error) => {
-                    #[cfg(feature = "qemu-independent-root")]
-                    {
-                        crate::serial::write("K.1r process mapping walk failed at ");
-                        crate::serial::write_u64(mapping.virtual_page);
-                        crate::serial::write(" (reason ");
-                        crate::serial::write_u64(error as u64);
-                        crate::serial::write_line(")");
+            let observed =
+                match crate::supervisor_audit::walk(root, mapping.virtual_page, |entry| {
+                    read_supervisor_table_entry(entry)
+                }) {
+                    Ok(observed) => observed,
+                    Err(error) => {
+                        #[cfg(feature = "qemu-independent-root")]
+                        {
+                            crate::serial::write("K.1r process mapping walk failed at ");
+                            crate::serial::write_u64(mapping.virtual_page);
+                            crate::serial::write(" (reason ");
+                            crate::serial::write_u64(error as u64);
+                            crate::serial::write_line(")");
+                        }
+                        return Err(Error::SupervisorMappingMismatch);
                     }
-                    return Err(Error::SupervisorMappingMismatch);
-                }
-            };
+                };
             if observed.physical_address != mapping.physical_page
                 || observed.user_accessible
                 || mapping.writable && !observed.writable
