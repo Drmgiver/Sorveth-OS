@@ -20,6 +20,7 @@ mod serial;
 mod stack;
 mod supervisor_audit;
 mod supervisor_manifest;
+mod supervisor_root_plan;
 #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]
 mod transfer;
 mod tss;
