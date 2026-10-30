@@ -625,7 +625,14 @@ pub(crate) unsafe fn audit_private_window(
     let entries = table_alias as *const u64;
     let self_entry = ptr::read_volatile(entries.add(PRIVATE_PT_ALIAS_INDEX));
     let self_mask = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
-    if self_entry & self_mask != table_frame | PRESENT | WRITE | NO_EXECUTE {
+    let masked_self_entry = self_entry & self_mask;
+    let expected_self_entry = table_frame | PRESENT | WRITE | NO_EXECUTE;
+    if masked_self_entry != expected_self_entry {
+        crate::serial::write("Sorveth self-alias PTE masked/expected: ");
+        crate::serial::write_u64(masked_self_entry);
+        crate::serial::write("/");
+        crate::serial::write_u64(expected_self_entry);
+        crate::serial::write_line("");
         return Err(Failure::SelfAliasEntry);
     }
     if ptr::read_volatile(entries.add(PHYSICAL_WINDOW_INDEX)) != 0 {
