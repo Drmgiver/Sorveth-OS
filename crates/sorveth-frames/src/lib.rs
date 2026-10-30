@@ -364,19 +364,31 @@ impl<const N: usize> FramePool<N> {
     /// the ledger was installed into this pool.
     pub fn claim_count(&self) -> Result<usize, PoolError> {
         let mut guard = self.lock();
-        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.claim_count())
+        Ok(guard
+            .state()
+            .as_ref()
+            .ok_or(PoolError::NotInstalled)?
+            .claim_count())
     }
 
     /// Read a claim span from the ownership ledger.
     pub fn claim_at(&self, index: usize) -> Result<Option<PhysSpan>, PoolError> {
         let mut guard = self.lock();
-        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.claim_at(index))
+        Ok(guard
+            .state()
+            .as_ref()
+            .ok_or(PoolError::NotInstalled)?
+            .claim_at(index))
     }
 
     /// Check whether one aligned page belongs to a recorded Sorveth claim.
     pub fn owns_frame(&self, frame: u64) -> Result<bool, PoolError> {
         let mut guard = self.lock();
-        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.owns_frame(frame))
+        Ok(guard
+            .state()
+            .as_ref()
+            .ok_or(PoolError::NotInstalled)?
+            .owns_frame(frame))
     }
 }
 

@@ -619,7 +619,11 @@ pub(crate) unsafe fn audit_private_window(
             return Err(Error::VerificationFailed);
         }
         let physical = entry & ADDRESS_MASK;
-        if physical == 0 || !pool.owns_frame(physical).map_err(|_| Error::FrameUnavailable)? {
+        if physical == 0
+            || !pool
+                .owns_frame(physical)
+                .map_err(|_| Error::FrameUnavailable)?
+        {
             return Err(Error::FrameUnavailable);
         }
         for prior in 0..slot {
