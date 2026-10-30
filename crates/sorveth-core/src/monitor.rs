@@ -139,11 +139,17 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
                 Err(_) => serial::write("UNAVAILABLE"),
             }
             serial::write_line("");
+            #[cfg(feature = "qemu-independent-root")]
+            serial::write_line("Frame claims remain unreclaimed; active page tables are Sorveth-owned");
+            #[cfg(not(feature = "qemu-independent-root"))]
             serial::write_line("Claims remain unmapped; lower page tables are inherited");
         }
         Command::Paging => {
             if root::active() {
                 serial::write_line("Page table root: Sorveth PML4 active");
+                #[cfg(feature = "qemu-independent-root")]
+                serial::write_line("Lower page tables: Sorveth-owned; firmware ancestry removed");
+                #[cfg(not(feature = "qemu-independent-root"))]
                 serial::write_line("Lower mappings: mostly inherited (not isolated)");
                 serial::write_line("Private supervisor NX scratch mapping: verified");
                 serial::write("Sorveth private mapped pages: ");

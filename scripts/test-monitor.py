@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Drive Sorveth's UART monitor over QEMU's Unix-domain serial socket."""
+import os
 import socket
 import sys
 import time
@@ -92,7 +93,12 @@ with connection, open(TRANSCRIPT_PATH, "wb") as evidence:
     tests = [
         (b"help\r", b"Commands: help status memory paging caps halt"),
         (b"statuz\x08s\r", b"Kernel: bootstrap monitor; no userspace or scheduler"),
-        (b"memory\r", b"Claims remain unmapped; lower page tables are inherited"),
+        (
+            b"memory\r",
+            b"Frame claims remain unreclaimed; active page tables are Sorveth-owned"
+            if os.environ.get("SORVETH_INDEPENDENT_ROOT") == "1"
+            else b"Claims remain unmapped; lower page tables are inherited",
+        ),
         (b"paging\r", b"Sorveth private mapped pages: 3"),
         (b"caps\r", b"Capability table: initialized; no isolated tasks yet"),
         (b"not-a-command\r", b"Unknown command; enter help"),
