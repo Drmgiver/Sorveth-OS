@@ -145,9 +145,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     // before attempting any independent supervisor root construction.
     match unsafe { supervisor_manifest::verify_loaded_image_extent(&map, boot) } {
         Ok(proof) if proof.image_pages > 0 && proof.executable_pages > 0 => {
-            serial::write_line(
-                "SORVETH M2-K.1d: full loaded image physical backing audited",
-            );
+            serial::write_line("SORVETH M2-K.1d: full loaded image physical backing audited");
             serial::write("Sorveth image pages: ");
             serial::write_u64(proof.image_pages);
             serial::write(" (legacy WX: ");

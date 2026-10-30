@@ -497,8 +497,8 @@ pub unsafe fn verify_loaded_image_extent(
         if leaf.user_accessible || leaf.physical_address != virtual_page {
             return Err(ManifestError::Permission);
         }
-        let provenance = uefi_type_of(map, virtual_page)?
-            .ok_or(ManifestError::UnknownPhysicalBacking)?;
+        let provenance =
+            uefi_type_of(map, virtual_page)?.ok_or(ManifestError::UnknownPhysicalBacking)?;
         if !allowed_critical_type(provenance) {
             return Err(ManifestError::UnsafeKernelMemoryType);
         }
