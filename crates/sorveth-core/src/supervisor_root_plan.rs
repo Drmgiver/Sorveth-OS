@@ -188,27 +188,27 @@ pub unsafe fn compile<const N: usize>(
             .virtual_page
             .checked_add(PAGE)
             .ok_or(Error::InvalidAddress)?;
-        let (writable, executable) =
-            if record.virtual_page >= boot.image_base && page_end <= image_end {
-                if record.physical_page != record.virtual_page {
-                    return Err(Error::NonIdentityImagePage);
-                }
-                let policy = layout.classify(record.virtual_page - boot.image_base);
-                let permissions = image_permissions(policy).ok_or(Error::UnclassifiedImagePage)?;
-                plan.image_records += 1;
-                permissions
-            } else if record.virtual_page < image_end && page_end > boot.image_base {
-                // A page straddling the PE boundary cannot be represented by
-                // either the image subtree or the external mapping plan.
-                return Err(Error::InvalidAddress);
-            } else {
-                let permissions =
-                    supervisor_permissions(record.kind).ok_or(Error::InvalidAddress)?;
-                if record.uefi_type.is_none_or(|kind| !(1..=4).contains(&kind)) {
-                    return Err(Error::MissingBacking);
-                }
-                permissions
-            };
+        let (writable, executable) = if record.virtual_page >= boot.image_base
+            && page_end <= image_end
+        {
+            if record.physical_page != record.virtual_page {
+                return Err(Error::NonIdentityImagePage);
+            }
+            let policy = layout.classify(record.virtual_page - boot.image_base);
+            let permissions = image_permissions(policy).ok_or(Error::UnclassifiedImagePage)?;
+            plan.image_records += 1;
+            permissions
+        } else if record.virtual_page < image_end && page_end > boot.image_base {
+            // A page straddling the PE boundary cannot be represented by
+            // either the image subtree or the external mapping plan.
+            return Err(Error::InvalidAddress);
+        } else {
+            let permissions = supervisor_permissions(record.kind).ok_or(Error::InvalidAddress)?;
+            if record.uefi_type.is_none_or(|kind| !(1..=4).contains(&kind)) {
+                return Err(Error::MissingBacking);
+            }
+            permissions
+        };
 
         // The new root may remove rights, but it cannot promise a right that
         // the current audited mapping did not have.
