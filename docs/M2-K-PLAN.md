@@ -386,3 +386,12 @@ not cover dynamic memory, the high-half frame window, optional MMIO or
 all kernel subsystems. Next: build and verify independent mappings for
 the supervisor survival set beyond the PE allocation, then adopt the
 new root persistently under a separate negative-tested QEMU mode.
+
+
+### K.1e bounded supervisor survival mapping plan
+
+A new allocation-free planner consumes the verified critical-page manifest and the validated PE section layout. It checks manifest pages inside the image against the section W^X policy and emits explicit target mappings for backed non-image supervisor pages. It rejects noncanonical or unaligned addresses, image aliases, unclassified image pages, unsupported UEFI backing, permission escalation and physical aliases. Framebuffer endpoints remain deferred because their cache policy is not specified.
+
+The existing QEMU manifest currently reports 77 image-resident supervisor records and two deferred framebuffer endpoint records. Therefore the non-image mapping list is validly empty; this result exposed that the bounded manifest still omits Sorveth's high-half frame-window subtree and its allocator-owned scratch mappings. The planner is not a page-table builder and no CR3 is changed. Host checks, UEFI cross-build, formatting and QEMU acceptance passed in [run 41006241220](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41006241220).
+
+**Next:** inventory the private high-half subtree and its claimed frame ownership, then extend the plan to cover those mappings before constructing a broader independent supervisor root. Dynamic frames and framebuffer cache attributes remain separate gates.
