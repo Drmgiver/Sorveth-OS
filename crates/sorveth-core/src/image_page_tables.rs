@@ -251,6 +251,76 @@ pub unsafe fn build_and_verify(boot: &BootInfo, map: &MemoryMap<'_>) -> Result<E
     Ok(evidence)
 }
 
+/// In one uninterrupted assembly sequence, transiently activate the
+/// image-only PML4, read the active CR3 and one word of the dedicated kernel
+/// stack, then restore the original PML4 before returning to Rust. If the
+/// candidate cannot execute code or read the stack it will fault in QEMU,
+/// and the acceptance marker cannot be emitted. It is NOT kept active.
+///
+/// # Safety
+/// Only on one CPU after a verified candidate has been built, with IRQs
+/// masked and the current stack wholly within the verified PE image.
+/// Never execute this routine on UEFI's abandoned external entry stack.
+/// No dynamic mappings, frame-window calls, or Rust callbacks occur while
+/// the temporary CR3 is active.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+pub unsafe fn verify_temporary_image_root(
+    image_base: u64,
+    image_size: u64,
+    stack_start: u64,
+    stack_end: u64,
+) -> Result<(), Error> {
+    if !BUILT.load(Ordering::Acquire) {
+        return Err(Error::InvalidImage);
+    }
+    let image_end = image_base.checked_add(image_size).ok_or(Error::InvalidImage)?;
+    let candidate = ptr::addr_of!(IMAGE_ROOT) as u64;
+    let original: u64;
+    let rsp: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) original, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if flags & (1 << 9) != 0
+        || crate::root::kernel_root_physical() != Some(original & ADDRESS_MASK)
+        || candidate == original & ADDRESS_MASK
+        || candidate & (PAGE - 1) != 0
+        || !(image_base <= candidate && candidate < image_end)
+        || !(image_base <= verify_temporary_image_root as usize as u64
+            && (verify_temporary_image_root as usize as u64) < image_end)
+        || !(image_base <= stack_start && stack_start < rsp && rsp < stack_end
+            && stack_end <= image_end)
+    {
+        return Err(Error::WrongCpuContext);
+    }
+
+    let observed_cr3: u64;
+    let observed_stack: u64;
+    // RAX saves the pre-transition CR3. No stack writes or software calls
+    // occur under the candidate root. Every instruction after MOV CR3 is
+    // fetched through the new PE-only hierarchy until restoration.
+    core::arch::asm!(
+        "mov rax, cr3",
+        "mov cr3, {candidate}",
+        "mov {observed_cr3}, cr3",
+        "mov {observed_stack}, qword ptr [rsp]",
+        "mov cr3, rax",
+        candidate = in(reg) candidate,
+        observed_cr3 = lateout(reg) observed_cr3,
+        observed_stack = lateout(reg) observed_stack,
+        out("rax") _,
+        options(nostack, preserves_flags)
+    );
+    let restored: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+    let _ = observed_stack;
+    if observed_cr3 & ADDRESS_MASK != candidate || restored != original {
+        return Err(Error::ValidationFailed);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

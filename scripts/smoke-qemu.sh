@@ -105,6 +105,7 @@ for marker in \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
+  'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -175,6 +176,7 @@ for marker in \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
+  'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -238,6 +240,7 @@ for marker in \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
+  'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -306,6 +309,7 @@ for side in a b; do
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
+  'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -363,6 +367,7 @@ for side in a b; do
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
+  'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \

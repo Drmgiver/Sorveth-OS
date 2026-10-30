@@ -76,6 +76,26 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("Sorveth dedicated kernel stack: active");
+    // K.1d controlled QEMU proof: briefly run on the image-only root while
+    // already on Sorveth's own PE-resident stack, and restore the prior
+    // inherited lower-level root before any other kernel operation.
+    let boot_info = unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_BOOT)) };
+    let root_test = match boot_info {
+        Some(info) => unsafe {
+            crate::image_page_tables::verify_temporary_image_root(
+                info.image_base, info.image_size, base, end,
+            )
+        },
+        None => Err(crate::image_page_tables::Error::InvalidImage),
+    };
+    if root_test.is_err() {
+        crate::serial::write_line("FATAL: temporary PE-only CR3 transition failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified",
+    );
+
     // K.1d read-only survival inventory: no root is replaced here. Require
     // trusted, supervisor-only live mappings of code, CPU tables and every
     // page of the kernel, worker, fault and trap stacks before future work

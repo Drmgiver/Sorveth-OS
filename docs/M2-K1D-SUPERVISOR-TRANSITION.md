@@ -233,3 +233,22 @@ frame-window addresses and does not yet establish independent physical
 frame lifetime. No new page tables are activated, no legacy OVMF entries
 are removed, and no frame reclamation is permitted. The full QEMU smoke
 matrix must observe its construction-and-walk marker before proceeding.
+
+
+### Temporary image-only CR3 transition (controlled QEMU acceptance)
+
+After the permanent kernel stack is active, one non-inlined kernel routine
+checks the candidate's physical root, exact PE bounds, live RSP and IF=0.
+A single uninterrupted x86-64 assembly sequence saves the old CR3, loads
+the separately constructed image-only PML4, reads back CR3 and a word of
+the active kernel stack, then restores the original root. No Rust function,
+interrupt, heap operation or temporary physical-window access executes
+while the image-only root is active. A failure cannot produce the required
+QEMU marker. The existing normal, fault, ring-3 and A/B paths must still
+complete after the transition.
+
+This proves a tightly bounded **temporary hardware CR3 transition through
+independent PE image page tables**. It is not a permanent new root. The
+image-only root intentionally lacks Sorveth's general frame window,
+non-image memory, dynamic user pages and complete device mappings; the
+firmware-sharing kernel root is restored before the rest of boot proceeds.
