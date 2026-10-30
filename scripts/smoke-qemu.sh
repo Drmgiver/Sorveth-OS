@@ -36,10 +36,24 @@ build_qemu_image() {
 }
 require_independent_root_marker() {
   local log_file="$1"
-  if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]] &&
-    ! grep -Fq 'SORVETH M2-K.1d: independent candidate root active without firmware tables' "$log_file"; then
-    echo "Independent-root boot failed: missing marker in $log_file" >&2
-    exit 1
+  if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]]; then
+    for marker in \
+      'SORVETH M2-K.1d: independent candidate root active without firmware tables' \
+      'SORVETH M2-K.1r: inherited firmware table ancestry absent from active process roots'; do
+      if ! grep -Fq "$marker" "$log_file"; then
+        echo "Independent-root boot failed: missing marker: $marker in $log_file" >&2
+        exit 1
+      fi
+    done
+  else
+    for marker in \
+      'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
+      'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry'; do
+      if ! grep -Fq "$marker" "$log_file"; then
+        echo "Inherited-root boot failed: missing marker: $marker in $log_file" >&2
+        exit 1
+      fi
+    done
   fi
 }
 
@@ -129,8 +143,6 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
-  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
-  'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
   'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -210,8 +222,6 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
-  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
-  'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
   'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -284,8 +294,6 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
-  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
-  'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
   'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -362,8 +370,6 @@ for side in a b; do
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
-  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
-  'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
   'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
@@ -429,8 +435,6 @@ for side in a b; do
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
-  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
-  'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
   'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \

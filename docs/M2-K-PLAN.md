@@ -588,7 +588,8 @@ kernel root and updates the trusted active-root record before process roots
 are created. The dedicated CI job runs the full normal, fault, ring-3, A/B
 isolation, A/B transfer and monitor acceptance suites with that root active.
 
-This is a test-only transition checkpoint, not yet K.1d completion. CI must
-prove the candidate remains active through every suite, and the transition
-plan's deliberate missing/USER/W+X mapping denial cases remain to be added
-before closing K.1d or beginning K.2.
+This is a test-only transition checkpoint, not yet K.1d completion. Host
+policy tests deny missing, USER and writable-executable leaves, and candidate
+construction checks every required plan mapping. CI must still prove the
+candidate remains active through every suite before closing K.1d or beginning
+K.2.
