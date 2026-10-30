@@ -172,9 +172,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             } {
                 Ok(plan) if plan.image_records() > 0 && plan.mapping_count() > 0 => plan,
                 _ => {
-                    crate::serial::write_line(
-                        "FATAL: supervisor survival mapping plan failed",
-                    );
+                    crate::serial::write_line("FATAL: supervisor survival mapping plan failed");
                     crate::halt_forever();
                 }
             };
