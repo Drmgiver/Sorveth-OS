@@ -192,6 +192,26 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
     }
+    let private_window = match unsafe {
+        crate::root::audit_private_window(&crate::FRAME_POOL)
+    } {
+        Ok(evidence) => evidence,
+        Err(_) => {
+            crate::serial::write_line("FATAL: private high-half frame ownership audit failed");
+            crate::halt_forever();
+        }
+    };
+    crate::serial::write_line(
+        "SORVETH M2-K.1f: private high-half scratch mappings are allocator-owned",
+    );
+    crate::serial::write("Sorveth private-window scratch pages: ");
+    crate::serial::write_u64(private_window.mapped_pages);
+    crate::serial::write(" (range ");
+    crate::serial::write_u64(private_window.first_virtual_page);
+    crate::serial::write("..");
+    crate::serial::write_u64(private_window.last_virtual_page);
+    crate::serial::write_line(")");
+
     if !crate::fibers::verify_roundtrip() {
         crate::serial::write_line("FATAL: native kernel context switch failed");
         crate::halt_forever();

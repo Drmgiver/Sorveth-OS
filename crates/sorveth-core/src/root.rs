@@ -544,6 +544,112 @@ pub(crate) fn kernel_private_address() -> Option<u64> {
     }
 }
 
+/// Summary of the idle private high-half frame window after its PTEs have
+/// been matched to allocator ownership claims.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrivateWindowEvidence {
+    pub base: u64,
+    pub mapped_pages: u64,
+    pub first_virtual_page: u64,
+    pub last_virtual_page: u64,
+}
+
+/// Audit every present private-window leaf. Slot 1 remains the guard page,
+/// slot 510 is the page-table self-alias, and slot 511 must be empty while
+/// the temporary physical-frame window is idle.
+///
+/// # Safety
+/// One CPU, kernel CR3 active, IF=0, no concurrent frame claims or PTE edits.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn audit_private_window(
+    pool: &FramePool<256>,
+) -> Result<PrivateWindowEvidence, Error> {
+    let root = kernel_root_physical().ok_or(Error::RootNotInstalled)?;
+    let base = kernel_private_address().ok_or(Error::RootNotInstalled)?;
+    let active: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & ADDRESS_MASK != root || flags & (1 << 9) != 0 {
+        return Err(Error::WrongCpuContext);
+    }
+    if base & 4095 != 0 || base >> 39 & 511 < 256 {
+        return Err(Error::VerificationFailed);
+    }
+
+    let table_alias = base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096;
+    let table_frame = ptr::addr_of!(SORVETH_PT) as u64;
+    if table_frame & 4095 != 0
+        || !identity_mapped(table_frame)
+        || translate(root, table_alias, |address| {
+            Some(ptr::read_volatile(address as *const u64))
+        }) != Some(table_frame)
+    {
+        return Err(Error::VerificationFailed);
+    }
+
+    let entries = table_alias as *const u64;
+    let self_entry = ptr::read_volatile(entries.add(PRIVATE_PT_ALIAS_INDEX));
+    let self_mask = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
+    if self_entry & self_mask != table_frame | PRESENT | WRITE | NO_EXECUTE
+        || ptr::read_volatile(entries.add(PHYSICAL_WINDOW_INDEX)) != 0
+        || ptr::read_volatile(entries.add(1)) != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+
+    let allowed = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
+    let mut count = 0u64;
+    let mut first = 0;
+    let mut last = 0;
+    for slot in 0..PRIVATE_PT_ALIAS_INDEX {
+        if slot == 1 {
+            continue;
+        }
+        let entry = ptr::read_volatile(entries.add(slot));
+        if entry & PRESENT == 0 {
+            if entry != 0 {
+                return Err(Error::VerificationFailed);
+            }
+            continue;
+        }
+        if entry & !allowed != 0
+            || entry & (PRESENT | WRITE | NO_EXECUTE) != PRESENT | WRITE | NO_EXECUTE
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let physical = entry & ADDRESS_MASK;
+        if physical == 0 || !pool.owns_frame(physical).map_err(|_| Error::FrameUnavailable)? {
+            return Err(Error::FrameUnavailable);
+        }
+        for prior in 0..slot {
+            if prior == 1 {
+                continue;
+            }
+            let prior_entry = ptr::read_volatile(entries.add(prior));
+            if prior_entry & PRESENT != 0 && prior_entry & ADDRESS_MASK == physical {
+                return Err(Error::VerificationFailed);
+            }
+        }
+        let virtual_page = base + slot as u64 * 4096;
+        if count == 0 {
+            first = virtual_page;
+        }
+        last = virtual_page;
+        count += 1;
+    }
+
+    if count == 0 || count != private_pages() {
+        return Err(Error::VerificationFailed);
+    }
+    Ok(PrivateWindowEvidence {
+        base,
+        mapped_pages: count,
+        first_virtual_page: first,
+        last_virtual_page: last,
+    })
+}
+
 /// The bootstrap can only use static PML4 pages as CR3 if their physical
 /// addresses remain accessible through OVMF's verified identity mapping.
 #[cfg(target_arch = "x86_64")]

@@ -31,6 +31,7 @@ pub enum Error {
     TooManyRegions,
     OutOfMemory,
     ReservationsClosed,
+    ClaimLedgerFull,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +54,8 @@ pub struct FrameAllocator<const N: usize> {
     used: usize,
     available_pages: u64,
     allocations_started: bool,
+    claims: [Option<PhysSpan>; N],
+    claim_count: usize,
 }
 
 impl<const N: usize> FrameAllocator<N> {
@@ -65,6 +68,8 @@ impl<const N: usize> FrameAllocator<N> {
             used: 0,
             available_pages: 0,
             allocations_started: false,
+            claims: [None; N],
+            claim_count: 0,
         };
 
         for entry in map.descriptors() {
@@ -127,6 +132,31 @@ impl<const N: usize> FrameAllocator<N> {
     }
     pub fn region_count(&self) -> usize {
         self.used
+    }
+
+    /// Number of irreversible spans claimed from conventional memory.
+    pub fn claim_count(&self) -> usize {
+        self.claim_count
+    }
+
+    /// Return one recorded claim without exposing allocator internals.
+    pub fn claim_at(&self, index: usize) -> Option<PhysSpan> {
+        if index < self.claim_count {
+            self.claims[index]
+        } else {
+            None
+        }
+    }
+
+    /// Whether an aligned physical page belongs to any recorded claim.
+    pub fn owns_frame(&self, frame: u64) -> bool {
+        if frame % PAGE_BYTES != 0 {
+            return false;
+        }
+        self.claims[..self.claim_count]
+            .iter()
+            .flatten()
+            .any(|span| frame >= span.start && frame < span.end_exclusive())
     }
 
     /// Prevent future allocation of a physical range. This must complete
@@ -212,6 +242,9 @@ impl<const N: usize> FrameAllocator<N> {
         for index in 0..self.used {
             let range = self.regions[index];
             if range.pages() >= pages {
+                if self.claim_count == N {
+                    return Err(Error::ClaimLedgerFull);
+                }
                 let bytes = pages.checked_mul(PAGE_BYTES).ok_or(Error::InvalidRange)?;
                 let start = range.start;
                 // A failed request must not lock out later reservations.
@@ -223,7 +256,10 @@ impl<const N: usize> FrameAllocator<N> {
                     self.regions[index] = self.regions[self.used];
                     self.regions[self.used] = Region::EMPTY;
                 }
-                return Ok(PhysSpan { start, pages });
+                let claim = PhysSpan { start, pages };
+                self.claims[self.claim_count] = Some(claim);
+                self.claim_count += 1;
+                return Ok(claim);
             }
         }
         Err(Error::OutOfMemory)
@@ -322,6 +358,25 @@ impl<const N: usize> FramePool<N> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
         allocator.allocate(pages).map_err(PoolError::Allocation)
+    }
+
+    /// Number of persistent physical claims, including claims made before
+    /// the ledger was installed into this pool.
+    pub fn claim_count(&self) -> Result<usize, PoolError> {
+        let mut guard = self.lock();
+        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.claim_count())
+    }
+
+    /// Read a claim span from the ownership ledger.
+    pub fn claim_at(&self, index: usize) -> Result<Option<PhysSpan>, PoolError> {
+        let mut guard = self.lock();
+        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.claim_at(index))
+    }
+
+    /// Check whether one aligned page belongs to a recorded Sorveth claim.
+    pub fn owns_frame(&self, frame: u64) -> Result<bool, PoolError> {
+        let mut guard = self.lock();
+        Ok(guard.state().as_ref().ok_or(PoolError::NotInstalled)?.owns_frame(frame))
     }
 }
 

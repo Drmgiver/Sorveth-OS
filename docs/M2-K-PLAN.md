@@ -395,3 +395,10 @@ A new allocation-free planner consumes the verified critical-page manifest and t
 Across the seven QEMU variants, the manifest reports 77–86 image-resident supervisor records and two deferred framebuffer endpoint records per run. Therefore the non-image mapping list is validly empty; this result exposed that the bounded manifest still omits Sorveth's high-half frame-window subtree and its allocator-owned scratch mappings. The planner is not a page-table builder and no CR3 is changed. Host checks, UEFI cross-build, formatting and QEMU acceptance passed in [run 41006241220](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41006241220).
 
 **Next:** inventory the private high-half subtree and its claimed frame ownership, then extend the plan to cover those mappings before constructing a broader independent supervisor root. Dynamic frames and framebuffer cache attributes remain separate gates.
+
+
+### K.1f private high-half frame-window ownership audit
+
+The frame allocator now retains a bounded ledger of every irreversible allocation claim. The private high-half audit walks Sorveth's existing PT, verifies the self-alias points to the owned table, requires the guard and transient physical-window slots to be absent, and checks that every present supervisor RW/NX scratch leaf maps a distinct page in the allocator's claim ledger. This is an inventory and ownership proof only; it does not copy the high-half subtree into the independent image root or activate that root.
+
+The QEMU gate requires the audit marker across all variants. Next: feed the verified self-alias and scratch mappings into the independent-root plan, preserving ownership and permission checks, then test that expanded root while it remains inactive.

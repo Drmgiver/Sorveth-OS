@@ -635,3 +635,13 @@ checkpoint, NOT a completed standalone kernel address space.
 - No new page tables were installed and CR3 behavior is unchanged. Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41006241220
 
 M2-K.1 remains partial. Next work is to inventory and ownership-check the private high-half mappings before extending the independent-root plan.
+
+
+## 2026-10-30 — M2-K.1f private high-half frame-window ownership
+
+- The physical allocator now records each irreversible claimed span and exposes bounded ownership queries through the persistent frame pool.
+- Added a fail-closed walk of Sorveth's private high-half PT. It verifies the PT self-alias, an absent guard slot, an idle/absent temporary physical-window slot, supervisor RW/NX permissions, unique physical backing, and allocator ownership of every present scratch page.
+- The boot path requires the ownership audit marker. This does not install the high-half subtree in the independent image root and does not change CR3.
+- The next step is to add these audited aliases and owned scratch pages to the independent-root plan, then verify the expanded inactive root.
+
+M2-K.1 remains partial; no dynamic frame reclamation or persistent independent root is claimed.
