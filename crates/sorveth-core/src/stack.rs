@@ -248,7 +248,8 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     mapping.kind == crate::supervisor_manifest::Kind::KernelPaging
                         && ((mapping.virtual_page >> 12) & 511) == 510
                 });
-            let private_base = alias.and_then(|mapping| mapping.virtual_page.checked_sub(510 * 4096));
+            let private_base =
+                alias.and_then(|mapping| mapping.virtual_page.checked_sub(510 * 4096));
             let probe_frame = private_base.and_then(|window| {
                 (0..plan.mapping_count())
                     .filter_map(|index| plan.mapping(index))
