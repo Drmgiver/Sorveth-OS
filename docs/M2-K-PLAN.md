@@ -462,10 +462,9 @@ for PAT selection and memory-type rules.
 Host checks, UEFI cross-build, formatting and QEMU passed in
 [run 41010104216](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216).
 
-**Next:** walk the runtime survival manifest against the expanded candidate,
-then briefly activate and restore that candidate under a dedicated QEMU
-acceptance gate. Persistent CR3 migration remains blocked on dynamic mapping
-lifecycle and a complete dependency inventory.
+**Next:** exercise the candidate's dynamic physical-frame window and cleanup
+lifecycle. Persistent CR3 migration remains blocked on general dynamic
+mapping lifecycle and a complete dependency inventory.
 
 
 
@@ -498,3 +497,17 @@ returning to Rust. QEMU must observe both the manifest-coverage marker and the
 CR3 restoration marker. This proves the captured boot survival set can execute
 through the candidate; it does not establish complete dynamic runtime
 coverage or leave the candidate active.
+
+
+### K.1l temporary candidate physical-window lifecycle
+
+After the K.1k manifest walk, the kernel selects an allocator-owned writable
+NX scratch page and saves its first word. It writes a sentinel through the
+current Sorveth physical window, installs a candidate-only PTE in the expanded
+root's previously empty slot 511, then briefly activates that root. One atomic
+assembly sequence invalidates the alias, reads the sentinel, clears the PTE
+through the candidate's PT self-alias, invalidates it again, and restores the
+old CR3. Back on the original root, the kernel verifies the candidate PTE is
+empty and restores the scratch word. Every QEMU boot variant must report this
+marker. This probes one temporary mapping lifecycle; it does not make the
+window concurrent, reclaimable, or ready for persistent root migration.

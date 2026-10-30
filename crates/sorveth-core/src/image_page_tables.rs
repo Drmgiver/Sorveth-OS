@@ -27,6 +27,7 @@ const PWT: u64 = 1 << 3;
 const PCD: u64 = 1 << 4;
 const LARGE: u64 = 1 << 7;
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
+const SURVIVAL_WINDOW_WORD: u64 = 0x4b31_6c57_494e_21;
 // The first 128 PT frames cover the PE image and the bounded framebuffer.
 // The rest form a bounded pool for planner mappings at arbitrary addresses.
 const MAX_PT: usize = 768;
@@ -980,8 +981,9 @@ unsafe fn build_and_verify_framebuffer<const N: usize>(
 /// Only on one CPU after a verified candidate has been built, with IRQs
 /// masked and the current stack wholly within the verified PE image.
 /// Never execute this routine on UEFI's abandoned external entry stack.
-/// No dynamic mappings, frame-window calls, or Rust callbacks occur while
-/// the temporary CR3 is active.
+/// This image-only probe makes no dynamic mappings or Rust calls while the
+/// temporary CR3 is active. The expanded-root probe has its own controlled
+/// frame-window lifecycle sequence.
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
 pub unsafe fn verify_temporary_image_root(
@@ -990,7 +992,7 @@ pub unsafe fn verify_temporary_image_root(
     stack_start: u64,
     stack_end: u64,
 ) -> Result<(), Error> {
-    verify_temporary_root(false, image_base, image_size, stack_start, stack_end)
+    verify_temporary_root(false, image_base, image_size, stack_start, stack_end, None)
 }
 
 /// Temporarily run the same atomic CR3/stack probe under the expanded
@@ -1002,8 +1004,17 @@ pub unsafe fn verify_temporary_survival_root(
     image_size: u64,
     stack_start: u64,
     stack_end: u64,
+    window_base: u64,
+    probe_frame: u64,
 ) -> Result<(), Error> {
-    verify_temporary_root(true, image_base, image_size, stack_start, stack_end)
+    verify_temporary_root(
+        true,
+        image_base,
+        image_size,
+        stack_start,
+        stack_end,
+        Some((window_base, probe_frame)),
+    )
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1014,6 +1025,7 @@ unsafe fn verify_temporary_root(
     image_size: u64,
     stack_start: u64,
     stack_end: u64,
+    window_probe: Option<(u64, u64)>,
 ) -> Result<(), Error> {
     if !BUILT.load(Ordering::Acquire)
         || require_survival_plan && !WINDOW_BUILT.load(Ordering::Acquire)
@@ -1045,26 +1057,94 @@ unsafe fn verify_temporary_root(
         return Err(Error::WrongCpuContext);
     }
 
+    let window_probe_state = if let Some((window_base, probe_frame)) = window_probe {
+        let window_address = window_base + 511 * PAGE;
+        let self_alias = window_base + 510 * PAGE;
+        let self_alias_pte = self_alias + 511 * core::mem::size_of::<u64>() as u64;
+        if window_base & (PAGE - 1) != 0
+            || probe_frame == 0
+            || probe_frame & (PAGE - 1) != 0
+            || !crate::root::identity_mapped(ptr::addr_of!(WINDOW_PT) as u64)
+        {
+            return Err(Error::UnsupportedPlan);
+        }
+        let pte = (ptr::addr_of_mut!(WINDOW_PT) as *mut u64).add(511);
+        if ptr::read_volatile(pte) != 0 {
+            return Err(Error::WindowCollision);
+        }
+        let previous = crate::root::with_physical_window(probe_frame, |window| {
+            let word = ptr::read_volatile(window as *const u64);
+            ptr::write_volatile(window as *mut u64, SURVIVAL_WINDOW_WORD);
+            word
+        })
+        .map_err(|_| Error::ValidationFailed)?;
+        ptr::write_volatile(pte, probe_frame | PRESENT | WRITE | NX);
+        Some((window_address, self_alias_pte, pte, probe_frame, previous))
+    } else {
+        None
+    };
+
     let observed_cr3: u64;
     let observed_stack: u64;
-    // RAX saves the pre-transition CR3. No stack writes or software calls
-    // occur under the candidate root. Every instruction after MOV CR3 is
-    // fetched through the new PE-only hierarchy until restoration.
-    core::arch::asm!(
-        "mov rax, cr3",
-        "mov cr3, {candidate}",
-        "mov {observed_cr3}, cr3",
-        "mov {observed_stack}, qword ptr [rsp]",
-        "mov cr3, rax",
-        candidate = in(reg) candidate,
-        observed_cr3 = lateout(reg) observed_cr3,
-        observed_stack = lateout(reg) observed_stack,
-        out("rax") _,
-        options(nostack, preserves_flags)
-    );
+    let observed_window: u64;
     let restored: u64;
-    core::arch::asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+    if let Some((window_address, self_alias_pte, _, _, _)) = window_probe_state {
+        // No Rust calls or stack writes occur while the candidate root is
+        // active. The sentinel read exercises the dynamic leaf; the PTE is
+        // then cleared through the candidate's own PT self-alias.
+        core::arch::asm!(
+            "mov rax, cr3",
+            "mov cr3, {candidate}",
+            "invlpg [{window_address}]",
+            "mov {observed_cr3}, cr3",
+            "mov {observed_stack}, qword ptr [rsp]",
+            "mov {observed_window}, qword ptr [{window_address}]",
+            "mov qword ptr [{self_alias_pte}], 0",
+            "invlpg [{window_address}]",
+            "mov cr3, rax",
+            candidate = in(reg) candidate,
+            window_address = in(reg) window_address,
+            self_alias_pte = in(reg) self_alias_pte,
+            observed_cr3 = out(reg) observed_cr3,
+            observed_stack = out(reg) observed_stack,
+            observed_window = out(reg) observed_window,
+            out("rax") _,
+            options(nostack, preserves_flags)
+        );
+        core::arch::asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+    } else {
+        observed_window = 0;
+        core::arch::asm!(
+            "mov rax, cr3",
+            "mov cr3, {candidate}",
+            "mov {observed_cr3}, cr3",
+            "mov {observed_stack}, qword ptr [rsp]",
+            "mov cr3, rax",
+            candidate = in(reg) candidate,
+            observed_cr3 = lateout(reg) observed_cr3,
+            observed_stack = lateout(reg) observed_stack,
+            out("rax") _,
+            options(nostack, preserves_flags)
+        );
+        core::arch::asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+    }
+
     let _ = observed_stack;
+    if let Some((_, _, pte, probe_frame, previous)) = window_probe_state {
+        let cleared = ptr::read_volatile(pte) == 0;
+        if !cleared {
+            ptr::write_volatile(pte, 0);
+        }
+        let restored_word = crate::root::with_physical_window(probe_frame, |window| {
+            ptr::write_volatile(window as *mut u64, previous);
+        });
+        if restored_word.is_err() {
+            return Err(Error::ValidationFailed);
+        }
+        if !cleared || observed_window != SURVIVAL_WINDOW_WORD {
+            return Err(Error::ValidationFailed);
+        }
+    }
     if observed_cr3 & ADDRESS_MASK != candidate || restored != original {
         return Err(Error::ValidationFailed);
     }

@@ -109,6 +109,7 @@ for marker in \
   'SORVETH M2-K.1j: inactive complete planned mappings verified' \
   'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
   'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
+  'SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -183,6 +184,7 @@ for marker in \
   'SORVETH M2-K.1j: inactive complete planned mappings verified' \
   'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
   'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
+  'SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -250,6 +252,7 @@ for marker in \
   'SORVETH M2-K.1j: inactive complete planned mappings verified' \
   'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
   'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
+  'SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -322,6 +325,7 @@ for side in a b; do
   'SORVETH M2-K.1j: inactive complete planned mappings verified' \
   'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
   'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
+  'SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -383,6 +387,7 @@ for side in a b; do
   'SORVETH M2-K.1j: inactive complete planned mappings verified' \
   'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
   'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
+  'SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \

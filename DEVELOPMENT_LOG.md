@@ -689,3 +689,9 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - The expanded candidate now walks every record in the captured runtime survival manifest. PE pages use the section W^X policy, non-image pages must match the plan, and device endpoints must lie in the verified UC framebuffer range.
 - Added a second atomic CR3 probe after candidate construction. It briefly executes and reads the owned stack under the expanded candidate, then restores the inherited Sorveth root before returning to Rust. The earlier PE-only probe remains as a separate checkpoint.
 - The full candidate is never kept active. This verifies the captured bootstrap survival set, not all dynamic or future kernel dependencies.
+
+
+## 2026-10-30 — M2-K.1l candidate frame-window lifecycle probe
+
+- Added a candidate-only temporary physical-window probe using one allocator-owned RW/NX scratch frame. It saves and restores the frame's original word, reads a sentinel through candidate slot 511, clears the PTE through the candidate's self-alias, invalidates the TLB entry, and restores the original CR3 in the same assembly block.
+- The QEMU acceptance matrix now requires the lifecycle marker. The active Sorveth root is never modified by this probe; it does not prove general or concurrent frame-window operation.
