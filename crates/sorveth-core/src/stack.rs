@@ -367,6 +367,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     match unsafe { crate::process_roots::audit_inherited_page_tables(&map) } {
         Ok(inventory) => {
             crate::serial::write_line(
+                "SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry",
+            );
+            crate::serial::write_line(
                 "SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots",
             );
             crate::serial::write("Sorveth inherited table frames: ");

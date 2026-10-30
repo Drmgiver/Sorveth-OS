@@ -123,6 +123,7 @@ pub enum Error {
     SupervisorMappingMismatch,
     InheritedTableInventoryFailed,
     InheritedTableInventoryFull,
+    InheritedRootAncestryMismatch,
 }
 
 /// Bounded facts about the inherited page-table ancestry reachable from
@@ -495,6 +496,37 @@ pub(crate) unsafe fn audit_inherited_page_tables(
         return Err(Error::KernelUnavailable);
     }
 
+    let roots = [
+        process_root(Process::First)
+            .map(|(root, _)| root)
+            .ok_or(Error::KernelUnavailable)?,
+        process_root(Process::Second)
+            .map(|(root, _)| root)
+            .ok_or(Error::KernelUnavailable)?,
+    ];
+    if roots[0] == roots[1] || roots[0] == kernel || roots[1] == kernel {
+        return Err(Error::InheritedRootAncestryMismatch);
+    }
+    let mut expected_root = [0u64; 512];
+    let mut observed_root = [0u64; 512];
+    if !crate::root::read_bootstrap_supervisor_table(kernel, &mut expected_root) {
+        return Err(Error::InheritedRootAncestryMismatch);
+    }
+    for entry in &mut expected_root {
+        if *entry & PRESENT == 0 {
+            *entry = 0;
+        } else {
+            *entry &= !USER;
+        }
+    }
+    for root in roots {
+        if !crate::root::read_bootstrap_supervisor_table(root, &mut observed_root)
+            || observed_root != expected_root
+        {
+            return Err(Error::InheritedRootAncestryMismatch);
+        }
+    }
+
     ptr::write_volatile(ptr::addr_of_mut!(INHERITED_TABLE_COUNT), 0);
     ptr::write_bytes(
         ptr::addr_of_mut!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>(),
@@ -504,24 +536,48 @@ pub(crate) unsafe fn audit_inherited_page_tables(
     ptr::write_volatile(ptr::addr_of_mut!(INHERITED_OTHER_UEFI_TYPES), 0);
 
     for (process, root_bit) in [(Process::First, 1u8), (Process::Second, 2u8)] {
-        let root = process_root(process)
-            .map(|(root, _)| root)
-            .ok_or(Error::KernelUnavailable)?;
-        if root == kernel {
-            return Err(Error::VerificationFailed);
-        }
+        let root = roots[match process {
+            Process::First => 0,
+            Process::Second => 1,
+        }];
         inventory_inherited_table(root, 4, root_bit, map)?;
     }
 
     let tables = ptr::addr_of!(INHERITED_TABLES).cast::<InheritedTableFrame>();
     let count = ptr::read_volatile(ptr::addr_of!(INHERITED_TABLE_COUNT));
     let mut shared = 0usize;
+    let mut distinct_roots = 0usize;
     for index in 0..INHERITED_TABLE_CAPACITY {
-        if ptr::read_volatile(ptr::addr_of!((*tables.add(index)).roots)) == 3 {
+        let record = tables.add(index);
+        let physical = ptr::read_volatile(ptr::addr_of!((*record).physical));
+        if physical == 0 {
+            continue;
+        }
+        let roots_seen = ptr::read_volatile(ptr::addr_of!((*record).roots));
+        let visits = ptr::read_volatile(ptr::addr_of!((*record).visits));
+        if physical == roots[0] || physical == roots[1] {
+            let expected_root_mask = if physical == roots[0] { 1 } else { 2 };
+            let expected_visit = if physical == roots[0] { 1 << 6 } else { 1 << 7 };
+            if roots_seen != expected_root_mask || visits != expected_visit {
+                return Err(Error::InheritedRootAncestryMismatch);
+            }
+            distinct_roots += 1;
+        } else {
+            let first_root_visits = visits & 0x55;
+            let second_root_visits = (visits >> 1) & 0x55;
+            if roots_seen != 3
+                || first_root_visits == 0
+                || first_root_visits != second_root_visits
+            {
+                return Err(Error::InheritedRootAncestryMismatch);
+            }
             shared = shared
                 .checked_add(1)
                 .ok_or(Error::InheritedTableInventoryFailed)?;
         }
+    }
+    if distinct_roots != 2 || shared.checked_add(2) != Some(count) {
+        return Err(Error::InheritedRootAncestryMismatch);
     }
     let mut uefi_type_counts = [0u16; 16];
     ptr::copy_nonoverlapping(

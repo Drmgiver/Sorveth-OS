@@ -564,3 +564,14 @@ covering descriptor; malformed entries or capacity exhaustion stop boot.
 Descriptor types are provenance only, not evidence of Sorveth ownership.
 This inventories the current ancestry and does not replace inherited tables
 or prove that their mappings are safe to retain in a future independent root.
+
+
+### K.1q process-root clone and shared-ancestry invariant
+
+The ancestry audit first compares both process PML4 pages against the active
+kernel PML4 after clearing USER on each present kernel entry and zeroing absent
+entries. It then verifies that the two process roots are the only table frames
+not shared across both trees, and that every shared table is reached at the
+same paging levels in both roots. This runs before process-private user
+subtrees are attached. It detects accidental divergence in the current clone
+model; it does not make the inherited lower-level tables owned or independent.
