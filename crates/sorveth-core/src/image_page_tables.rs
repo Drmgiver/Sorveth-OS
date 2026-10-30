@@ -6,7 +6,10 @@
 //! tables. A later milestone must supply all non-image supervisor regions,
 //! proper lifetime ownership, and an independently tested CR3 transition.
 
-use crate::{image_sections, supervisor_audit, supervisor_manifest};
+use crate::{
+    image_sections, supervisor_audit, supervisor_manifest,
+    supervisor_root_plan::{Mapping, Plan},
+};
 use sorveth_abi::BootInfo;
 use sorveth_memory::MemoryMap;
 
@@ -34,6 +37,8 @@ pub enum Error {
     TooManyPageTables,
     AlreadyBuilt,
     ValidationFailed,
+    UnsupportedPlan,
+    WindowCollision,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +63,15 @@ static mut IMAGE_PD: Table = Table([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static mut IMAGE_PTS: [Table; MAX_PT] = [const { Table([0; 512]) }; MAX_PT];
 #[cfg(target_arch = "x86_64")]
+static mut WINDOW_PDPT: Table = Table([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut WINDOW_PD: Table = Table([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut WINDOW_PT: Table = Table([0; 512]);
+#[cfg(target_arch = "x86_64")]
 static BUILT: AtomicBool = AtomicBool::new(false);
+#[cfg(target_arch = "x86_64")]
+static WINDOW_BUILT: AtomicBool = AtomicBool::new(false);
 
 fn leaf_flags(policy: image_sections::PagePolicy) -> Option<u64> {
     match policy {
@@ -249,6 +262,220 @@ pub unsafe fn build_and_verify(boot: &BootInfo, map: &MemoryMap<'_>) -> Result<E
         return Err(Error::ValidationFailed);
     }
     Ok(evidence)
+}
+
+
+/// Read an entry from either the image candidate hierarchy or the newly
+/// constructed private-window subtree, using only explicitly owned table
+/// frames through the active root's restricted frame window.
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_extended_candidate_entry(
+    address: u64,
+    root: u64,
+    pdpt: u64,
+    pd: u64,
+    pts: u64,
+    used: usize,
+    window_pdpt: u64,
+    window_pd: u64,
+    window_pt: u64,
+) -> Option<u64> {
+    let frame = address & !(PAGE - 1);
+    if address & 7 != 0
+        || !(frame == root
+            || frame == pdpt
+            || frame == pd
+            || (frame >= pts
+                && frame < pts + used as u64 * PAGE
+                && (frame - pts) & (PAGE - 1) == 0)
+            || frame == window_pdpt
+            || frame == window_pd
+            || frame == window_pt)
+    {
+        return None;
+    }
+    crate::root::with_physical_window(frame, |window| {
+        ptr::read_volatile(window.add((address - frame) as usize) as *const u64)
+    })
+    .ok()
+}
+
+/// Add a separately owned high-half PDPT/PD/PT branch to the already verified
+/// PE image candidate, then walk every private-window leaf through the
+/// restricted physical-frame reader. The PT self-alias is rebound to this
+/// candidate's own PT frame; it must not point back to the active root's PT.
+///
+/// This only mutates inactive candidate tables and never loads them into CR3.
+///
+/// # Safety
+/// Single CPU on the active Sorveth kernel root, IF=0, after the PE-only
+/// candidate and the private-window ownership plan have both been verified.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn extend_and_verify_private_window<const N: usize>(
+    boot: &BootInfo,
+    plan: &Plan<N>,
+) -> Result<usize, Error> {
+    if !BUILT.load(Ordering::Acquire)
+        || WINDOW_BUILT.swap(true, Ordering::AcqRel)
+        || !boot.is_valid()
+        || plan.private_window_records() == 0
+        || plan.private_window_records() != plan.mapping_count()
+    {
+        return Err(Error::UnsupportedPlan);
+    }
+
+    let active: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    let root = ptr::addr_of_mut!(IMAGE_ROOT) as u64;
+    if flags & (1 << 9) != 0
+        || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK)
+        || root == (active & ADDRESS_MASK)
+    {
+        return Err(Error::WrongCpuContext);
+    }
+
+    let alias = (0..plan.mapping_count())
+        .filter_map(|index| plan.mapping(index))
+        .find(|mapping| mapping.kind == crate::supervisor_manifest::Kind::KernelPaging)
+        .ok_or(Error::UnsupportedPlan)?;
+    let window_base = alias
+        .virtual_page
+        .checked_sub(510 * PAGE)
+        .ok_or(Error::UnsupportedPlan)?;
+    let pml4_slot = ((window_base >> 39) & 511) as usize;
+    let pdpt_slot = ((window_base >> 30) & 511) as usize;
+    let pd_slot = ((window_base >> 21) & 511) as usize;
+    let image_slot = ((boot.image_base >> 39) & 511) as usize;
+    if pml4_slot == image_slot
+        || ptr::read_volatile((root as *const u64).add(pml4_slot)) != 0
+    {
+        return Err(Error::WindowCollision);
+    }
+
+    let window_pdpt = ptr::addr_of_mut!(WINDOW_PDPT) as u64;
+    let window_pd = ptr::addr_of_mut!(WINDOW_PD) as u64;
+    let window_pt = ptr::addr_of_mut!(WINDOW_PT) as u64;
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    let header = core::slice::from_raw_parts(
+        boot.image_base as *const u8,
+        image_sections::HEADER_LIMIT,
+    );
+    let layout = image_sections::parse(header, boot.image_size).map_err(|_| Error::InvalidImage)?;
+    for frame in [window_pdpt, window_pd, window_pt] {
+        if frame & (PAGE - 1) != 0
+            || frame < boot.image_base
+            || frame.checked_add(PAGE).is_none_or(|end| end > image_end)
+            || !crate::root::identity_mapped(frame)
+            || layout.classify(frame - boot.image_base) != image_sections::PagePolicy::Writable
+        {
+            return Err(Error::UntrustedTableFrame);
+        }
+    }
+
+    let mut expected = [0u64; 512];
+    for index in 0..plan.mapping_count() {
+        let mapping: Mapping = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
+        if ((mapping.virtual_page >> 39) & 511) as usize != pml4_slot
+            || ((mapping.virtual_page >> 30) & 511) as usize != pdpt_slot
+            || ((mapping.virtual_page >> 21) & 511) as usize != pd_slot
+        {
+            return Err(Error::UnsupportedPlan);
+        }
+        let slot = ((mapping.virtual_page >> 12) & 511) as usize;
+        if expected[slot] != 0 {
+            return Err(Error::WindowCollision);
+        }
+        let physical = if mapping.virtual_page == alias.virtual_page {
+            window_pt
+        } else {
+            mapping.physical_page
+        };
+        let mut entry = physical | PRESENT;
+        if mapping.writable {
+            entry |= WRITE;
+        }
+        if !mapping.executable {
+            entry |= NX;
+        }
+        expected[slot] = entry;
+    }
+
+    ptr::write_bytes(window_pdpt as *mut u8, 0, PAGE as usize);
+    ptr::write_bytes(window_pd as *mut u8, 0, PAGE as usize);
+    ptr::write_bytes(window_pt as *mut u8, 0, PAGE as usize);
+    ptr::write_volatile(
+        (window_pdpt as *mut u64).add(pdpt_slot),
+        window_pd | PRESENT | WRITE,
+    );
+    ptr::write_volatile((window_pd as *mut u64).add(pd_slot), window_pt | PRESENT | WRITE);
+    for (slot, entry) in expected.iter().copied().enumerate() {
+        if entry != 0 {
+            ptr::write_volatile((window_pt as *mut u64).add(slot), entry);
+        }
+    }
+    // Publish the new branch only after every child entry is complete.
+    ptr::write_volatile((root as *mut u64).add(pml4_slot), window_pdpt | PRESENT | WRITE);
+
+    let pts = ptr::addr_of!(IMAGE_PTS) as u64;
+    let mut verified = 0usize;
+    for index in 0..plan.mapping_count() {
+        let mapping = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
+        let physical = if mapping.virtual_page == alias.virtual_page {
+            window_pt
+        } else {
+            mapping.physical_page
+        };
+        let observed = supervisor_audit::walk(root, mapping.virtual_page, |entry| {
+            read_extended_candidate_entry(
+                entry,
+                root,
+                ptr::addr_of!(IMAGE_PDPT) as u64,
+                ptr::addr_of!(IMAGE_PD) as u64,
+                pts,
+                MAX_PT,
+                window_pdpt,
+                window_pd,
+                window_pt,
+            )
+        })
+        .map_err(|_| Error::ValidationFailed)?;
+        if observed.physical_address != physical
+            || observed.user_accessible
+            || observed.leaf_size != PAGE
+            || observed.writable != mapping.writable
+            || observed.executable != mapping.executable
+        {
+            return Err(Error::ValidationFailed);
+        }
+        verified += 1;
+    }
+
+    for slot in [1u64, 511] {
+        let address = window_base + slot * PAGE;
+        if supervisor_audit::walk(root, address, |entry| {
+            read_extended_candidate_entry(
+                entry,
+                root,
+                ptr::addr_of!(IMAGE_PDPT) as u64,
+                ptr::addr_of!(IMAGE_PD) as u64,
+                pts,
+                MAX_PT,
+                window_pdpt,
+                window_pd,
+                window_pt,
+            )
+        })
+        .is_ok()
+        {
+            return Err(Error::ValidationFailed);
+        }
+    }
+    Ok(verified)
 }
 
 /// In one uninterrupted assembly sequence, transiently activate the

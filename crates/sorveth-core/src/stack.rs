@@ -214,6 +214,24 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line(
                 "SORVETH M2-K.1g: audited high-half mappings added to candidate plan",
             );
+            let verified_window_mappings = match unsafe {
+                crate::image_page_tables::extend_and_verify_private_window(&boot, &plan)
+            } {
+                Ok(count) if count == plan.private_window_records() => count,
+                _ => {
+                    crate::serial::write_line(
+                        "FATAL: inactive high-half candidate hierarchy verification failed",
+                    );
+                    crate::halt_forever();
+                }
+            };
+            crate::serial::write_line(
+                "SORVETH M2-K.1h: inactive owned high-half hierarchy walked",
+            );
+            crate::serial::write("Sorveth verified high-half leaves: ");
+            crate::serial::write_u64(verified_window_mappings as u64);
+            crate::serial::write_line("");
+
             crate::serial::write("Sorveth private-window plan records: ");
             crate::serial::write_u64(plan.private_window_records() as u64);
             crate::serial::write_line("");
