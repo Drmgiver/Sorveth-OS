@@ -264,7 +264,6 @@ pub unsafe fn build_and_verify(boot: &BootInfo, map: &MemoryMap<'_>) -> Result<E
     Ok(evidence)
 }
 
-
 /// Read an entry from either the image candidate hierarchy or the newly
 /// constructed private-window subtree, using only explicitly owned table
 /// frames through the active root's restricted frame window.
@@ -338,7 +337,10 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
 
     let alias = (0..plan.mapping_count())
         .filter_map(|index| plan.mapping(index))
-        .find(|mapping| mapping.kind == crate::supervisor_manifest::Kind::KernelPaging)
+        .find(|mapping| {
+            mapping.kind == crate::supervisor_manifest::Kind::KernelPaging
+                && (mapping.virtual_page >> 12) & 511 == 510
+        })
         .ok_or(Error::UnsupportedPlan)?;
     let window_base = alias
         .virtual_page
@@ -348,9 +350,7 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
     let pdpt_slot = ((window_base >> 30) & 511) as usize;
     let pd_slot = ((window_base >> 21) & 511) as usize;
     let image_slot = ((boot.image_base >> 39) & 511) as usize;
-    if pml4_slot == image_slot
-        || ptr::read_volatile((root as *const u64).add(pml4_slot)) != 0
-    {
+    if pml4_slot == image_slot || ptr::read_volatile((root as *const u64).add(pml4_slot)) != 0 {
         return Err(Error::WindowCollision);
     }
 
@@ -361,10 +361,8 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
         .image_base
         .checked_add(boot.image_size)
         .ok_or(Error::InvalidImage)?;
-    let header = core::slice::from_raw_parts(
-        boot.image_base as *const u8,
-        image_sections::HEADER_LIMIT,
-    );
+    let header =
+        core::slice::from_raw_parts(boot.image_base as *const u8, image_sections::HEADER_LIMIT);
     let layout = image_sections::parse(header, boot.image_size).map_err(|_| Error::InvalidImage)?;
     for frame in [window_pdpt, window_pd, window_pt] {
         if frame & (PAGE - 1) != 0
@@ -412,14 +410,20 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
         (window_pdpt as *mut u64).add(pdpt_slot),
         window_pd | PRESENT | WRITE,
     );
-    ptr::write_volatile((window_pd as *mut u64).add(pd_slot), window_pt | PRESENT | WRITE);
+    ptr::write_volatile(
+        (window_pd as *mut u64).add(pd_slot),
+        window_pt | PRESENT | WRITE,
+    );
     for (slot, entry) in expected.iter().copied().enumerate() {
         if entry != 0 {
             ptr::write_volatile((window_pt as *mut u64).add(slot), entry);
         }
     }
     // Publish the new branch only after every child entry is complete.
-    ptr::write_volatile((root as *mut u64).add(pml4_slot), window_pdpt | PRESENT | WRITE);
+    ptr::write_volatile(
+        (root as *mut u64).add(pml4_slot),
+        window_pdpt | PRESENT | WRITE,
+    );
 
     let pts = ptr::addr_of!(IMAGE_PTS) as u64;
     let mut verified = 0usize;

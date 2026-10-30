@@ -225,9 +225,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     crate::halt_forever();
                 }
             };
-            crate::serial::write_line(
-                "SORVETH M2-K.1h: inactive owned high-half hierarchy walked",
-            );
+            crate::serial::write_line("SORVETH M2-K.1h: inactive owned high-half hierarchy walked");
             crate::serial::write("Sorveth verified high-half leaves: ");
             crate::serial::write_u64(verified_window_mappings as u64);
             crate::serial::write_line("");
