@@ -575,3 +575,20 @@ not shared across both trees, and that every shared table is reached at the
 same paging levels in both roots. This runs before process-private user
 subtrees are attached. It detects accidental divergence in the current clone
 model; it does not make the inherited lower-level tables owned or independent.
+
+
+### K.1r owned candidate ancestry and persistent QEMU mode
+
+The expanded candidate is now walked as a complete page-table graph. Every
+reachable table frame must be in the writable portion of Sorveth's PE image,
+have loader/boot-services descriptor provenance, be reachable through the
+restricted candidate table set, and contain no USER entries or huge-page
+ancestry. A feature-gated QEMU image then activates this candidate as the
+kernel root and updates the trusted active-root record before process roots
+are created. The dedicated CI job runs the full normal, fault, ring-3, A/B
+isolation, A/B transfer and monitor acceptance suites with that root active.
+
+This is a test-only transition checkpoint, not yet K.1d completion. CI must
+prove the candidate remains active through every suite, and the transition
+plan's deliberate missing/USER/W+X mapping denial cases remain to be added
+before closing K.1d or beginning K.2.

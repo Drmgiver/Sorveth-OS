@@ -75,6 +75,21 @@ identity-map clone or from tests that only see a serial marker before the
 new CR3 is loaded.
 
 
+## Candidate-root regression mode (K.1r)
+
+A feature-gated QEMU path now checks the entire expanded candidate page-table
+graph before activation. It admits only Sorveth's writable PE-resident table
+frames with loader/boot-services provenance, rejects USER and huge-page
+entries, then loads the candidate as the active kernel root and updates the
+trusted root record. A dedicated QEMU job runs the full boot, fault, ring-3,
+A/B isolation, transfer and monitor suites with that root active.
+
+This mode is an acceptance checkpoint, not proof of completed K.1d until the
+full CI matrix passes and the deliberate missing, USER and writable+executable
+candidate-mapping denial cases specified in the regression gate above are
+exercised. K.2 stays blocked until those K.1d gates are complete.
+
+
 ## Runtime survival mapping inventory (M2-K.1d staged checkpoint)
 
 The x86-64 bootstrap now includes a **read-only** four-level supervisor

@@ -28,7 +28,12 @@ if [[ ! -f "$CODE" || ! -f "$VARS" ]]; then
 fi
 
 # This intentionally builds the NORMAL kernel, not the debug-exit test binary.
-cargo build -p sorveth-boot --release --target x86_64-unknown-uefi
+if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]]; then
+  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
+    --features qemu-independent-root
+else
+  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi
+fi
 TMP="$(mktemp -d)"
 QEMU_PID=""
 ARTIFACT_DIR="${SORVETH_QEMU_ARTIFACT_DIR:-}"
@@ -66,3 +71,8 @@ timeout --signal=TERM --kill-after=5s 60s qemu-system-x86_64 \
 QEMU_PID=$!
 
 python3 scripts/test-monitor.py "$TMP/serial.sock" "$TMP/monitor-serial.log"
+if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]] &&
+  ! grep -Fq 'SORVETH M2-K.1d: independent candidate root active without firmware tables' "$TMP/monitor-serial.log"; then
+  echo 'Independent-root monitor boot failed: candidate root activation marker is missing' >&2
+  exit 1
+fi

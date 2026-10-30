@@ -26,8 +26,25 @@ if [[ ! -f "$CODE" || ! -f "$VARS" ]]; then
   exit 1
 fi
 
+INDEPENDENT_FEATURE_SUFFIX=""
+if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]]; then
+  INDEPENDENT_FEATURE_SUFFIX=",qemu-independent-root"
+fi
+build_qemu_image() {
+  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
+    --features "$1$INDEPENDENT_FEATURE_SUFFIX"
+}
+require_independent_root_marker() {
+  local log_file="$1"
+  if [[ "${SORVETH_INDEPENDENT_ROOT:-0}" == "1" ]] &&
+    ! grep -Fq 'SORVETH M2-K.1d: independent candidate root active without firmware tables' "$log_file"; then
+    echo "Independent-root boot failed: missing marker in $log_file" >&2
+    exit 1
+  fi
+}
+
 cargo test -p sorveth-abi -p sorveth-cap -p sorveth-memory -p sorveth-frames -p sorveth-paging -p sorveth-ipc -p sorveth-task -p sorveth-exchange -p sorveth-broker
-cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-smoke
+build_qemu_image qemu-smoke
 
 TMP="$(mktemp -d)"
 # CI can set this to retain the evidence needed to debug a failed boot.
@@ -114,6 +131,7 @@ for marker in \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
   'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
+  'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -128,13 +146,14 @@ for marker in \
     exit 1
   fi
 done
+require_independent_root_marker "$TMP/serial.log"
 echo 'PASS: kernel executed after ExitBootServices, validated memory map, and exited QEMU cleanly.'
 
 # M1-C acceptance: use a separate EFI image to deliberately fault on the
 # absent second page of Sorveth's own high-half mapping. The serial fault
 # handler must report the #PF and issue QEMU's debug exit (status 33).
 # Normal kernel and production builds never trigger this test.
-cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-fault
+build_qemu_image qemu-fault
 cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$VARS" "$TMP/OVMF_VARS.fd"
 set +e
@@ -193,6 +212,7 @@ for marker in \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
   'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
+  'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -207,6 +227,7 @@ for marker in \
     exit 1
   fi
 done
+require_independent_root_marker "$TMP/fault-serial.log"
 echo 'PASS: private unmapped page generated an x86 #PF and Sorveth logged and handled it.'
 
 
@@ -214,7 +235,7 @@ echo 'PASS: private unmapped page generated an x86 #PF and Sorveth logged and ha
 # M2-F QEMU-only ring-3 test: a tiny unprivileged code page invokes INT80.
 # The first call returns a known value to ring 3; the second proves IRETQ
 # returned to user instructions and the interrupt gate crossed back to ring 0.
-cargo build -p sorveth-boot --release --target x86_64-unknown-uefi --features qemu-user
+build_qemu_image qemu-user
 cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$VARS" "$TMP/OVMF_VARS.fd"
 set +e
@@ -265,6 +286,7 @@ for marker in \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
   'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
+  'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -282,6 +304,7 @@ for marker in \
     exit 1
   fi
 done
+require_independent_root_marker "$TMP/user-serial.log"
 echo 'PASS: ring-3 task-scoped capability syscalls denied forged/foreign/write handles before supervisor-memory fault.'
 
 
@@ -289,8 +312,7 @@ echo 'PASS: ring-3 task-scoped capability syscalls denied forged/foreign/write h
 # page from ring 3 but cannot read the other process's private page.
 # Only the matching hardware #PF permits the kernel to exit with status 33.
 for side in a b; do
-  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
-    --features "qemu-isolate-$side"
+  build_qemu_image "qemu-isolate-$side"
   cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
   cp "$VARS" "$TMP/OVMF_VARS.fd"
   set +e
@@ -342,6 +364,7 @@ for side in a b; do
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
   'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
+  'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -360,14 +383,14 @@ for side in a b; do
       exit 1
     fi
   done
+  require_independent_root_marker "$TMP/isolation-$side-serial.log"
   echo "PASS: process $side read its own page and CPU denied cross-process ring-3 read."
 done
 
 
 # M2-J.5: ring-3 under each process CR3 with capability-checked INT80.
 for side in a b; do
-  cargo build -p sorveth-boot --release --target x86_64-unknown-uefi \
-    --features "qemu-transfer-$side"
+  build_qemu_image "qemu-transfer-$side"
   cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
   cp "$VARS" "$TMP/OVMF_VARS.fd"
   set +e
@@ -408,6 +431,7 @@ for side in a b; do
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
   'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1q: process roots retain supervisor-only clones and shared lower ancestry' \
+  'SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -424,5 +448,6 @@ for side in a b; do
       exit 1
     fi
   done
+  require_independent_root_marker "$TMP/transfer-$side-serial.log"
   echo "PASS: process $side issued 22 CPL3 memory syscall requests; denied operations preserved full-frame/capability integrity."
 done

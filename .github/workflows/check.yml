@@ -51,3 +51,30 @@ jobs:
           name: sorveth-qemu-diagnostics
           path: ${{ runner.temp }}/sorveth-qemu/
           if-no-files-found: warn
+
+  qemu-independent-root:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+      - name: Install QEMU and OVMF firmware
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf
+      - name: Full regression matrix on Sorveth-owned candidate root
+        env:
+          SORVETH_INDEPENDENT_ROOT: "1"
+          SORVETH_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/sorveth-independent-root
+        run: ./scripts/smoke-qemu.sh
+      - name: Interactive monitor on Sorveth-owned candidate root
+        env:
+          SORVETH_INDEPENDENT_ROOT: "1"
+          SORVETH_QEMU_ARTIFACT_DIR: ${{ runner.temp }}/sorveth-independent-root
+        run: bash scripts/smoke-monitor-qemu.sh
+      - name: Preserve independent-root boot diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sorveth-independent-root-diagnostics
+          path: ${{ runner.temp }}/sorveth-independent-root/
+          if-no-files-found: warn

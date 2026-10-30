@@ -22,6 +22,7 @@ use core::{
 const PAGE: u64 = 4096;
 const PRESENT: u64 = 1;
 const WRITE: u64 = 2;
+const USER: u64 = 4;
 const NX: u64 = 1 << 63;
 const PWT: u64 = 1 << 3;
 const PCD: u64 = 1 << 4;
@@ -62,6 +63,11 @@ pub struct CandidateEvidence {
     pub planner_mappings: usize,
     pub framebuffer_pages: u64,
     pub survival_records_verified: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CandidateTableEvidence {
+    pub unique_table_frames: usize,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -690,6 +696,152 @@ pub unsafe fn extend_and_verify_survival_plan<const N: usize, const M: usize>(
         framebuffer_pages,
         survival_records_verified,
     })
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn audit_candidate_table(
+    frame: u64,
+    level: u8,
+    image_base: u64,
+    image_end: u64,
+    layout: &image_sections::Layout,
+    map: &MemoryMap<'_>,
+    root: u64,
+    pts: u64,
+    window_pdpt: u64,
+    window_pd: u64,
+    window_pt: u64,
+    seen: &mut [u64; MAX_PT + 16],
+    count: &mut usize,
+) -> Result<(), Error> {
+    if !(1..=4).contains(&level)
+        || !is_candidate_table(frame, root, pts)
+        || frame & (PAGE - 1) != 0
+        || frame < image_base
+        || frame.checked_add(PAGE).is_none_or(|end| end > image_end)
+        || layout.classify(frame - image_base) != image_sections::PagePolicy::Writable
+        || !matches!(
+            supervisor_manifest::uefi_type_of(map, frame),
+            Ok(Some(1..=4))
+        )
+    {
+        return Err(Error::UntrustedTableFrame);
+    }
+    if seen[..*count].contains(&frame) {
+        return Ok(());
+    }
+    if *count >= seen.len() {
+        return Err(Error::TooManyPageTables);
+    }
+    seen[*count] = frame;
+    *count += 1;
+
+    let mut entries = [0u64; 512];
+    crate::root::with_physical_window(frame, |window| {
+        for (index, entry) in entries.iter_mut().enumerate() {
+            *entry = ptr::read_volatile(window.add(index * 8).cast::<u64>());
+        }
+    })
+    .map_err(|_| Error::UntrustedTableFrame)?;
+
+    for entry in entries {
+        if entry & PRESENT == 0 {
+            continue;
+        }
+        if entry & USER != 0 {
+            return Err(Error::ValidationFailed);
+        }
+        let huge = entry & LARGE != 0;
+        if huge {
+            return Err(Error::ValidationFailed);
+        }
+        if level == 1 {
+            continue;
+        }
+        audit_candidate_table(
+            entry & ADDRESS_MASK,
+            level - 1,
+            image_base,
+            image_end,
+            layout,
+            map,
+            root,
+            pts,
+            window_pdpt,
+            window_pd,
+            window_pt,
+            seen,
+            count,
+        )?;
+    }
+    Ok(())
+}
+
+/// Prove that every present non-leaf table reachable from the candidate PML4
+/// is one of Sorveth's PE-resident writable table frames. No firmware PML4,
+/// PDPT, PD or PT can pass the restricted frame set and PE ownership checks.
+///
+/// # Safety
+/// Run after the expanded candidate is complete, on the active Sorveth root
+/// with IF=0 while the image and UEFI descriptor buffer remain valid.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn audit_candidate_table_ancestry(
+    boot: &BootInfo,
+    map: &MemoryMap<'_>,
+) -> Result<CandidateTableEvidence, Error> {
+    if !BUILT.load(Ordering::Acquire) || !WINDOW_BUILT.load(Ordering::Acquire) || !boot.is_valid() {
+        return Err(Error::UnsupportedPlan);
+    }
+    let active: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if flags & (1 << 9) != 0
+        || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK)
+    {
+        return Err(Error::WrongCpuContext);
+    }
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    let header =
+        core::slice::from_raw_parts(boot.image_base as *const u8, image_sections::HEADER_LIMIT);
+    let layout = image_sections::parse(header, boot.image_size).map_err(|_| Error::InvalidImage)?;
+    let root = ptr::addr_of!(IMAGE_ROOT) as u64;
+    let pts = ptr::addr_of!(IMAGE_PTS) as u64;
+    let mut seen = [0u64; MAX_PT + 16];
+    let mut count = 0usize;
+    audit_candidate_table(
+        root,
+        4,
+        boot.image_base,
+        image_end,
+        &layout,
+        map,
+        root,
+        pts,
+        ptr::addr_of!(WINDOW_PDPT) as u64,
+        ptr::addr_of!(WINDOW_PD) as u64,
+        ptr::addr_of!(WINDOW_PT) as u64,
+        &mut seen,
+        &mut count,
+    )?;
+    Ok(CandidateTableEvidence {
+        unique_table_frames: count,
+    })
+}
+
+/// Activate the fully audited, PE-resident candidate for a dedicated QEMU
+/// acceptance image. Ordinary firmware-sharing images keep their existing
+/// root and only run the temporary transition probe.
+#[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
+pub(crate) unsafe fn activate_verified_survival_root() -> Result<(), Error> {
+    if !BUILT.load(Ordering::Acquire) || !WINDOW_BUILT.load(Ordering::Acquire) {
+        return Err(Error::UnsupportedPlan);
+    }
+    crate::root::activate_independent_root(ptr::addr_of!(IMAGE_ROOT) as u64)
+        .map_err(|_| Error::WrongCpuContext)
 }
 
 /// For 4-KiB leaves, PAT=0 with PCD|PWT selects IA32_PAT entry 3.

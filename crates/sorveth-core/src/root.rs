@@ -560,6 +560,41 @@ pub(crate) fn kernel_root_physical() -> Option<u64> {
     }
 }
 
+/// Permanently activate an independently built candidate for a dedicated
+/// QEMU acceptance image. The candidate root page must still be reachable
+/// by the currently active Sorveth root, and interrupts must remain masked.
+///
+/// # Safety
+/// The caller has completely audited the candidate's live code, data, stack,
+/// CPU tables, frame window and supervisor leaves. Failure after the CR3
+/// write is fatal; this path is compiled only for QEMU acceptance builds.
+#[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
+pub(crate) unsafe fn activate_independent_root(candidate: u64) -> Result<(), Error> {
+    let current = ACTIVE_ROOT.load(Ordering::Acquire);
+    let active: u64;
+    let flags: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if current == 0
+        || active & ADDRESS_MASK != current
+        || flags & (1 << 9) != 0
+        || candidate == current
+        || !valid_physical_window_frame(candidate)
+        || inherited_translate(current, candidate) != Some(candidate)
+    {
+        return Err(Error::WrongCpuContext);
+    }
+
+    core::arch::asm!("mov cr3, {}", in(reg) candidate, options(nostack, preserves_flags));
+    let observed: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
+    if observed & ADDRESS_MASK != candidate {
+        return Err(Error::VerificationFailed);
+    }
+    ACTIVE_ROOT.store(candidate, Ordering::Release);
+    Ok(())
+}
+
 /// First supervisor-only private high-half page.
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn kernel_private_address() -> Option<u64> {

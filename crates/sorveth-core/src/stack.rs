@@ -237,6 +237,23 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     crate::halt_forever();
                 }
             };
+            let candidate_tables = match unsafe {
+                crate::image_page_tables::audit_candidate_table_ancestry(&boot, &map)
+            } {
+                Ok(evidence) if evidence.unique_table_frames > 0 => evidence,
+                _ => {
+                    crate::serial::write_line(
+                        "FATAL: candidate page-table ownership audit failed",
+                    );
+                    crate::halt_forever();
+                }
+            };
+            crate::serial::write_line(
+                "SORVETH M2-K.1r: all candidate page tables are PE-resident and supervisor-only",
+            );
+            crate::serial::write("Sorveth candidate owned table frames: ");
+            crate::serial::write_u64(candidate_tables.unique_table_frames as u64);
+            crate::serial::write_line("");
             crate::serial::write_line(
                 "SORVETH M2-K.1j: inactive complete planned mappings verified",
             );
@@ -301,6 +318,22 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line(
                 "SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely",
             );
+            #[cfg(feature = "qemu-independent-root")]
+            {
+                if unsafe {
+                    crate::image_page_tables::activate_verified_survival_root()
+                }
+                .is_err()
+                {
+                    crate::serial::write_line(
+                        "FATAL: independent candidate root activation failed",
+                    );
+                    crate::halt_forever();
+                }
+                crate::serial::write_line(
+                    "SORVETH M2-K.1d: independent candidate root active without firmware tables",
+                );
+            }
             crate::serial::write("Sorveth verified planner leaves: ");
             crate::serial::write_u64(candidate_evidence.planner_mappings as u64);
             crate::serial::write(" (framebuffer UC pages: ");
