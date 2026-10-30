@@ -385,6 +385,29 @@ fn is_candidate_table(frame: u64, root: u64, pts: u64) -> bool {
             && (frame - pts) & (PAGE - 1) == 0)
 }
 
+/// Read one entry from the independently owned candidate hierarchy, or from
+/// one of the two Sorveth-owned process roots. This is used after the
+/// independent CR3 switch, where the transitional firmware identity-map
+/// reader is intentionally unavailable.
+#[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
+pub(crate) unsafe fn read_candidate_table_entry(address: u64) -> Option<u64> {
+    let page = address & !(PAGE - 1);
+    if page == 0 || address & 7 != 0 || address - page > PAGE - 8 {
+        return None;
+    }
+    let root = ptr::addr_of!(IMAGE_ROOT) as u64;
+    let pts = ptr::addr_of!(IMAGE_PTS) as u64;
+    if !crate::process_roots::is_owned_process_root_frame(page)
+        && !is_candidate_table(page, root, pts)
+    {
+        return None;
+    }
+    crate::root::with_physical_window(page, |window| {
+        ptr::read_volatile(window.add((address - page) as usize).cast::<u64>())
+    })
+    .ok()
+}
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn ensure_candidate_child(
     parent: u64,

@@ -76,6 +76,11 @@ static MAPPED: AtomicBool = AtomicBool::new(false);
 static FIRST_FRAME: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static SECOND_FRAME: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
+pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
+    frame == ptr::addr_of!(FIRST) as u64 || frame == ptr::addr_of!(SECOND) as u64
+}
 #[cfg(target_arch = "x86_64")]
 static FIRST_SLOT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
@@ -325,7 +330,7 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                 .mapping(index)
                 .ok_or(Error::SupervisorMappingMismatch)?;
             let observed = crate::supervisor_audit::walk(root, mapping.virtual_page, |entry| {
-                crate::root::read_bootstrap_supervisor_entry(entry)
+                read_supervisor_table_entry(entry)
             })
             .map_err(|_| Error::SupervisorMappingMismatch)?;
             if observed.physical_address != mapping.physical_page
@@ -371,6 +376,18 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
         }
     }
     Ok(verified)
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_supervisor_table_entry(address: u64) -> Option<u64> {
+    #[cfg(feature = "qemu-independent-root")]
+    {
+        crate::image_page_tables::read_candidate_table_entry(address)
+    }
+    #[cfg(not(feature = "qemu-independent-root"))]
+    {
+        crate::root::read_bootstrap_supervisor_entry(address)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

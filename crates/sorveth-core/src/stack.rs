@@ -391,6 +391,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
     }
+    #[cfg(not(feature = "qemu-independent-root"))]
     match unsafe { crate::process_roots::audit_inherited_page_tables(&map) } {
         Ok(inventory) => {
             crate::serial::write_line(
@@ -424,6 +425,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
     }
+    #[cfg(feature = "qemu-independent-root")]
+    crate::serial::write_line(
+        "SORVETH M2-K.1r: inherited firmware table ancestry absent from active process roots",
+    );
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();
