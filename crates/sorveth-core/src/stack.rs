@@ -157,41 +157,6 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_u64(found.unknown_device_pages() as u64);
             crate::serial::write_line(")");
 
-            // Compile the manifest into candidate mappings without installing
-            // them. The PE image builder owns image mappings; this planner
-            // contributes verified non-image supervisor pages and defers
-            // framebuffer endpoints until cache policy is explicit.
-            let image_header = unsafe {
-                core::slice::from_raw_parts(
-                    boot.image_base as *const u8,
-                    crate::image_sections::HEADER_LIMIT,
-                )
-            };
-            let plan = match unsafe {
-                crate::supervisor_root_plan::compile(&found, &boot, image_header)
-            } {
-                Ok(plan) if plan.image_records() > 0 => plan,
-                _ => {
-                    crate::serial::write_line("FATAL: supervisor survival mapping plan failed");
-                    crate::halt_forever();
-                }
-            };
-            crate::serial::write_line(
-                "SORVETH M2-K.1e: bounded supervisor survival mapping plan compiled",
-            );
-            crate::serial::write("Sorveth external supervisor mappings: ");
-            crate::serial::write_u64(plan.mapping_count() as u64);
-            crate::serial::write(" (image records checked: ");
-            crate::serial::write_u64(plan.image_records() as u64);
-            crate::serial::write(", deferred device records: ");
-            crate::serial::write_u64(plan.deferred_device_records() as u64);
-            crate::serial::write_line(")");
-        }
-        _ => {
-            crate::serial::write_line("FATAL: supervisor physical backing manifest failed");
-            crate::halt_forever();
-        }
-    }
     let private_window = match unsafe { crate::root::audit_private_window(&crate::FRAME_POOL) } {
         Ok(evidence) => evidence,
         Err(reason) => {
@@ -212,6 +177,59 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_u64(private_window.last_virtual_page);
     crate::serial::write_line(")");
 
+            // Compile the manifest into candidate mappings without installing
+            // them. The PE image builder owns image mappings; this planner
+            // contributes verified non-image supervisor pages and defers
+            // framebuffer endpoints until cache policy is explicit.
+            let image_header = unsafe {
+                core::slice::from_raw_parts(
+                    boot.image_base as *const u8,
+                    crate::image_sections::HEADER_LIMIT,
+                )
+            };
+            let mut plan = match unsafe {
+                crate::supervisor_root_plan::compile(&found, &boot, image_header)
+            } {
+                Ok(plan) if plan.image_records() > 0 => plan,
+                _ => {
+                    crate::serial::write_line("FATAL: supervisor survival mapping plan failed");
+                    crate::halt_forever();
+                }
+            };
+            if crate::supervisor_root_plan::include_private_window(
+                &mut plan,
+                &private_window,
+                &found,
+                &boot,
+                image_header,
+            )
+            .is_err()
+            {
+                crate::serial::write_line("FATAL: private-window mapping plan failed");
+                crate::halt_forever();
+            }
+            crate::serial::write_line(
+                "SORVETH M2-K.1g: audited high-half mappings added to candidate plan",
+            );
+            crate::serial::write("Sorveth private-window plan records: ");
+            crate::serial::write_u64(plan.private_window_records() as u64);
+            crate::serial::write_line("");
+            crate::serial::write_line(
+                "SORVETH M2-K.1e: bounded supervisor survival mapping plan compiled",
+            );
+            crate::serial::write("Sorveth external supervisor mappings: ");
+            crate::serial::write_u64(plan.mapping_count() as u64);
+            crate::serial::write(" (image records checked: ");
+            crate::serial::write_u64(plan.image_records() as u64);
+            crate::serial::write(", deferred device records: ");
+            crate::serial::write_u64(plan.deferred_device_records() as u64);
+            crate::serial::write_line(")");
+        }
+        _ => {
+            crate::serial::write_line("FATAL: supervisor physical backing manifest failed");
+            crate::halt_forever();
+        }
+    }
     if !crate::fibers::verify_roundtrip() {
         crate::serial::write_line("FATAL: native kernel context switch failed");
         crate::halt_forever();

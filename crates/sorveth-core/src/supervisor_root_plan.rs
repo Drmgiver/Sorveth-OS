@@ -41,6 +41,7 @@ pub struct Plan<const N: usize> {
     mapping_count: usize,
     image_records: usize,
     deferred_device_records: usize,
+    private_window_records: usize,
 }
 
 impl<const N: usize> Plan<N> {
@@ -50,6 +51,7 @@ impl<const N: usize> Plan<N> {
             mapping_count: 0,
             image_records: 0,
             deferred_device_records: 0,
+            private_window_records: 0,
         }
     }
 
@@ -63,6 +65,10 @@ impl<const N: usize> Plan<N> {
 
     pub const fn deferred_device_records(&self) -> usize {
         self.deferred_device_records
+    }
+
+    pub const fn private_window_records(&self) -> usize {
+        self.private_window_records
     }
 
     pub fn mapping(&self, index: usize) -> Option<Mapping> {
@@ -231,4 +237,75 @@ pub unsafe fn compile<const N: usize>(
     }
 
     Ok(plan)
+}
+
+/// Add the audited private high-half leaves to the candidate plan. The
+/// page-table self-alias is admitted only when the PE image policy already
+/// permits the same writable/NX access to that physical page. Other leaves
+/// must be allocator-owned pages absent from the physical-backing manifest.
+///
+/// This remains a plan only; callers must not install it as a complete root.
+pub fn include_private_window<const N: usize, const M: usize>(
+    plan: &mut Plan<N>,
+    private: &crate::root::PrivateWindowEvidence,
+    manifest: &Manifest<M>,
+    boot: &BootInfo,
+    image_header: &[u8],
+) -> Result<(), Error> {
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    let layout =
+        image_sections::parse(image_header, boot.image_size).map_err(|_| Error::InvalidImage)?;
+    let alias_page = private.base.checked_add(510 * PAGE);
+
+    for index in 0..private.mapping_count {
+        let mapping = private.mappings[index].ok_or(Error::InvalidAddress)?;
+        if mapping.virtual_page == 0
+            || mapping.virtual_page & (PAGE - 1) != 0
+            || !is_canonical(mapping.virtual_page)
+            || mapping.physical_page & (PAGE - 1) != 0
+            || mapping.physical_page >= PHYSICAL_LIMIT
+            || mapping.writable && mapping.executable
+            || (mapping.virtual_page >= boot.image_base && mapping.virtual_page < image_end)
+        {
+            return Err(Error::InvalidAddress);
+        }
+
+        let page_end = mapping
+            .physical_page
+            .checked_add(PAGE)
+            .ok_or(Error::InvalidAddress)?;
+        if mapping.physical_page >= boot.image_base && page_end <= image_end {
+            let policy = layout.classify(mapping.physical_page - boot.image_base);
+            let (image_writable, image_executable) =
+                image_permissions(policy).ok_or(Error::UnclassifiedImagePage)?;
+            if mapping.writable && !image_writable || mapping.executable && !image_executable {
+                return Err(Error::InsufficientCurrentPermission);
+            }
+        } else {
+            for record_index in 0..manifest.len() {
+                let record = manifest.get(record_index).ok_or(Error::InvalidAddress)?;
+                if record.physical_page == mapping.physical_page {
+                    return Err(Error::InvalidAddress);
+                }
+            }
+        }
+
+        let kind = if Some(mapping.virtual_page) == alias_page {
+            Kind::KernelPaging
+        } else {
+            Kind::KernelState
+        };
+        plan.push(Mapping {
+            virtual_page: mapping.virtual_page,
+            physical_page: mapping.physical_page,
+            kind,
+            writable: mapping.writable,
+            executable: mapping.executable,
+        })?;
+        plan.private_window_records += 1;
+    }
+    Ok(())
 }

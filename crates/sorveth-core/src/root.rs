@@ -544,14 +544,26 @@ pub(crate) fn kernel_private_address() -> Option<u64> {
     }
 }
 
-/// Summary of the idle private high-half frame window after its PTEs have
-/// been matched to allocator ownership claims.
+/// A verified 4-KiB leaf retained for the independent supervisor mapping plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrivateWindowMapping {
+    pub virtual_page: u64,
+    pub physical_page: u64,
+    pub writable: bool,
+    pub executable: bool,
+}
+
+/// Summary and bounded snapshot of the idle private high-half frame window.
+/// The fixed capacity covers all single-page claims in the 256-entry allocator
+/// ledger plus the page-table self-alias.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PrivateWindowEvidence {
     pub base: u64,
     pub mapped_pages: u64,
     pub first_virtual_page: u64,
     pub last_virtual_page: u64,
+    pub mappings: [Option<PrivateWindowMapping>; 257],
+    pub mapping_count: usize,
 }
 
 /// Audit failure codes keep the boot diagnostic compact and stable.
@@ -640,6 +652,8 @@ pub(crate) unsafe fn audit_private_window(
     let mut count = 0u64;
     let mut first = 0;
     let mut last = 0;
+    let mut mappings = [None; 257];
+    let mut mapping_count = 0usize;
     for slot in 0..PRIVATE_PT_ALIAS_INDEX {
         if slot == 1 {
             continue;
@@ -670,6 +684,13 @@ pub(crate) unsafe fn audit_private_window(
             }
         }
         let virtual_page = base + slot as u64 * 4096;
+        mappings[mapping_count] = Some(PrivateWindowMapping {
+            virtual_page,
+            physical_page: physical,
+            writable: true,
+            executable: false,
+        });
+        mapping_count += 1;
         if count == 0 {
             first = virtual_page;
         }
@@ -677,14 +698,23 @@ pub(crate) unsafe fn audit_private_window(
         count += 1;
     }
 
-    if count == 0 || count != private_pages() {
+    if count == 0 || count != private_pages() || mapping_count >= mappings.len() {
         return Err(Failure::PageCount);
     }
+    mappings[mapping_count] = Some(PrivateWindowMapping {
+        virtual_page: table_alias,
+        physical_page: table_frame,
+        writable: true,
+        executable: false,
+    });
+    mapping_count += 1;
     Ok(PrivateWindowEvidence {
         base,
         mapped_pages: count,
         first_virtual_page: first,
         last_virtual_page: last,
+        mappings,
+        mapping_count,
     })
 }
 
