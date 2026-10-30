@@ -120,7 +120,10 @@ single-core bootstrap. Work now proceeds through **M2-K**: remove firmware-
 identity dependencies, implement safe dynamic frame lifetime/reclamation,
 process creation/teardown, broader buffer operations and fault recovery.
 The current INT 0x80 memory-copy ABI remains **test-only** and limited to
-eight-byte transfers. See [the active K plan](docs/M2-K-PLAN.md).
+eight-byte transfers. The private high-half scratch mappings are now
+ownership-audited and included in an inactive supervisor mapping plan; they
+are not yet part of a permanently independent kernel root. See
+[the active K plan](docs/M2-K-PLAN.md).
 
 Only after memory independence, process containment, services, security and
 hardware coverage are verified will Sorveth be considered an operating system

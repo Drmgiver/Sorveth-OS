@@ -401,4 +401,27 @@ Across the seven QEMU variants, the manifest reports 77–86 image-resident supe
 
 The frame allocator now retains a bounded ledger of every irreversible allocation claim. The private high-half audit walks Sorveth's existing PT, verifies the self-alias points to the owned table, requires the guard and transient physical-window slots to be absent, and checks that every present supervisor RW/NX scratch leaf maps a distinct page in the allocator's claim ledger. This is an inventory and ownership proof only; it does not copy the high-half subtree into the independent image root or activate that root.
 
-The QEMU gate requires the audit marker across all variants. Next: feed the verified self-alias and scratch mappings into the independent-root plan, preserving ownership and permission checks, then test that expanded root while it remains inactive.
+The QEMU gate requires the audit marker across all variants.
+
+
+### K.1g audited high-half mappings added to the candidate plan
+
+The private-window audit now returns a bounded snapshot of every present
+RW/NX leaf, including the PT self-alias, alongside allocator ownership proof.
+The supervisor planner adds those leaves to its inactive plan. It checks
+canonical/aligned addresses, collisions with existing planned mappings,
+allocator-backed leaves against the captured manifest, and the self-alias
+against the PE image's existing section permissions so a writable alias
+cannot make code or read-only image data writable. In the current seven QEMU
+variants this contributes four records: three claimed scratch pages and the
+self-alias.
+
+This expands the candidate mapping inventory only. It does not build the
+upper-half page-table ancestry, install the plan, remove inherited mappings,
+or establish a persistent independent supervisor root. Dynamic frame lifetime
+and framebuffer cache attributes remain open gates. Host checks, UEFI
+cross-build, formatting and QEMU passed in [run 41008183127](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41008183127).
+
+**Next:** construct the owned high-half page-table subtree from this validated
+plan and verify its walk while it remains inactive; do not activate it until
+the complete supervisor survival set is represented.

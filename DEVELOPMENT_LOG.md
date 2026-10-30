@@ -645,3 +645,13 @@ M2-K.1 remains partial. Next work is to inventory and ownership-check the privat
 - The next step is to add these audited aliases and owned scratch pages to the independent-root plan, then verify the expanded inactive root.
 
 M2-K.1 remains partial; no dynamic frame reclamation or persistent independent root is claimed.
+
+
+## 2026-10-30 — M2-K.1g high-half mappings added to the inactive plan
+
+- Extended the private-window ownership audit to snapshot every verified RW/NX leaf, including the page-table self-alias, in a bounded fixed-capacity record.
+- Added a planner step for the high-half leaves. Scratch frames must be absent from the captured manifest; the self-alias is accepted only if the PE image section policy already allows the same physical page to be writable and non-executable.
+- All seven QEMU variants reported four private-window plan records: three allocator-claimed scratch pages and the PT self-alias. The planner remains inactive; no new ancestry or CR3 transition is installed.
+- Host tests, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41008183127
+
+M2-K.1 remains partial. Next is to construct and walk the owned high-half page-table subtree while it remains inactive; inherited firmware mappings and full supervisor coverage are still required.
