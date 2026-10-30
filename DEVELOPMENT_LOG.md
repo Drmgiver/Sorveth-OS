@@ -675,3 +675,10 @@ M2-K.1 remains partial. The candidate still lacks the complete non-image supervi
 - No candidate CR3 was activated. Other non-image supervisor mappings are not yet supported by this builder. Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216
 
 M2-K.1 remains partial; the inactive candidate still needs generalized non-image mapping coverage and a complete supervisor survival audit before any persistent CR3 transition.
+
+
+## 2026-10-30 — M2-K.1j generalized inactive supervisor mappings
+
+- Generalized the candidate hierarchy to accept all verified planner mappings, including mappings that require additional PML4/PDPT/PD branches. New tables come from a bounded pool in writable, identity-mapped PE pages.
+- The candidate now fails closed on pool exhaustion, untrusted table frames, huge-page collisions, and occupied leaf entries, then walks every planned mapping and checks translation and permissions. The private-window self-alias remains rebound to the candidate's own PT; framebuffer UC validation remains in place.
+- The candidate remains inactive. This does not establish complete runtime survival coverage or authorize a persistent CR3 transition.

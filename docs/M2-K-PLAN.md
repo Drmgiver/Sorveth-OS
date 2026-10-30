@@ -467,3 +467,18 @@ non-image supervisor mapping, then audit the complete survival set before
 considering any persistent root transition.
 
 
+
+
+### K.1j generalized inactive supervisor candidate mappings
+
+The candidate now accepts additional planner leaves outside the private
+high-half window. It allocates required PDPT, PD, and PT pages from a bounded
+PE-resident pool, checking that each frame is identity-mapped and classified
+writable before use. Existing image, private-window, and UC framebuffer
+subtrees remain owned candidate branches. Every planner mapping is re-walked
+through the restricted physical-frame reader and checked for supervisor
+access, exact physical backing, and the planned writable/executable rights.
+Table-pool exhaustion, collisions, huge-page ancestry, or an untrusted table
+frame fail closed. The candidate remains inactive; this does not prove that
+the bounded manifest includes every runtime dependency or permit a persistent
+CR3 transition.

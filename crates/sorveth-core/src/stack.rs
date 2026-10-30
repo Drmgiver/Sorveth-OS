@@ -215,10 +215,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 "SORVETH M2-K.1g: audited high-half mappings added to candidate plan",
             );
             let candidate_evidence = match unsafe {
-                crate::image_page_tables::extend_and_verify_private_window(&boot, &map, &plan)
+                crate::image_page_tables::extend_and_verify_survival_plan(&boot, &map, &plan)
             } {
                 Ok(evidence)
-                    if evidence.private_window_mappings == plan.private_window_records()
+                    if evidence.planner_mappings == plan.mapping_count()
                         && evidence.framebuffer_pages
                             == plan
                                 .framebuffer()
@@ -234,10 +234,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 }
             };
             crate::serial::write_line(
-                "SORVETH M2-K.1i: inactive framebuffer UC and supervisor mappings verified",
+                "SORVETH M2-K.1j: inactive complete planned mappings verified",
             );
-            crate::serial::write("Sorveth verified high-half leaves: ");
-            crate::serial::write_u64(candidate_evidence.private_window_mappings as u64);
+            crate::serial::write("Sorveth verified planner leaves: ");
+            crate::serial::write_u64(candidate_evidence.planner_mappings as u64);
             crate::serial::write(" (framebuffer UC pages: ");
             crate::serial::write_u64(candidate_evidence.framebuffer_pages);
             crate::serial::write_line(")");

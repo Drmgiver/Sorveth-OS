@@ -27,9 +27,10 @@ const PWT: u64 = 1 << 3;
 const PCD: u64 = 1 << 4;
 const LARGE: u64 = 1 << 7;
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
-// 17 PT pages cover the maximum PE image; remaining capacity supports
-// a bounded 64-MiB GOP framebuffer in this inactive candidate.
-const MAX_PT: usize = 64;
+// The first 128 PT frames cover the PE image and the bounded framebuffer.
+// The rest form a bounded pool for planner mappings at arbitrary addresses.
+const MAX_PT: usize = 768;
+const MAPPING_POOL_START: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -57,7 +58,7 @@ pub struct Evidence {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CandidateEvidence {
-    pub private_window_mappings: usize,
+    pub planner_mappings: usize,
     pub framebuffer_pages: u64,
 }
 
@@ -316,18 +317,133 @@ unsafe fn read_extended_candidate_entry(
     .ok()
 }
 
-/// Add a separately owned high-half PDPT/PD/PT branch to the already verified
-/// PE image candidate, then walk every private-window leaf through the
-/// restricted physical-frame reader. The PT self-alias is rebound to this
-/// candidate's own PT frame; it must not point back to the active root's PT.
+#[cfg(target_arch = "x86_64")]
+struct MappingTablePool<'a> {
+    next: usize,
+    start: usize,
+    frames_used: usize,
+    boot: &'a BootInfo,
+    layout: image_sections::Layout,
+    pts: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+fn is_in_private_window(mapping: Mapping, pml4: usize, pdpt: usize, pd: usize) -> bool {
+    ((mapping.virtual_page >> 39) & 511) as usize == pml4
+        && ((mapping.virtual_page >> 30) & 511) as usize == pdpt
+        && ((mapping.virtual_page >> 21) & 511) as usize == pd
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn allocate_mapping_table(pool: &mut MappingTablePool<'_>) -> Result<u64, Error> {
+    if pool.next <= pool.start {
+        return Err(Error::TooManyPageTables);
+    }
+    pool.next -= 1;
+    let frame = pool.pts + pool.next as u64 * PAGE;
+    let image_end = pool
+        .boot
+        .image_base
+        .checked_add(pool.boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    if frame < pool.boot.image_base
+        || frame.checked_add(PAGE).is_none_or(|end| end > image_end)
+        || !crate::root::identity_mapped(frame)
+        || pool.layout.classify(frame - pool.boot.image_base)
+            != image_sections::PagePolicy::Writable
+    {
+        return Err(Error::UntrustedTableFrame);
+    }
+    ptr::write_bytes(frame as *mut u8, 0, PAGE as usize);
+    pool.frames_used += 1;
+    Ok(frame)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn is_candidate_table(frame: u64, root: u64, pts: u64) -> bool {
+    frame == root
+        || frame == ptr::addr_of!(IMAGE_PDPT) as u64
+        || frame == ptr::addr_of!(IMAGE_PD) as u64
+        || frame == ptr::addr_of!(WINDOW_PDPT) as u64
+        || frame == ptr::addr_of!(WINDOW_PD) as u64
+        || frame == ptr::addr_of!(WINDOW_PT) as u64
+        || frame == ptr::addr_of!(FRAMEBUFFER_PDPT) as u64
+        || frame == ptr::addr_of!(FRAMEBUFFER_PD) as u64
+        || (frame >= pts + MAPPING_POOL_START as u64 * PAGE
+            && frame < pts + MAX_PT as u64 * PAGE
+            && (frame - pts) & (PAGE - 1) == 0)
+        || (frame >= pts
+            && frame < pts + MAPPING_POOL_START as u64 * PAGE
+            && (frame - pts) & (PAGE - 1) == 0)
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn ensure_candidate_child(
+    parent: u64,
+    slot: usize,
+    root: u64,
+    pool: &mut MappingTablePool<'_>,
+) -> Result<u64, Error> {
+    let entry = ptr::read_volatile((parent as *const u64).add(slot));
+    if entry & PRESENT == 0 {
+        let child = allocate_mapping_table(pool)?;
+        ptr::write_volatile((parent as *mut u64).add(slot), child | PRESENT | WRITE);
+        return Ok(child);
+    }
+    if entry & LARGE != 0 {
+        return Err(Error::WindowCollision);
+    }
+    let child = entry & ADDRESS_MASK;
+    if !is_candidate_table(child, root, pool.pts) || !crate::root::identity_mapped(child) {
+        return Err(Error::UntrustedTableFrame);
+    }
+    Ok(child)
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn map_additional_planner_mapping(
+    root: u64,
+    mapping: Mapping,
+    pool: &mut MappingTablePool<'_>,
+) -> Result<(), Error> {
+    let address = mapping.virtual_page;
+    if address == 0 || address & (PAGE - 1) != 0 || mapping.physical_page & (PAGE - 1) != 0 {
+        return Err(Error::UnsupportedPlan);
+    }
+    let pml4_slot = ((address >> 39) & 511) as usize;
+    let pdpt_slot = ((address >> 30) & 511) as usize;
+    let pd_slot = ((address >> 21) & 511) as usize;
+    let pt_slot = ((address >> 12) & 511) as usize;
+    let pdpt = ensure_candidate_child(root, pml4_slot, root, pool)?;
+    let pd = ensure_candidate_child(pdpt, pdpt_slot, root, pool)?;
+    let pt = ensure_candidate_child(pd, pd_slot, root, pool)?;
+    if ptr::read_volatile((pt as *const u64).add(pt_slot)) != 0 {
+        return Err(Error::WindowCollision);
+    }
+    let mut leaf = mapping.physical_page | PRESENT;
+    if mapping.writable {
+        leaf |= WRITE;
+    }
+    if !mapping.executable {
+        leaf |= NX;
+    }
+    ptr::write_volatile((pt as *mut u64).add(pt_slot), leaf);
+    Ok(())
+}
+
+/// Extend the PE candidate with the private window, framebuffer, and every
+/// other mapping in the verified supervisor plan. Additional hierarchy nodes
+/// come only from the writable PE-resident table pool. The PT self-alias is
+/// rebound to this candidate's own PT frame.
 ///
-/// This only mutates inactive candidate tables and never loads them into CR3.
+/// Every planned leaf is walked through the restricted physical-frame reader;
+/// this only mutates inactive tables and never loads them into CR3.
 ///
 /// # Safety
 /// Single CPU on the active Sorveth kernel root, IF=0, after the PE-only
-/// candidate and the private-window ownership plan have both been verified.
+/// candidate and supervisor mapping plan have both been verified.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn extend_and_verify_private_window<const N: usize>(
+pub unsafe fn extend_and_verify_survival_plan<const N: usize>(
     boot: &BootInfo,
     map: &MemoryMap<'_>,
     plan: &Plan<N>,
@@ -336,7 +452,7 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
         || WINDOW_BUILT.swap(true, Ordering::AcqRel)
         || !boot.is_valid()
         || plan.private_window_records() == 0
-        || plan.private_window_records() != plan.mapping_count()
+        || plan.private_window_records() > plan.mapping_count()
     {
         return Err(Error::UnsupportedPlan);
     }
@@ -396,11 +512,8 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
     let mut expected = [0u64; 512];
     for index in 0..plan.mapping_count() {
         let mapping: Mapping = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
-        if ((mapping.virtual_page >> 39) & 511) as usize != pml4_slot
-            || ((mapping.virtual_page >> 30) & 511) as usize != pdpt_slot
-            || ((mapping.virtual_page >> 21) & 511) as usize != pd_slot
-        {
-            return Err(Error::UnsupportedPlan);
+        if !is_in_private_window(mapping, pml4_slot, pdpt_slot, pd_slot) {
+            continue;
         }
         let slot = ((mapping.virtual_page >> 12) & 511) as usize;
         if expected[slot] != 0 {
@@ -443,7 +556,22 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
         window_pdpt | PRESENT | WRITE,
     );
 
+    let framebuffer_pages = build_and_verify_framebuffer(boot, map, plan, root, pml4_slot)?;
     let pts = ptr::addr_of!(IMAGE_PTS) as u64;
+    let mut pool = MappingTablePool {
+        next: MAX_PT,
+        start: MAPPING_POOL_START,
+        frames_used: 0,
+        boot,
+        layout,
+        pts,
+    };
+    for index in 0..plan.mapping_count() {
+        let mapping = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
+        if !is_in_private_window(mapping, pml4_slot, pdpt_slot, pd_slot) {
+            map_additional_planner_mapping(root, mapping, &mut pool)?;
+        }
+    }
     let mut verified = 0usize;
     for index in 0..plan.mapping_count() {
         let mapping = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
@@ -497,9 +625,8 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
             return Err(Error::ValidationFailed);
         }
     }
-    let framebuffer_pages = build_and_verify_framebuffer(boot, map, plan, root, pml4_slot)?;
     Ok(CandidateEvidence {
-        private_window_mappings: verified,
+        planner_mappings: verified,
         framebuffer_pages,
     })
 }
