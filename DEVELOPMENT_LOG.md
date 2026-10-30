@@ -707,3 +707,9 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - Added an occupied-slot probe before the successful K.1m remap. It stages a valid candidate-only PTE, calls the regular probe path, and requires `WindowCollision` with the PTE unchanged and the original kernel CR3 still active before clearing the staged entry.
 - The normal two-frame remap then runs, and all QEMU acceptance variants require the collision-denial marker.
 - This exercises the collision preflight on the single bootstrap CPU; it is not a concurrent-use or fault-recovery guarantee.
+
+## 2026-10-30 — M2-K.1o process-root supervisor mapping coverage
+
+- After constructing both scheduler roots, the kernel now walks every external mapping in the verified supervisor plan through each root, checking physical backing, supervisor-only access, and the write/execute rights the plan requires. The framebuffer endpoints are checked in both roots as well.
+- Every QEMU boot variant requires the new marker before process user pages and task scheduling proceed.
+- This confirms planned bootstrap dependencies remain reachable through the process roots, which still inherit firmware page-table ancestry. It does not prove complete dynamic mapping coverage.

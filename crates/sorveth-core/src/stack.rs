@@ -138,6 +138,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         }
     };
     let manifest = unsafe { crate::supervisor_manifest::capture::<192>(&map, &boot, (base, end)) };
+    let mut verified_supervisor_plan: Option<crate::supervisor_root_plan::Plan<192>> = None;
     match manifest {
         Ok(found)
             if found.len() >= 48
@@ -319,6 +320,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write(", framebuffer endpoint records checked: ");
             crate::serial::write_u64(plan.device_endpoint_records() as u64);
             crate::serial::write_line(")");
+            verified_supervisor_plan = Some(plan);
         }
         _ => {
             crate::serial::write_line("FATAL: supervisor physical backing manifest failed");
@@ -341,6 +343,27 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     crate::serial::write_line("Sorveth process roots: two distinct supervisor PML4 roots verified");
     crate::serial::write_line("SORVETH M2-K.1d: owned PML4 root clone and verification complete");
+    let plan = match verified_supervisor_plan.as_ref() {
+        Some(plan) => plan,
+        None => {
+            crate::serial::write_line("FATAL: verified supervisor mapping plan was lost");
+            crate::halt_forever();
+        }
+    };
+    match unsafe { crate::process_roots::audit_supervisor_plan(plan) } {
+        Ok(verified) if verified >= plan.mapping_count() * 2 => {
+            crate::serial::write_line(
+                "SORVETH M2-K.1o: both process roots preserve planned supervisor mappings",
+            );
+            crate::serial::write("Sorveth process-root supervisor checks: ");
+            crate::serial::write_u64(verified as u64);
+            crate::serial::write_line("");
+        }
+        _ => {
+            crate::serial::write_line("FATAL: process-root supervisor mapping audit failed");
+            crate::halt_forever();
+        }
+    }
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();

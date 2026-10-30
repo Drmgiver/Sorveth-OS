@@ -21,6 +21,8 @@ const USER: u64 = 1 << 2;
 #[cfg(target_arch = "x86_64")]
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 #[cfg(target_arch = "x86_64")]
+const PAGE: u64 = 4096;
+#[cfg(target_arch = "x86_64")]
 const WRITE: u64 = 1 << 1;
 #[cfg(target_arch = "x86_64")]
 const NO_EXECUTE: u64 = 1 << 63;
@@ -88,6 +90,7 @@ pub enum Error {
     FrameUnavailable,
     AlreadyMapped,
     PageTableStorageUnavailable,
+    SupervisorMappingMismatch,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -241,6 +244,86 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     } else {
         Some((root, slot as u16))
     }
+}
+
+/// Confirm that both scheduler roots retain every mapping in the verified
+/// supervisor plan, including the framebuffer's first and last pages. The
+/// roots still inherit their current page-table ancestry; this audit only
+/// verifies that those live roots can supply the same planned dependencies.
+///
+/// # Safety
+/// Kernel CR3 must be active on the single bootstrap CPU with interrupts
+/// disabled, and inherited supervisor tables must remain immutable.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
+    plan: &crate::supervisor_root_plan::Plan<N>,
+) -> Result<usize, Error> {
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+        return Err(Error::KernelUnavailable);
+    }
+
+    let mut verified = 0usize;
+    for process in [Process::First, Process::Second] {
+        let root = process_root(process)
+            .map(|(root, _)| root)
+            .ok_or(Error::KernelUnavailable)?;
+        if root == kernel {
+            return Err(Error::VerificationFailed);
+        }
+        for index in 0..plan.mapping_count() {
+            let mapping = plan.mapping(index).ok_or(Error::SupervisorMappingMismatch)?;
+            let observed = crate::supervisor_audit::walk(root, mapping.virtual_page, |entry| {
+                crate::root::read_bootstrap_supervisor_entry(entry)
+            })
+            .map_err(|_| Error::SupervisorMappingMismatch)?;
+            if observed.physical_address != mapping.physical_page
+                || observed.user_accessible
+                || mapping.writable && !observed.writable
+                || mapping.executable && !observed.executable
+            {
+                return Err(Error::SupervisorMappingMismatch);
+            }
+            verified = verified
+                .checked_add(1)
+                .ok_or(Error::SupervisorMappingMismatch)?;
+        }
+        if let Some(framebuffer) = plan.framebuffer() {
+            let last_offset = framebuffer
+                .pages
+                .checked_sub(1)
+                .and_then(|pages| pages.checked_mul(PAGE))
+                .ok_or(Error::SupervisorMappingMismatch)?;
+            for offset in [0, last_offset] {
+                let virtual_page = framebuffer
+                    .virtual_start
+                    .checked_add(offset)
+                    .ok_or(Error::SupervisorMappingMismatch)?;
+                let physical_page = framebuffer
+                    .physical_start
+                    .checked_add(offset)
+                    .ok_or(Error::SupervisorMappingMismatch)?;
+                let observed = crate::supervisor_audit::walk(root, virtual_page, |entry| {
+                    crate::root::read_bootstrap_supervisor_entry(entry)
+                })
+                .map_err(|_| Error::SupervisorMappingMismatch)?;
+                if observed.physical_address != physical_page
+                    || observed.user_accessible
+                    || !observed.writable
+                {
+                    return Err(Error::SupervisorMappingMismatch);
+                }
+                verified = verified
+                    .checked_add(1)
+                    .ok_or(Error::SupervisorMappingMismatch)?;
+            }
+        }
+    }
+    Ok(verified)
 }
 
 /// One intentionally small physical user data page mapped at offset zero

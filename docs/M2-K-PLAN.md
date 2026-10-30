@@ -462,10 +462,10 @@ for PAT selection and memory-type rules.
 Host checks, UEFI cross-build, formatting and QEMU passed in
 [run 41010104216](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216).
 
-**Next:** exercise repeated candidate window remapping and audit the bounded
-table-pool frames as runtime dependencies. Persistent CR3 migration remains
-blocked on general dynamic mapping lifecycle and a complete dependency
-inventory.
+**Next:** verify planned supervisor dependencies through both process roots
+and inventory their shared inherited page-table ancestry. Persistent CR3
+migration remains blocked on general dynamic mapping lifecycle and complete
+runtime dependency coverage.
 
 
 
@@ -538,3 +538,16 @@ entry is unchanged and kernel CR3 remains active, then clears the staged PTE
 and runs the K.1m two-frame probe. Every QEMU variant requires the denial
 marker. This checks the collision preflight in one bootstrap context; it is
 not a concurrency or fault-recovery proof.
+
+
+### K.1o planned supervisor mapping coverage in process roots
+
+After the two scheduler roots are cloned, the kernel walks every external
+supervisor mapping in the verified candidate plan through both roots, checking
+physical backing, supervisor access, and all write/execute rights required by
+the plan. It also checks both framebuffer endpoints for identity backing,
+supervisor access, and write permission. All QEMU variants require the new
+marker before user pages or tasks are installed. This proves the current
+process roots can supply the planned bootstrap dependencies; it does not
+remove their inherited firmware page-table ancestry or verify every
+unplanned dynamic mapping.
