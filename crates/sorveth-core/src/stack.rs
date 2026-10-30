@@ -234,11 +234,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line(
                 "SORVETH M2-K.1i: inactive framebuffer UC and supervisor mappings verified",
             );
-            crate::serial.write("Sorveth verified high-half leaves: ");
-            crate::serial.write_u64(candidate_evidence.private_window_mappings as u64);
-            crate::serial.write(" (framebuffer UC pages: ");
-            crate::serial.write_u64(candidate_evidence.framebuffer_pages);
-            crate::serial.write_line(")");
+            crate::serial::write("Sorveth verified high-half leaves: ");
+            crate::serial::write_u64(candidate_evidence.private_window_mappings as u64);
+            crate::serial::write(" (framebuffer UC pages: ");
+            crate::serial::write_u64(candidate_evidence.framebuffer_pages);
+            crate::serial::write_line(")");
 
             crate::serial::write("Sorveth private-window plan records: ");
             crate::serial::write_u64(plan.private_window_records() as u64);
