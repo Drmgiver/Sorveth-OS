@@ -276,7 +276,9 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
             return Err(Error::VerificationFailed);
         }
         for index in 0..plan.mapping_count() {
-            let mapping = plan.mapping(index).ok_or(Error::SupervisorMappingMismatch)?;
+            let mapping = plan
+                .mapping(index)
+                .ok_or(Error::SupervisorMappingMismatch)?;
             let observed = crate::supervisor_audit::walk(root, mapping.virtual_page, |entry| {
                 crate::root::read_bootstrap_supervisor_entry(entry)
             })
