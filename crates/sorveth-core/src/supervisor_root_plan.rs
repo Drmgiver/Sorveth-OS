@@ -361,9 +361,9 @@ pub fn include_private_window<const N: usize, const M: usize>(
                 .virtual_start
                 .checked_add(framebuffer.pages * PAGE)
                 .ok_or(Error::InvalidFramebuffer)?;
-            if mapping.virtual_page >= framebuffer.virtual_start
-                && mapping.virtual_page < end
-                || mapping.physical_page >= framebuffer.physical_start && mapping.physical_page < end
+            if mapping.virtual_page >= framebuffer.virtual_start && mapping.virtual_page < end
+                || mapping.physical_page >= framebuffer.physical_start
+                    && mapping.physical_page < end
             {
                 return Err(Error::InvalidFramebuffer);
             }

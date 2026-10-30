@@ -220,7 +220,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 Ok(evidence)
                     if evidence.private_window_mappings == plan.private_window_records()
                         && evidence.framebuffer_pages
-                            == plan.framebuffer().map_or(0, |framebuffer| framebuffer.pages) =>
+                            == plan
+                                .framebuffer()
+                                .map_or(0, |framebuffer| framebuffer.pages) =>
                 {
                     evidence
                 }

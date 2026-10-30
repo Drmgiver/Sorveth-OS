@@ -497,8 +497,7 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
             return Err(Error::ValidationFailed);
         }
     }
-    let framebuffer_pages =
-        build_and_verify_framebuffer(boot, map, plan, root, pml4_slot)?;
+    let framebuffer_pages = build_and_verify_framebuffer(boot, map, plan, root, pml4_slot)?;
     Ok(CandidateEvidence {
         private_window_mappings: verified,
         framebuffer_pages,
@@ -557,8 +556,7 @@ unsafe fn build_and_verify_framebuffer<const N: usize>(
     }
     for index in 0..plan.mapping_count() {
         let record = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
-        if record.physical_page >= framebuffer.physical_start
-            && record.physical_page < end
+        if record.physical_page >= framebuffer.physical_start && record.physical_page < end
             || record.virtual_page >= framebuffer.virtual_start
                 && record.virtual_page < framebuffer.virtual_start + framebuffer.pages * PAGE
         {
@@ -631,7 +629,9 @@ unsafe fn build_and_verify_framebuffer<const N: usize>(
     for frame in [framebuffer_pdpt_static, framebuffer_pd_static] {
         if frame & (PAGE - 1) != 0
             || frame < boot.image_base
-            || frame.checked_add(PAGE).is_none_or(|frame_end| frame_end > image_end)
+            || frame
+                .checked_add(PAGE)
+                .is_none_or(|frame_end| frame_end > image_end)
             || !crate::root::identity_mapped(frame)
             || layout.classify(frame - boot.image_base) != image_sections::PagePolicy::Writable
         {
@@ -733,9 +733,7 @@ unsafe fn build_and_verify_framebuffer<const N: usize>(
 
     let pts_reader_limit = MAX_PT;
     let cache_flags = PRESENT | WRITE | NX | PWT | PCD;
-    for (pd_slot, pt_frame, first_page) in
-        tracked_pts[..tracked_count].iter().flatten().copied()
-    {
+    for (pd_slot, pt_frame, first_page) in tracked_pts[..tracked_count].iter().flatten().copied() {
         let result = crate::root::with_physical_window(pt_frame, |window| {
             let mut index = 0u64;
             while index < framebuffer.pages {
@@ -770,8 +768,8 @@ unsafe fn build_and_verify_framebuffer<const N: usize>(
             )
         })
         .map_err(|_| Error::ValidationFailed)?;
-        let expected_physical = framebuffer.physical_start
-            + (first_page - framebuffer.virtual_start);
+        let expected_physical =
+            framebuffer.physical_start + (first_page - framebuffer.virtual_start);
         if observed.physical_address != expected_physical
             || observed.user_accessible
             || !observed.writable
