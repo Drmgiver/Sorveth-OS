@@ -140,6 +140,26 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     serial::write_line("Sorveth IDT: installed; breakpoint roundtrip verified");
     serial::write_line("Sorveth emergency fault stacks: TSS loaded; IST1/IST2 armed");
 
+    // The UEFI Loaded Image Protocol now provides the entire actual PE/COFF
+    // allocation. Walk every image page, not merely selected code addresses,
+    // before attempting any independent supervisor root construction.
+    match unsafe { supervisor_manifest::verify_loaded_image_extent(&map, boot) } {
+        Ok(proof) if proof.image_pages > 0 && proof.executable_pages > 0 => {
+            serial::write_line(
+                "SORVETH M2-K.1d: full loaded image physical backing audited",
+            );
+            serial::write("Sorveth image pages: ");
+            serial::write_u64(proof.image_pages);
+            serial::write(" (legacy WX: ");
+            serial::write_u64(proof.legacy_writable_executable_pages);
+            serial::write_line(")");
+        }
+        _ => {
+            serial::write_line("FATAL: loaded image physical mapping failed");
+            halt_forever();
+        }
+    }
+
     // M2-K.1d: inventory live BootInfo/descriptor and optional framebuffer
     // translations before changing or reclaiming any inherited page tables.
     // This is a read-only audit; kernel CR3 still shares OVMF lower levels.

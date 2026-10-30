@@ -430,9 +430,120 @@ pub unsafe fn capture<const N: usize>(
     Ok(manifest)
 }
 
+/// Exact extent of all loaded PE image pages. Unlike the small bounded
+/// critical-page manifest, this scan does not store one record per page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageEvidence {
+    pub image_pages: u64,
+    pub legacy_writable_executable_pages: u64,
+    pub writable_pages: u64,
+    pub executable_pages: u64,
+}
+
+/// Allow a bounded, page-aligned image; it is not safe to infer size from
+/// an entry-point pointer or to silently skip a partial last page.
+fn image_page_extent(boot: &sorveth_abi::BootInfo) -> Result<(u64, u64), ManifestError> {
+    if !boot.is_valid()
+        || boot.image_size & (PAGE_BYTES - 1) != 0
+        || boot.image_size > 32 * 1024 * 1024
+    {
+        return Err(ManifestError::InvalidRange);
+    }
+    let end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(ManifestError::InvalidRange)?;
+    Ok((boot.image_base, end))
+}
+
+/// Audit *every* image page's current backing through the Sorveth window,
+/// checking that the UEFI loaded-image extent has not been moved onto
+/// conventional/free or device memory. This does not apply new permissions.
+///
+/// # Safety
+/// After ExitBootServices, single CPU, CPL0, IF=0, kernel CR3 active,
+/// inherited lower-level paging stable and UEFI descriptor bytes retained.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_loaded_image_extent(
+    map: &MemoryMap<'_>,
+    boot: &sorveth_abi::BootInfo,
+) -> Result<ImageEvidence, ManifestError> {
+    use core::arch::asm;
+    let (base, end) = image_page_extent(boot)?;
+    let root = crate::root::kernel_root_physical().ok_or(ManifestError::WrongCpuContext)?;
+    let active: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & 0x000f_ffff_ffff_f000 != root || flags & (1 << 9) != 0 {
+        return Err(ManifestError::WrongCpuContext);
+    }
+
+    let mut proof = ImageEvidence {
+        image_pages: 0,
+        legacy_writable_executable_pages: 0,
+        writable_pages: 0,
+        executable_pages: 0,
+    };
+    let mut virtual_page = base;
+    while virtual_page < end {
+        let leaf = crate::supervisor_audit::walk(root, virtual_page, |entry| {
+            crate::root::read_bootstrap_supervisor_entry(entry)
+        })
+        .map_err(|_| ManifestError::MissingMapping)?;
+        // Sorveth's current EFI PE image is loaded into the firmware's
+        // physical identity window. A nonidentity alias requires separate
+        // relocation-aware handling, not a silent new-root assumption.
+        if leaf.user_accessible || leaf.physical_address != virtual_page {
+            return Err(ManifestError::Permission);
+        }
+        let provenance = uefi_type_of(map, virtual_page)?
+            .ok_or(ManifestError::UnknownPhysicalBacking)?;
+        if !allowed_critical_type(provenance) {
+            return Err(ManifestError::UnsafeKernelMemoryType);
+        }
+        proof.image_pages += 1;
+        if leaf.writable {
+            proof.writable_pages += 1;
+        }
+        if leaf.executable {
+            proof.executable_pages += 1;
+        }
+        if leaf.writable && leaf.executable {
+            proof.legacy_writable_executable_pages += 1;
+        }
+        virtual_page += PAGE_BYTES;
+    }
+    Ok(proof)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loaded_image_extent_rejects_oversize_misaligned_and_truncated() {
+        let mut boot = sorveth_abi::BootInfo {
+            protocol_version: sorveth_abi::BOOT_PROTOCOL_VERSION,
+            reserved: 0,
+            framebuffer: sorveth_abi::FramebufferInfo::unavailable(),
+            memory_map_address: 0x4000,
+            memory_map_size: 48,
+            memory_descriptor_size: 48,
+            memory_descriptor_version: 1,
+            reserved2: 0,
+            image_base: 0x20_0000,
+            image_size: 0x12_000,
+        };
+        assert_eq!(image_page_extent(&boot), Ok((0x20_0000, 0x32_000)));
+        boot.image_size += 1;
+        assert_eq!(image_page_extent(&boot), Err(ManifestError::InvalidRange));
+        boot.image_size = 33 * 1024 * 1024;
+        assert_eq!(image_page_extent(&boot), Err(ManifestError::InvalidRange));
+        boot.image_size = 0x12_000;
+        boot.image_base += 1;
+        assert_eq!(image_page_extent(&boot), Err(ManifestError::InvalidRange));
+    }
 
     fn descriptor(kind: u32, base: u64, pages: u64) -> [u8; 48] {
         let mut data = [0u8; 48];
