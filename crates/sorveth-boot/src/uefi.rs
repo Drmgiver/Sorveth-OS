@@ -112,8 +112,7 @@ pub struct BootServices {
     _free_pool: usize,     // #6
     _unused_7_through_15: [usize; 9],
     // Pointer #16 / offset 152, obtained before GetMemoryMap/ExitBootServices.
-    pub handle_protocol:
-        extern "efiapi" fn(*mut c_void, *const Guid, *mut *mut c_void) -> Status,
+    pub handle_protocol: extern "efiapi" fn(*mut c_void, *const Guid, *mut *mut c_void) -> Status,
     _unused_17_through_25: [usize; 9],
     // Pointer #26 / offset 232.
     pub exit_boot_services: extern "efiapi" fn(*mut c_void, usize) -> Status,

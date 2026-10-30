@@ -40,11 +40,8 @@ pub extern "efiapi" fn efi_main(
         // The exact PE/COFF image extent must come from UEFI's image handle,
         // never from scanning backwards from a function pointer.
         let mut image_interface: *mut c_void = ptr::null_mut();
-        let loaded_status = (bs.handle_protocol)(
-            image_handle,
-            &uefi::LOADED_IMAGE_GUID,
-            &mut image_interface,
-        );
+        let loaded_status =
+            (bs.handle_protocol)(image_handle, &uefi::LOADED_IMAGE_GUID, &mut image_interface);
         if loaded_status != uefi::EFI_SUCCESS || image_interface.is_null() {
             return uefi::EFI_INVALID_PARAMETER;
         }
