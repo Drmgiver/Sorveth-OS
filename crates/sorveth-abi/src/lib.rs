@@ -4,7 +4,7 @@
 //! This is NOT yet a stable userspace syscall ABI.
 
 /// Update this whenever the layout of [`BootInfo`] changes incompatibly.
-pub const BOOT_PROTOCOL_VERSION: u32 = 1;
+pub const BOOT_PROTOCOL_VERSION: u32 = 2;
 
 pub const PIXEL_RGB: u32 = 0;
 pub const PIXEL_BGR: u32 = 1;
@@ -69,6 +69,10 @@ pub struct BootInfo {
     pub memory_descriptor_size: u64,
     pub memory_descriptor_version: u32,
     pub reserved2: u32,
+    /// Trusted UEFI Loaded Image Protocol extent; image bytes remain retained.
+    /// Physical/virtual identity is transitional and must be audited by Core.
+    pub image_base: u64,
+    pub image_size: u64,
 }
 
 impl BootInfo {
@@ -78,12 +82,42 @@ impl BootInfo {
             && self.memory_descriptor_size >= 40
             && self.memory_map_size >= self.memory_descriptor_size as u64
             && self.memory_map_size % self.memory_descriptor_size as u64 == 0
+            && self.image_base != 0
+            && self.image_base & 4095 == 0
+            && (4096..=128 * 1024 * 1024).contains(&self.image_size)
+            && self.image_base.checked_add(self.image_size).is_some()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_handoff_is_bounded_and_versioned() {
+        assert_eq!(core::mem::size_of::<BootInfo>(), 88);
+        let mut info = BootInfo {
+            protocol_version: BOOT_PROTOCOL_VERSION,
+            reserved: 0,
+            framebuffer: FramebufferInfo::unavailable(),
+            memory_map_address: 0x3000,
+            memory_map_size: 48,
+            memory_descriptor_size: 48,
+            memory_descriptor_version: 1,
+            reserved2: 0,
+            image_base: 0x20_0000,
+            image_size: 0x30000,
+        };
+        assert!(info.is_valid());
+        info.image_base += 1;
+        assert!(!info.is_valid());
+        info.image_base -= 1;
+        info.image_size = 0;
+        assert!(!info.is_valid());
+        info.image_size = 0x30000;
+        info.protocol_version -= 1;
+        assert!(!info.is_valid());
+    }
+
     #[test]
     fn graphics_rejects_truncated_framebuffer() {
         let mut f = FramebufferInfo {

@@ -33,6 +33,35 @@ pub struct Guid {
     pub data4: [u8; 8],
 }
 
+/// EFI_LOADED_IMAGE_PROTOCOL_GUID from UEFI specification chapter 9.
+pub const LOADED_IMAGE_GUID: Guid = Guid {
+    data1: 0x5b1b_31a1,
+    data2: 0x9562,
+    data3: 0x11d2,
+    data4: [0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b],
+};
+
+pub const LOADED_IMAGE_REVISION: u32 = 0x1000;
+
+/// Only read fixed fields through ImageSize. The UEFI owner retains this
+/// protocol until ExitBootServices; kernel receives copied scalar metadata.
+#[repr(C)]
+pub struct LoadedImage {
+    pub revision: u32,
+    pub parent_handle: *mut c_void,
+    pub system_table: *mut SystemTable,
+    pub device_handle: *mut c_void,
+    pub file_path: *mut c_void,
+    pub reserved: *mut c_void,
+    pub load_options_size: u32,
+    pub load_options: *mut c_void,
+    pub image_base: *mut c_void,
+    pub image_size: u64,
+    pub image_code_type: u32,
+    pub image_data_type: u32,
+    pub unload: usize,
+}
+
 pub const GOP_GUID: Guid = Guid {
     data1: 0x9042_a9de,
     data2: 0x23dc,
@@ -81,7 +110,11 @@ pub struct BootServices {
         extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> Status,
     _allocate_pool: usize, // #5
     _free_pool: usize,     // #6
-    _unused_7_through_25: [usize; 19],
+    _unused_7_through_15: [usize; 9],
+    // Pointer #16 / offset 152, obtained before GetMemoryMap/ExitBootServices.
+    pub handle_protocol:
+        extern "efiapi" fn(*mut c_void, *const Guid, *mut *mut c_void) -> Status,
+    _unused_17_through_25: [usize; 9],
     // Pointer #26 / offset 232.
     pub exit_boot_services: extern "efiapi" fn(*mut c_void, usize) -> Status,
     _unused_27_through_36: [usize; 10],
@@ -125,4 +158,17 @@ pub unsafe fn write_line(st: *mut SystemTable, message: &str) {
     }
     buf[used] = 0;
     ((*console).output_string)(console, buf.as_ptr());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn loaded_image_and_boot_services_abi_layouts() {
+        assert_eq!(core::mem::offset_of!(LoadedImage, image_base), 64);
+        assert_eq!(core::mem::offset_of!(LoadedImage, image_size), 72);
+        assert_eq!(core::mem::offset_of!(BootServices, handle_protocol), 152);
+        assert_eq!(core::mem::offset_of!(BootServices, exit_boot_services), 232);
+        assert_eq!(core::mem::offset_of!(BootServices, locate_protocol), 320);
+    }
 }

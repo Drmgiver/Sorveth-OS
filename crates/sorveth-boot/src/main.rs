@@ -37,6 +37,29 @@ pub extern "efiapi" fn efi_main(
         } else {
             uefi::write_line(system_table, "GOP unavailable; serial-only kernel output");
         }
+        // The exact PE/COFF image extent must come from UEFI's image handle,
+        // never from scanning backwards from a function pointer.
+        let mut image_interface: *mut c_void = ptr::null_mut();
+        let loaded_status = (bs.handle_protocol)(
+            image_handle,
+            &uefi::LOADED_IMAGE_GUID,
+            &mut image_interface,
+        );
+        if loaded_status != uefi::EFI_SUCCESS || image_interface.is_null() {
+            return uefi::EFI_INVALID_PARAMETER;
+        }
+        let image = &*image_interface.cast::<uefi::LoadedImage>();
+        let image_base = image.image_base as u64;
+        let image_size = image.image_size;
+        if image.revision < uefi::LOADED_IMAGE_REVISION
+            || image_base == 0
+            || image_base & 4095 != 0
+            || !(4096..=128 * 1024 * 1024).contains(&image_size)
+            || image_base.checked_add(image_size).is_none()
+        {
+            return uefi::EFI_INVALID_PARAMETER;
+        }
+        uefi::write_line(system_table, "Loaded image extent: captured from UEFI");
         uefi::write_line(system_table, "Exiting firmware boot services...");
 
         // No console operations, allocations, protocol calls or other actions
@@ -67,6 +90,8 @@ pub extern "efiapi" fn efi_main(
                 memory_descriptor_size: descriptor_size as u64,
                 memory_descriptor_version: descriptor_version,
                 reserved2: 0,
+                image_base,
+                image_size,
             };
             let exit_status = (bs.exit_boot_services)(image_handle, key);
             if exit_status == uefi::EFI_SUCCESS {
