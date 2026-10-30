@@ -350,3 +350,13 @@ concurrent mapping safety, usable device caching or a firmware-independent
 supervisor hierarchy. Remaining before the K.1d switch: complete section
 coverage, retention/ownership semantics, W^X permissions, explicit
 physical table construction and a separate no-inherited-table QEMU mode.
+
+
+### K.1d current complete image backing coverage
+
+UEFI's Loaded Image protocol supplies the actual base/size in boot ABI
+v2, prior to exiting boot services. The kernel walks every page of this
+bounded image and verifies identity-backed supervisor page translations
+and loader/boot-services physical provenance. Legacy W+X is explicitly
+counted. This is image *backing* coverage, not a PE section permissions
+plan and not a new independent CR3. Dedicated QEMU marker required.

@@ -168,3 +168,29 @@ PML4, private PDPT, private PD and private PT. These four records must be
 present as distinct pages (no hidden aliases), and a dedicated QEMU success
 marker is required across every smoke variant. This remains a bootstrap
 inventory, not a page-table ownership transfer or an independent CR3.
+
+
+## UEFI Loaded Image handoff and complete image-page backing audit
+
+**Implemented increment (M2-K.1d, 2026-10-29):** The loader retrieves
+EFI_LOADED_IMAGE_PROTOCOL for its actual image handle *before* the final
+GetMemoryMap / ExitBootServices pair. The pointer-free metadata passed to
+Sorveth Core via boot protocol v2 includes a bounded, page-aligned image
+base and image allocation size. The ABI has host tests for validation and
+the required UEFI offsets. No firmware call occurs after ExitBootServices.
+
+Core walks **every 4-KiB page** in that entire allocation using its
+transitional read-only four-level page-table walker. Every page must be
+present, effectively supervisor-only, identity-backed under this QEMU
+bootstrap, and covered by one loader/boot-services UEFI memory descriptor.
+The walk counts currently writable, executable and writable+executable
+pages without silently claiming modern W^X permissions. The scan is
+bounded at 32 MiB for the current QEMU bootstrap and does not retain a
+per-page record; it runs alongside the smaller 192-record critical-object
+manifest. The full QEMU suite requires a dedicated image-scan marker.
+
+This closes the **current PE image extent/backing *inventory*** gap, not
+the section-permission or independent paging construction gap. Next is
+strict PE32+ section parsing and page-by-page desired W^X policy, plus
+classification of image gaps and actual physical ownership. No inherited
+supervisor tables have yet been replaced or reclaimed.
