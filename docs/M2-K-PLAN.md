@@ -422,6 +422,24 @@ or establish a persistent independent supervisor root. Dynamic frame lifetime
 and framebuffer cache attributes remain open gates. Host checks, UEFI
 cross-build, formatting and QEMU passed in [run 41008183127](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41008183127).
 
-**Next:** construct the owned high-half page-table subtree from this validated
-plan and verify its walk while it remains inactive; do not activate it until
-the complete supervisor survival set is represented.
+### K.1h inactive owned high-half hierarchy construction and walk
+
+The image-only candidate now gains a separate Sorveth-owned PDPT/PD/PT branch
+for the planned high-half mappings. It does not borrow the active root's
+tables. The page-table self-alias is rebound to the candidate PT frame itself;
+the three allocator-owned scratch leaves retain their audited physical backing
+and RW/NX permissions. Each planned leaf is walked through the restricted
+physical-frame reader, and the guard and transient-window slots must remain
+unmapped.
+
+The branch is added only to the inactive candidate. CR3 is not changed, and
+this is not yet a complete supervisor root: the planner currently accepts
+only the four private-window records, while non-image supervisor state,
+framebuffer cache policy and all remaining survival mappings are still
+outstanding. Host checks, UEFI cross-build, formatting and all seven QEMU
+variants passed in [run 41009221778](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41009221778).
+
+**Next:** extend the inactive root to include the remaining verified supervisor
+survival set, including explicit device cache attributes, before any broader
+CR3 transition is considered.
+

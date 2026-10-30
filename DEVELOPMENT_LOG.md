@@ -655,3 +655,13 @@ M2-K.1 remains partial; no dynamic frame reclamation or persistent independent r
 - Host tests, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41008183127
 
 M2-K.1 remains partial. Next is to construct and walk the owned high-half page-table subtree while it remains inactive; inherited firmware mappings and full supervisor coverage are still required.
+
+
+## 2026-10-30 — M2-K.1h inactive owned high-half hierarchy
+
+- Added a separate static PDPT/PD/PT branch to the independent PE-image candidate hierarchy; the active Sorveth root and its page tables remain unchanged.
+- The candidate self-alias points to its own PT frame. The three claimed scratch mappings are copied with audited RW/NX rights, then each planned translation is walked through the restricted physical-frame reader.
+- The guard page and transient frame-window slot are verified absent. All seven QEMU variants passed the new hierarchy marker; no CR3 switch to the expanded candidate occurred.
+- Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41009221778
+
+M2-K.1 remains partial. The candidate still lacks the complete non-image supervisor survival set and device cache policy required for a persistent independent root.
