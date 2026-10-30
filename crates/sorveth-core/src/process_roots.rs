@@ -330,10 +330,9 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                 .mapping(index)
                 .ok_or(Error::SupervisorMappingMismatch)?;
             #[cfg(feature = "qemu-independent-root")]
-            let expected_physical = crate::image_page_tables::candidate_self_alias_frame(
-                mapping.virtual_page,
-            )
-                .unwrap_or(mapping.physical_page);
+            let expected_physical =
+                crate::image_page_tables::candidate_self_alias_frame(mapping.virtual_page)
+                    .unwrap_or(mapping.physical_page);
             #[cfg(not(feature = "qemu-independent-root"))]
             let expected_physical = mapping.physical_page;
             let observed =
@@ -341,13 +340,13 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                     read_supervisor_table_entry(entry)
                 }) {
                     Ok(observed) => observed,
-                    Err(error) => {
+                    Err(_error) => {
                         #[cfg(feature = "qemu-independent-root")]
                         {
                             crate::serial::write("K.1r process mapping walk failed at ");
                             crate::serial::write_u64(mapping.virtual_page);
                             crate::serial::write(" (reason ");
-                            crate::serial::write_u64(error as u64);
+                            crate::serial::write_u64(_error as u64);
                             crate::serial::write_line(")");
                         }
                         return Err(Error::SupervisorMappingMismatch);
@@ -392,13 +391,13 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                 let observed = crate::supervisor_audit::walk(root, virtual_page, |entry| {
                     read_supervisor_table_entry(entry)
                 })
-                .map_err(|error| {
+                .map_err(|_error| {
                     #[cfg(feature = "qemu-independent-root")]
                     {
                         crate::serial::write("K.1r framebuffer walk failed at ");
                         crate::serial::write_u64(virtual_page);
                         crate::serial::write(" (reason ");
-                        crate::serial::write_u64(error as u64);
+                        crate::serial::write_u64(_error as u64);
                         crate::serial::write_line(")");
                     }
                     Error::SupervisorMappingMismatch
