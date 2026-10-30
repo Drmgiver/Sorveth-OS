@@ -26,7 +26,7 @@ is enabled. The code is GPL-3.0-only.
 | M2-H: task-scoped syscall prototype | Kernel-owned task identity authorizes register-only READ/WRITE and denies forged/foreign tokens | Hardcoded QEMU probe |
 | M2-I: isolated experimental process roots | Distinct A/B CR3 roots, per-process user frames, bidirectional ring-3 foreign-memory denial and task-root lifecycle checks | Static permanent test mappings, nonpreemptive bootstrap |
 | M2-J: bounded user-memory syscall proof | Audited user page walks, capability-gated copy-in/out and 22 real ring-3 INT80 probes per process with whole-frame integrity checks | Exactly eight bytes per syscall in current test ABI; not general user memory or production process lifecycle |
-| M2-K.1 (partial): supervisor backing provenance | Owned high-half frame window, isolated process memory, boot/code/stack/descriptor survival audits, bounded physical-backing manifest, and provenance checks of four Sorveth-owned bootstrap paging frames | Full executable image map, durable ownership/lifecycle tracking, newly built supervisor hierarchy and firmware-free CR3 transition remain pending |
+| M2-K.1 (partial): independent PE-image paging proof | Full PE image backing audit, strict section W^X policy, independent image-only PML4/PDPT/PD/PT construction, bounded temporary hardware CR3 switch on Sorveth's own stack, and return to the existing root | Full supervisor-root service mappings, permanent CR3 migration, ownership/lifetime and frame reclamation remain pending; other execution still uses firmware-inherited lower levels |
 
 The ring-3 test also deliberately attempts to read a supervisor-only kernel
 page. QEMU verified the hardware #PF, CR2 address and user-mode
@@ -34,7 +34,7 @@ protection-violation bits. This establishes one concrete privilege boundary,
 not complete process isolation.
 
 The latest accepted kernel changes passed host and QEMU tests in
-[GitHub Actions run 40943212370](https://github.com/Drmgiver/Sorveth-OS/actions/runs/40943212370).
+[GitHub Actions run 41005015817](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41005015817).
 Earlier milestone evidence remains in the development log.
 Source commits, builds, boot tests and hardware support are **separate** claims.
 

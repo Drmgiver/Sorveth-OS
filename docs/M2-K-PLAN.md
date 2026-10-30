@@ -370,3 +370,19 @@ Every section leaf is W^X or absent, with USER disabled; an independent
 walk verifies effective permissions and exact physical identity of each
 mapped image page. CR3 stays on the existing, shared-firmware kernel
 root. This milestone is explicitly NOT an independent supervisor CR3.
+
+
+### K.1d verified temporary hardware CR3 transition via independent image tables
+
+On the dedicated Sorveth kernel stack, an atomic assembly sequence saved
+the old CR3, executed briefly through the independently built W^X PE-image
+root, verified CR3 and stack access, then restored the original CR3.
+The remaining boot and all QEMU fault, ring-3, isolation, transfer and
+monitor variants continued normally, with a required success marker.
+Accepted evidence: Actions 41004595369 and 41005015817.
+
+The image-only root is NOT permanently installed and intentionally does
+not cover dynamic memory, the high-half frame window, optional MMIO or
+all kernel subsystems. Next: build and verify independent mappings for
+the supervisor survival set beyond the PE allocation, then adopt the
+new root persistently under a separate negative-tested QEMU mode.

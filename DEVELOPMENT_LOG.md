@@ -592,3 +592,36 @@ frames. UEFI descriptor type is provenance, not a Sorveth ownership token.
 Full linked-image code/data coverage, physical page ownership and alias
 policy, device cache attributes, new page tables and a verified transition
 without borrowed OVMF ancestry remain to be implemented. M2-K.1d open.
+
+
+## 2026-10-30 — M2-K.1d independent PE-image paging and temporary CR3 proof
+
+- The current UEFI image backing scan and strict PE32+ section classifier
+  became inputs to a **new and independent** (not firmware-PML4-cloned)
+  image-only PML4, PDPT, PD and bounded 4-KiB PT hierarchy.
+- Explicit leaf permissions: supervisor-only read/execute for PE code,
+  writable+NX for data, read-only+NX for headers/read-only sections,
+  absent mappings for unknown gaps. 1-GiB region crossings, untrusted
+  static table frames and PT budget overruns fail closed.
+- Independently walked every planned image page through an allowlisted
+  physical-frame reader using Sorveth's high-half window and verified
+  exact physical identity, USER=0 and effective WRITE/NX permissions.
+- After switching to the **dedicated in-image kernel stack**, briefly
+  loaded the image-only candidate into hardware CR3 in one bounded x86-64
+  assembly sequence, read back active CR3 and stack memory, then restored
+  the old root before any further Rust calls or frame-window activity.
+- All seven QEMU variants passed the added mandatory serial acceptance
+  markers and continued their original tests. No persistent new CR3, IRQ
+  handler under the new root, user-task switch or frame reclamation was
+  attempted during this stage.
+
+Verified source and host/QEMU CI:
+- https://github.com/Drmgiver/Sorveth-OS/actions/runs/41004595369
+- https://github.com/Drmgiver/Sorveth-OS/actions/runs/41005015817
+
+**M2-K.1d remains partial:** the newly constructed PE-only root deliberately
+lacks the general frame window, dynamic mappings, non-image kernel state,
+robust device mapping/caching, reserved loader stack lifetimes and all
+shared supervisor coverage required for a permanently independent kernel
+and A/B process roots. The temporary CR3 proof is a narrow hardware
+checkpoint, NOT a completed standalone kernel address space.
