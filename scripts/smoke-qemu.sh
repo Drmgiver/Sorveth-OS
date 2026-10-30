@@ -71,7 +71,7 @@ if [[ "$STATUS" -ne 33 ]]; then
 fi
 for marker in \
   'Native kernel execution: EFI boot services exited' \
-  'Boot protocol v1: OK' \
+  'Boot protocol v2: OK' \
   'Inherited x86 paging: validated (read-only)' \
   'UEFI physical memory map: validated' \
   'Physical frame planner: validated (no mappings written)' \

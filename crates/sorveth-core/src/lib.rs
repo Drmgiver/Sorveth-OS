@@ -47,7 +47,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         serial::write_line("FATAL: invalid boot protocol");
         halt_forever();
     }
-    serial::write_line("Boot protocol v1: OK");
+    serial::write_line("Boot protocol v2: OK");
 
     // Audit inherited firmware paging before installing Sorveth-owned tables.
     // The later root transition remains restricted to the QEMU bootstrap.
