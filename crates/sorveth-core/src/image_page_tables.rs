@@ -1088,8 +1088,10 @@ unsafe fn verify_temporary_root(
                 Ok(previous) => previous_words[index] = previous,
                 Err(_) => {
                     for restore in 0..index {
-                        let _ = crate::root::with_physical_window(probe_frames[restore], |window| {
-                            ptr::write_volatile(window as *mut u64, previous_words[restore]);
+                        let frame = probe_frames[restore];
+                        let previous = previous_words[restore];
+                        let _ = crate::root::with_physical_window(frame, |window| {
+                            ptr::write_volatile(window as *mut u64, previous);
                         });
                     }
                     return Err(Error::ValidationFailed);
