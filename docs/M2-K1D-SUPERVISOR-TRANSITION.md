@@ -79,15 +79,19 @@ new CR3 is loaded.
 
 A feature-gated QEMU path now checks the entire expanded candidate page-table
 graph before activation. It admits only Sorveth's writable PE-resident table
-frames with loader/boot-services provenance, rejects USER and huge-page
-entries, then loads the candidate as the active kernel root and updates the
-trusted root record. A dedicated QEMU job runs the full boot, fault, ring-3,
-A/B isolation, transfer and monitor suites with that root active.
+frames with loader/boot-services provenance, rejects USER, huge-page and
+writable-executable leaves, and requires every planned mapping to be present.
+It then loads the candidate as the active kernel root and updates the trusted
+root record. Process-root supervisor checks read only the owned candidate
+tables after the switch; the firmware ancestry inventory remains a pre-switch
+check. A dedicated QEMU job runs the full boot, fault, ring-3, A/B isolation,
+transfer and monitor suites with that root active.
 
 This mode is an acceptance checkpoint, not proof of completed K.1d until the
-full CI matrix passes and the deliberate missing, USER and writable+executable
-candidate-mapping denial cases specified in the regression gate above are
-exercised. K.2 stays blocked until those K.1d gates are complete.
+full CI matrix passes. Host policy tests exercise denial of missing, USER and
+writable+executable leaves, while candidate construction checks each required
+plan mapping at runtime. K.2 stays blocked until those K.1d gates are
+complete.
 
 
 ## Runtime survival mapping inventory (M2-K.1d staged checkpoint)
