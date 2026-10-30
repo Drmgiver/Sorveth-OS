@@ -535,7 +535,7 @@ mod tests {
             image_base: 0x20_0000,
             image_size: 0x12_000,
         };
-        assert_eq!(image_page_extent(&boot), Ok((0x20_0000, 0x32_000)));
+        assert_eq!(image_page_extent(&boot), Ok((0x20_0000, 0x21_2000)));
         boot.image_size += 1;
         assert_eq!(image_page_extent(&boot), Err(ManifestError::InvalidRange));
         boot.image_size = 33 * 1024 * 1024;
