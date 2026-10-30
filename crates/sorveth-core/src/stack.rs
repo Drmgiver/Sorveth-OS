@@ -157,25 +157,28 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_u64(found.unknown_device_pages() as u64);
             crate::serial::write_line(")");
 
-    let private_window = match unsafe { crate::root::audit_private_window(&crate::FRAME_POOL) } {
-        Ok(evidence) => evidence,
-        Err(reason) => {
-            crate::serial::write("FATAL: private high-half frame ownership audit failed, code ");
-            crate::serial::write_u64(reason.code());
-            crate::serial::write_line("");
-            crate::halt_forever();
-        }
-    };
-    crate::serial::write_line(
-        "SORVETH M2-K.1f: private high-half scratch mappings are allocator-owned",
-    );
-    crate::serial::write("Sorveth private-window scratch pages: ");
-    crate::serial::write_u64(private_window.mapped_pages);
-    crate::serial::write(" (range ");
-    crate::serial::write_u64(private_window.first_virtual_page);
-    crate::serial::write("..");
-    crate::serial::write_u64(private_window.last_virtual_page);
-    crate::serial::write_line(")");
+            let private_window =
+                match unsafe { crate::root::audit_private_window(&crate::FRAME_POOL) } {
+                    Ok(evidence) => evidence,
+                    Err(reason) => {
+                        crate::serial::write(
+                            "FATAL: private high-half frame ownership audit failed, code ",
+                        );
+                        crate::serial::write_u64(reason.code());
+                        crate::serial::write_line("");
+                        crate::halt_forever();
+                    }
+                };
+            crate::serial::write_line(
+                "SORVETH M2-K.1f: private high-half scratch mappings are allocator-owned",
+            );
+            crate::serial::write("Sorveth private-window scratch pages: ");
+            crate::serial::write_u64(private_window.mapped_pages);
+            crate::serial::write(" (range ");
+            crate::serial::write_u64(private_window.first_virtual_page);
+            crate::serial::write("..");
+            crate::serial::write_u64(private_window.last_virtual_page);
+            crate::serial::write_line(")");
 
             // Compile the manifest into candidate mappings without installing
             // them. The PE image builder owns image mappings; this planner
