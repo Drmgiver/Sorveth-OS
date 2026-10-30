@@ -250,18 +250,26 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 });
             let private_base =
                 alias.and_then(|mapping| mapping.virtual_page.checked_sub(510 * 4096));
-            let probe_frame = private_base.and_then(|window| {
-                (0..plan.mapping_count())
-                    .filter_map(|index| plan.mapping(index))
-                    .find(|mapping| {
-                        mapping.virtual_page >= window
-                            && mapping.virtual_page < window + 510 * 4096
-                            && mapping.writable
-                            && !mapping.executable
-                    })
-                    .map(|mapping| mapping.physical_page)
+            let probe_frames = private_base.and_then(|window| {
+                let mut frames = [0u64; 2];
+                let mut count = 0;
+                for mapping in (0..plan.mapping_count()).filter_map(|index| plan.mapping(index)) {
+                    if mapping.virtual_page >= window
+                        && mapping.virtual_page < window + 510 * 4096
+                        && mapping.writable
+                        && !mapping.executable
+                        && (count == 0 || mapping.physical_page != frames[0])
+                    {
+                        frames[count] = mapping.physical_page;
+                        count += 1;
+                        if count == frames.len() {
+                            break;
+                        }
+                    }
+                }
+                (count == frames.len()).then_some(frames)
             });
-            if let (Some(window_base), Some(probe_frame)) = (private_base, probe_frame) {
+            if let (Some(window_base), Some(probe_frames)) = (private_base, probe_frames) {
                 if unsafe {
                     crate::image_page_tables::verify_temporary_survival_root(
                         boot.image_base,
@@ -269,7 +277,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                         base,
                         end,
                         window_base,
-                        probe_frame,
+                        probe_frames,
                     )
                 }
                 .is_err()
@@ -280,11 +288,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                     crate::halt_forever();
                 }
             } else {
-                crate::serial::write_line("FATAL: candidate physical-window probe target missing");
+                crate::serial::write_line("FATAL: candidate physical-window probe targets missing");
                 crate::halt_forever();
             }
             crate::serial::write_line(
-                "SORVETH M2-K.1l: candidate frame window mapped, read, cleared and invalidated",
+                "SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned",
             );
             crate::serial::write_line(
                 "SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely",

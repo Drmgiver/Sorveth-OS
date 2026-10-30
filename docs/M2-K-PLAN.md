@@ -462,9 +462,10 @@ for PAT selection and memory-type rules.
 Host checks, UEFI cross-build, formatting and QEMU passed in
 [run 41010104216](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216).
 
-**Next:** exercise the candidate's dynamic physical-frame window and cleanup
-lifecycle. Persistent CR3 migration remains blocked on general dynamic
-mapping lifecycle and a complete dependency inventory.
+**Next:** exercise repeated candidate window remapping and audit the bounded
+table-pool frames as runtime dependencies. Persistent CR3 migration remains
+blocked on general dynamic mapping lifecycle and a complete dependency
+inventory.
 
 
 
@@ -511,3 +512,17 @@ old CR3. Back on the original root, the kernel verifies the candidate PTE is
 empty and restores the scratch word. Every QEMU boot variant must report this
 marker. This probes one temporary mapping lifecycle; it does not make the
 window concurrent, reclaimable, or ready for persistent root migration.
+
+
+### K.1m sequential candidate physical-window remapping
+
+The K.1l probe now uses two distinct allocator-owned writable NX frames.
+While the candidate CR3 is active in one assembly block, it reads a unique
+sentinel from the first frame, clears slot 511 through the candidate PT
+self-alias and invalidates the address, then installs the second frame in
+the same slot, invalidates and reads its different sentinel, clears the PTE,
+invalidates again, and restores the original CR3. Back on the original root,
+the kernel verifies the slot is empty and restores both original frame words.
+Every QEMU acceptance variant requires the new marker. This tests sequential
+slot reuse and stale-translation control; it still does not prove concurrent
+window use, reclamation, or full survival-manifest coverage.

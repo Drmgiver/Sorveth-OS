@@ -1005,7 +1005,7 @@ pub unsafe fn verify_temporary_survival_root(
     stack_start: u64,
     stack_end: u64,
     window_base: u64,
-    probe_frame: u64,
+    probe_frames: [u64; 2],
 ) -> Result<(), Error> {
     verify_temporary_root(
         true,
@@ -1013,7 +1013,7 @@ pub unsafe fn verify_temporary_survival_root(
         image_size,
         stack_start,
         stack_end,
-        Some((window_base, probe_frame)),
+        Some((window_base, probe_frames)),
     )
 }
 
@@ -1025,7 +1025,7 @@ unsafe fn verify_temporary_root(
     image_size: u64,
     stack_start: u64,
     stack_end: u64,
-    window_probe: Option<(u64, u64)>,
+    window_probe: Option<(u64, [u64; 2])>,
 ) -> Result<(), Error> {
     if !BUILT.load(Ordering::Acquire)
         || require_survival_plan && !WINDOW_BUILT.load(Ordering::Acquire)
@@ -1057,13 +1057,15 @@ unsafe fn verify_temporary_root(
         return Err(Error::WrongCpuContext);
     }
 
-    let window_probe_state = if let Some((window_base, probe_frame)) = window_probe {
+    let window_probe_state = if let Some((window_base, probe_frames)) = window_probe {
         let window_address = window_base + 511 * PAGE;
         let self_alias = window_base + 510 * PAGE;
         let self_alias_pte = self_alias + 511 * core::mem::size_of::<u64>() as u64;
         if window_base & (PAGE - 1) != 0
-            || probe_frame == 0
-            || probe_frame & (PAGE - 1) != 0
+            || probe_frames[0] == probe_frames[1]
+            || probe_frames
+                .iter()
+                .any(|frame| *frame == 0 || frame & (PAGE - 1) != 0)
             || !crate::root::identity_mapped(ptr::addr_of!(WINDOW_PT) as u64)
         {
             return Err(Error::UnsupportedPlan);
@@ -1072,48 +1074,81 @@ unsafe fn verify_temporary_root(
         if ptr::read_volatile(pte) != 0 {
             return Err(Error::WindowCollision);
         }
-        let previous = crate::root::with_physical_window(probe_frame, |window| {
-            let word = ptr::read_volatile(window as *const u64);
-            ptr::write_volatile(window as *mut u64, SURVIVAL_WINDOW_WORD);
-            word
-        })
-        .map_err(|_| Error::ValidationFailed)?;
-        ptr::write_volatile(pte, probe_frame | PRESENT | WRITE | NX);
-        Some((window_address, self_alias_pte, pte, probe_frame, previous))
+        let sentinels = [
+            SURVIVAL_WINDOW_WORD,
+            SURVIVAL_WINDOW_WORD ^ 0x5a5a_a5a5_3c3c_c3c3,
+        ];
+        let mut previous_words = [0u64; 2];
+        for index in 0..probe_frames.len() {
+            match crate::root::with_physical_window(probe_frames[index], |window| {
+                let previous = ptr::read_volatile(window as *const u64);
+                ptr::write_volatile(window as *mut u64, sentinels[index]);
+                previous
+            }) {
+                Ok(previous) => previous_words[index] = previous,
+                Err(_) => {
+                    for restore in 0..index {
+                        let _ = crate::root::with_physical_window(
+                            probe_frames[restore],
+                            |window| {
+                                ptr::write_volatile(
+                                    window as *mut u64,
+                                    previous_words[restore],
+                                );
+                            },
+                        );
+                    }
+                    return Err(Error::ValidationFailed);
+                }
+            }
+        }
+        ptr::write_volatile(pte, probe_frames[0] | PRESENT | WRITE | NX);
+        Some((window_address, self_alias_pte, pte, probe_frames, previous_words, sentinels))
     } else {
         None
     };
 
     let observed_cr3: u64;
     let observed_stack: u64;
-    let observed_window: u64;
+    let observed_windows: [u64; 2];
     let restored: u64;
-    if let Some((window_address, self_alias_pte, _, _, _)) = window_probe_state {
+    if let Some((window_address, self_alias_pte, _, probe_frames, _, _)) = window_probe_state {
         // No Rust calls or stack writes occur while the candidate root is
-        // active. The sentinel read exercises the dynamic leaf; the PTE is
-        // then cleared through the candidate's own PT self-alias.
+        // active. The leaf is cleared and reused through the candidate's
+        // own PT self-alias, with invalidation after every PTE change.
+        let second_frame_pte = probe_frames[1] | PRESENT | WRITE | NX;
+        let observed_first: u64;
+        let observed_second: u64;
         core::arch::asm!(
             "mov rax, cr3",
             "mov cr3, {candidate}",
             "invlpg [{window_address}]",
             "mov {observed_cr3}, cr3",
             "mov {observed_stack}, qword ptr [rsp]",
-            "mov {observed_window}, qword ptr [{window_address}]",
+            "mov {observed_first}, qword ptr [{window_address}]",
+            "mov qword ptr [{self_alias_pte}], 0",
+            "invlpg [{window_address}]",
+            "mov qword ptr [{self_alias_pte}], {second_frame_pte}",
+            "invlpg [{window_address}]",
+            "mov {observed_second}, qword ptr [{window_address}]",
             "mov qword ptr [{self_alias_pte}], 0",
             "invlpg [{window_address}]",
             "mov cr3, rax",
             candidate = in(reg) candidate,
             window_address = in(reg) window_address,
             self_alias_pte = in(reg) self_alias_pte,
+            second_frame_pte = in(reg) second_frame_pte,
             observed_cr3 = out(reg) observed_cr3,
             observed_stack = out(reg) observed_stack,
-            observed_window = out(reg) observed_window,
+            observed_first = out(reg) observed_first,
+            observed_second = out(reg) observed_second,
             out("rax") _,
             options(nostack, preserves_flags)
         );
+        observed_windows = [observed_first, observed_second];
         core::arch::asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
     } else {
-        observed_window = 0;
+        observed_windows = [0; 2];
         core::arch::asm!(
             "mov rax, cr3",
             "mov cr3, {candidate}",
@@ -1130,18 +1165,22 @@ unsafe fn verify_temporary_root(
     }
 
     let _ = observed_stack;
-    if let Some((_, _, pte, probe_frame, previous)) = window_probe_state {
+    if let Some((_, _, pte, probe_frames, previous_words, sentinels)) = window_probe_state {
         let cleared = ptr::read_volatile(pte) == 0;
         if !cleared {
             ptr::write_volatile(pte, 0);
         }
-        let restored_word = crate::root::with_physical_window(probe_frame, |window| {
-            ptr::write_volatile(window as *mut u64, previous);
-        });
-        if restored_word.is_err() {
-            return Err(Error::ValidationFailed);
+        let mut restored = true;
+        for index in 0..probe_frames.len() {
+            if crate::root::with_physical_window(probe_frames[index], |window| {
+                ptr::write_volatile(window as *mut u64, previous_words[index]);
+            })
+            .is_err()
+            {
+                restored = false;
+            }
         }
-        if !cleared || observed_window != SURVIVAL_WINDOW_WORD {
+        if !cleared || !restored || observed_windows != sentinels {
             return Err(Error::ValidationFailed);
         }
     }

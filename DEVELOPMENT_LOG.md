@@ -695,3 +695,9 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 
 - Added a candidate-only temporary physical-window probe using one allocator-owned RW/NX scratch frame. It saves and restores the frame's original word, reads a sentinel through candidate slot 511, clears the PTE through the candidate's self-alias, invalidates the TLB entry, and restores the original CR3 in the same assembly block.
 - The QEMU acceptance matrix now requires the lifecycle marker. The active Sorveth root is never modified by this probe; it does not prove general or concurrent frame-window operation.
+
+## 2026-10-30 — M2-K.1m sequential candidate frame-window remapping
+
+- Expanded the candidate probe to use two distinct writable NX frames and two different sentinels. Under one candidate CR3 activation, it reads frame one, clears and invalidates slot 511, maps frame two into the same slot, reads its sentinel, then clears and invalidates before restoring the original CR3.
+- After returning to the Sorveth root, the kernel verifies slot 511 is empty and restores both original frame words. All QEMU acceptance variants require the new marker.
+- This exercises sequential reuse and stale-translation control in the candidate. It does not prove concurrent use, frame reclamation, or a complete runtime survival inventory.
