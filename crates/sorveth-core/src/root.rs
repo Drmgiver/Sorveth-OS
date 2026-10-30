@@ -560,7 +560,9 @@ pub(crate) enum PrivateWindowAuditFailure {
     CpuContext,
     BaseAddress,
     PageTableAlias,
-    SelfOrReservedEntry,
+    SelfAliasEntry,
+    PhysicalWindowEntry,
+    GuardEntry,
     LeafPermissions,
     UnownedFrame,
     DuplicateFrame,
@@ -573,7 +575,9 @@ impl PrivateWindowAuditFailure {
             Self::CpuContext => 1,
             Self::BaseAddress => 2,
             Self::PageTableAlias => 3,
-            Self::SelfOrReservedEntry => 4,
+            Self::SelfAliasEntry => 4,
+            Self::PhysicalWindowEntry => 9,
+            Self::GuardEntry => 10,
             Self::LeafPermissions => 5,
             Self::UnownedFrame => 6,
             Self::DuplicateFrame => 7,
@@ -621,11 +625,14 @@ pub(crate) unsafe fn audit_private_window(
     let entries = table_alias as *const u64;
     let self_entry = ptr::read_volatile(entries.add(PRIVATE_PT_ALIAS_INDEX));
     let self_mask = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
-    if self_entry & self_mask != table_frame | PRESENT | WRITE | NO_EXECUTE
-        || ptr::read_volatile(entries.add(PHYSICAL_WINDOW_INDEX)) != 0
-        || ptr::read_volatile(entries.add(1)) != 0
-    {
-        return Err(Failure::SelfOrReservedEntry);
+    if self_entry & self_mask != table_frame | PRESENT | WRITE | NO_EXECUTE {
+        return Err(Failure::SelfAliasEntry);
+    }
+    if ptr::read_volatile(entries.add(PHYSICAL_WINDOW_INDEX)) != 0 {
+        return Err(Failure::PhysicalWindowEntry);
+    }
+    if ptr::read_volatile(entries.add(1)) != 0 {
+        return Err(Failure::GuardEntry);
     }
 
     let allowed = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
