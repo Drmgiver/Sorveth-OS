@@ -108,6 +108,10 @@ fn leaf_flags(policy: image_sections::PagePolicy) -> Option<u64> {
     }
 }
 
+fn candidate_leaf_permitted(present: bool, user: bool, writable: bool, executable: bool) -> bool {
+    present && !user && !(writable && executable)
+}
+
 fn same_one_gib_region(start: u64, image_size: u64) -> bool {
     if image_size < PAGE || image_size & (PAGE - 1) != 0 {
         return false;
@@ -779,6 +783,14 @@ unsafe fn audit_candidate_table(
             return Err(Error::ValidationFailed);
         }
         if level == 1 {
+            if !candidate_leaf_permitted(
+                true,
+                entry & USER != 0,
+                entry & WRITE != 0,
+                entry & NX == 0,
+            ) {
+                return Err(Error::ValidationFailed);
+            }
             continue;
         }
         audit_candidate_table(
@@ -1435,5 +1447,14 @@ mod tests {
             required_pt_pages(0x1000, u64::MAX),
             Err(Error::CrossesGigabyte)
         );
+    }
+
+    #[test]
+    fn candidate_mapping_audit_rejects_missing_user_and_writable_executable_leaves() {
+        assert!(!candidate_leaf_permitted(false, false, false, false));
+        assert!(!candidate_leaf_permitted(true, true, false, false));
+        assert!(!candidate_leaf_permitted(true, false, true, true));
+        assert!(candidate_leaf_permitted(true, false, true, false));
+        assert!(candidate_leaf_permitted(true, false, false, true));
     }
 }

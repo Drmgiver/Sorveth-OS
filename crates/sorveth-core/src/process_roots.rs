@@ -360,7 +360,7 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                     .checked_add(offset)
                     .ok_or(Error::SupervisorMappingMismatch)?;
                 let observed = crate::supervisor_audit::walk(root, virtual_page, |entry| {
-                    crate::root::read_bootstrap_supervisor_entry(entry)
+                    read_supervisor_table_entry(entry)
                 })
                 .map_err(|_| Error::SupervisorMappingMismatch)?;
                 if observed.physical_address != physical_page
