@@ -237,6 +237,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 }
             };
             crate::serial::write_line(
+                "SORVETH M2-K.1j: inactive complete planned mappings verified",
+            );
+            crate::serial::write_line(
                 "SORVETH M2-K.1k: every survival manifest record verified in candidate",
             );
             if unsafe {

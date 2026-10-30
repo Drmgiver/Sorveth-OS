@@ -635,29 +635,28 @@ pub unsafe fn extend_and_verify_survival_plan<const N: usize, const M: usize>(
     let mut survival_records_verified = 0usize;
     for index in 0..manifest.len() {
         let record = manifest.get(index).ok_or(Error::ValidationFailed)?;
-        let (physical, writable, executable) = if record.kind
-            == supervisor_manifest::Kind::FramebufferDevice
-        {
-            let fb = framebuffer.ok_or(Error::InvalidFramebuffer)?;
-            let fb_end = fb
-                .virtual_start
-                .checked_add(fb.pages * PAGE)
-                .ok_or(Error::InvalidFramebuffer)?;
-            if record.virtual_page < fb.virtual_start || record.virtual_page >= fb_end {
-                return Err(Error::InvalidFramebuffer);
-            }
-            (record.physical_page, true, false)
-        } else if record.virtual_page >= boot.image_base && record.virtual_page < image_end {
-            let bits = leaf_flags(layout.classify(record.virtual_page - boot.image_base))
-                .ok_or(Error::ValidationFailed)?;
-            (record.physical_page, bits & WRITE != 0, bits & NX == 0)
-        } else {
-            let mapping = (0..plan.mapping_count())
-                .filter_map(|mapping_index| plan.mapping(mapping_index))
-                .find(|mapping| mapping.virtual_page == record.virtual_page)
-                .ok_or(Error::ValidationFailed)?;
-            (mapping.physical_page, mapping.writable, mapping.executable)
-        };
+        let (physical, writable, executable) =
+            if record.kind == supervisor_manifest::Kind::FramebufferDevice {
+                let fb = framebuffer.ok_or(Error::InvalidFramebuffer)?;
+                let fb_end = fb
+                    .virtual_start
+                    .checked_add(fb.pages * PAGE)
+                    .ok_or(Error::InvalidFramebuffer)?;
+                if record.virtual_page < fb.virtual_start || record.virtual_page >= fb_end {
+                    return Err(Error::InvalidFramebuffer);
+                }
+                (record.physical_page, true, false)
+            } else if record.virtual_page >= boot.image_base && record.virtual_page < image_end {
+                let bits = leaf_flags(layout.classify(record.virtual_page - boot.image_base))
+                    .ok_or(Error::ValidationFailed)?;
+                (record.physical_page, bits & WRITE != 0, bits & NX == 0)
+            } else {
+                let mapping = (0..plan.mapping_count())
+                    .filter_map(|mapping_index| plan.mapping(mapping_index))
+                    .find(|mapping| mapping.virtual_page == record.virtual_page)
+                    .ok_or(Error::ValidationFailed)?;
+                (mapping.physical_page, mapping.writable, mapping.executable)
+            };
         if physical != record.physical_page {
             return Err(Error::ValidationFailed);
         }

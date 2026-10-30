@@ -106,6 +106,9 @@ for marker in \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
   'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
+  'SORVETH M2-K.1j: inactive complete planned mappings verified' \
+  'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
+  'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -177,6 +180,9 @@ for marker in \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
   'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
+  'SORVETH M2-K.1j: inactive complete planned mappings verified' \
+  'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
+  'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -241,6 +247,9 @@ for marker in \
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
   'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
+  'SORVETH M2-K.1j: inactive complete planned mappings verified' \
+  'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
+  'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -310,6 +319,9 @@ for side in a b; do
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
   'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
+  'SORVETH M2-K.1j: inactive complete planned mappings verified' \
+  'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
+  'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -368,6 +380,9 @@ for side in a b; do
   'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked' \
   'SORVETH M2-K.1d: temporary PE-only CR3 transition and stack access verified' \
+  'SORVETH M2-K.1j: inactive complete planned mappings verified' \
+  'SORVETH M2-K.1k: every survival manifest record verified in candidate' \
+  'SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
