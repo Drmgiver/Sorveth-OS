@@ -39,7 +39,7 @@ const FIRST_TEST_WORD: u64 = 0x534f_5256_4541_4f4e;
 #[cfg(target_arch = "x86_64")]
 const SECOND_TEST_WORD: u64 = 0x534f_5256_4542_4f4e;
 #[cfg(target_arch = "x86_64")]
-const INHERITED_TABLE_CAPACITY: usize = 512;
+const INHERITED_TABLE_CAPACITY: usize = 8192;
 
 #[cfg(target_arch = "x86_64")]
 #[repr(C, align(4096))]
@@ -389,68 +389,70 @@ unsafe fn inventory_inherited_table(
 
     let tables = ptr::addr_of_mut!(INHERITED_TABLES).cast::<InheritedTableFrame>();
     let count = ptr::addr_of_mut!(INHERITED_TABLE_COUNT);
-    let mut found = None;
-    for index in 0..ptr::read_volatile(count) {
-        if ptr::read_volatile(tables.add(index)).physical == frame {
-            found = Some(index);
+    let mut slot = ((frame / PAGE) as usize) & (INHERITED_TABLE_CAPACITY - 1);
+    let mut found = false;
+    for _ in 0..INHERITED_TABLE_CAPACITY {
+        let physical = ptr::read_volatile(ptr::addr_of!((*tables.add(slot)).physical));
+        if physical == frame {
+            found = true;
             break;
         }
+        if physical == 0 {
+            break;
+        }
+        slot = (slot + 1) & (INHERITED_TABLE_CAPACITY - 1);
     }
 
     let visit_bit = 1u16 << ((level as u16 - 1) * 2 + root_bit.trailing_zeros() as u16);
-    match found {
-        Some(index) => {
-            let record = tables.add(index);
-            let mut visits = ptr::read_volatile(ptr::addr_of!((*record).visits));
-            let old_roots = ptr::read_volatile(ptr::addr_of!((*record).roots));
-            ptr::write_volatile(ptr::addr_of_mut!((*record).roots), old_roots | root_bit);
-            if visits & visit_bit != 0 {
-                return Ok(());
-            }
-            visits |= visit_bit;
-            ptr::write_volatile(ptr::addr_of_mut!((*record).visits), visits);
+    let record = tables.add(slot);
+    if found {
+        let mut visits = ptr::read_volatile(ptr::addr_of!((*record).visits));
+        let old_roots = ptr::read_volatile(ptr::addr_of!((*record).roots));
+        ptr::write_volatile(ptr::addr_of_mut!((*record).roots), old_roots | root_bit);
+        if visits & visit_bit != 0 {
+            return Ok(());
         }
-        None => {
-            let current = ptr::read_volatile(count);
-            if current >= INHERITED_TABLE_CAPACITY {
-                return Err(Error::InheritedTableInventoryFull);
-            }
-            let descriptor = crate::supervisor_manifest::uefi_type_of(map, frame)
-                .map_err(|_| Error::InheritedTableInventoryFailed)?
+        visits |= visit_bit;
+        ptr::write_volatile(ptr::addr_of_mut!((*record).visits), visits);
+    } else {
+        let current = ptr::read_volatile(count);
+        if current >= INHERITED_TABLE_CAPACITY {
+            return Err(Error::InheritedTableInventoryFull);
+        }
+        let descriptor = crate::supervisor_manifest::uefi_type_of(map, frame)
+            .map_err(|_| Error::InheritedTableInventoryFailed)?
+            .ok_or(Error::InheritedTableInventoryFailed)?;
+        ptr::write_volatile(
+            record,
+            InheritedTableFrame {
+                physical: frame,
+                visits: visit_bit,
+                roots: root_bit,
+            },
+        );
+        ptr::write_volatile(count, current + 1);
+        if (descriptor as usize) < 16 {
+            let counts = ptr::addr_of_mut!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>();
+            let type_count = counts.add(descriptor as usize);
+            let next = ptr::read_volatile(type_count)
+                .checked_add(1)
                 .ok_or(Error::InheritedTableInventoryFailed)?;
-            let record = tables.add(current);
-            ptr::write_volatile(
-                record,
-                InheritedTableFrame {
-                    physical: frame,
-                    visits: visit_bit,
-                    roots: root_bit,
-                },
-            );
-            ptr::write_volatile(count, current + 1);
-            if (descriptor as usize) < 16 {
-                let counts = ptr::addr_of_mut!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>();
-                let type_count = counts.add(descriptor as usize);
-                let next = ptr::read_volatile(type_count)
-                    .checked_add(1)
-                    .ok_or(Error::InheritedTableInventoryFailed)?;
-                ptr::write_volatile(type_count, next);
-            } else {
-                let other = ptr::addr_of_mut!(INHERITED_OTHER_UEFI_TYPES);
-                let next = ptr::read_volatile(other)
-                    .checked_add(1)
-                    .ok_or(Error::InheritedTableInventoryFailed)?;
-                ptr::write_volatile(other, next);
-            }
+            ptr::write_volatile(type_count, next);
+        } else {
+            let other = ptr::addr_of_mut!(INHERITED_OTHER_UEFI_TYPES);
+            let next = ptr::read_volatile(other)
+                .checked_add(1)
+                .ok_or(Error::InheritedTableInventoryFailed)?;
+            ptr::write_volatile(other, next);
         }
     }
 
+    let mut entries = [0u64; 512];
+    if !crate::root::read_bootstrap_supervisor_table(frame, &mut entries) {
+        return Err(Error::InheritedTableInventoryFailed);
+    }
     for entry_index in 0..512u64 {
-        let address = frame
-            .checked_add(entry_index * 8)
-            .ok_or(Error::InheritedTableInventoryFailed)?;
-        let entry = crate::root::read_bootstrap_supervisor_entry(address)
-            .ok_or(Error::InheritedTableInventoryFailed)?;
+        let entry = entries[entry_index as usize];
         if entry & PRESENT == 0 {
             continue;
         }
@@ -514,7 +516,7 @@ pub(crate) unsafe fn audit_inherited_page_tables(
     let tables = ptr::addr_of!(INHERITED_TABLES).cast::<InheritedTableFrame>();
     let count = ptr::read_volatile(ptr::addr_of!(INHERITED_TABLE_COUNT));
     let mut shared = 0usize;
-    for index in 0..count {
+    for index in 0..INHERITED_TABLE_CAPACITY {
         if ptr::read_volatile(ptr::addr_of!((*tables.add(index)).roots)) == 3 {
             shared = shared
                 .checked_add(1)

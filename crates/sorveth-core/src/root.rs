@@ -419,6 +419,36 @@ pub(crate) unsafe fn read_bootstrap_supervisor_entry(address: u64) -> Option<u64
     .ok()
 }
 
+/// Copy one identity-mapped inherited page-table page through Sorveth's
+/// temporary frame window. Validating the identity mapping once per page
+/// keeps bounded ancestry inventory practical without exposing a physical
+/// pointer to its caller.
+///
+/// # Safety
+/// Kernel CR3 active on the single bootstrap CPU with IRQs disabled; the
+/// inherited page-table page is immutable for the duration of the copy.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_bootstrap_supervisor_table(
+    frame: u64,
+    entries: &mut [u64; 512],
+) -> bool {
+    if frame == 0 || frame & 4095 != 0 || frame & !ADDRESS_MASK != 0 {
+        return false;
+    }
+    let Some(kernel_root) = kernel_root_physical() else {
+        return false;
+    };
+    if inherited_translate(kernel_root, frame) != Some(frame) {
+        return false;
+    }
+    with_physical_window(frame, |window| {
+        for (index, entry) in entries.iter_mut().enumerate() {
+            *entry = ptr::read_volatile(window.add(index * 8).cast::<u64>());
+        }
+    })
+    .is_ok()
+}
+
 /// Claim, zero, and map one additional supervisor-only NX 4 KiB page inside
 /// Sorveth's private 2 MiB upper-half bootstrap window. Slot one is reserved
 /// as an intentionally absent page for the controlled #PF acceptance test.
