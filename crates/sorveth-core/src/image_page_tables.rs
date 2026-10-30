@@ -11,7 +11,10 @@ use sorveth_abi::BootInfo;
 use sorveth_memory::MemoryMap;
 
 #[cfg(target_arch = "x86_64")]
-use core::{ptr, sync::atomic::{AtomicBool, Ordering}};
+use core::{
+    ptr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 const PAGE: u64 = 4096;
 const PRESENT: u64 = 1;
@@ -72,7 +75,8 @@ fn same_one_gib_region(start: u64, image_size: u64) -> bool {
     if image_size < PAGE || image_size & (PAGE - 1) != 0 {
         return false;
     }
-    start.checked_add(image_size - 1)
+    start
+        .checked_add(image_size - 1)
         .is_some_and(|end| start >> 30 == end >> 30)
 }
 
@@ -101,16 +105,20 @@ unsafe fn read_candidate_entry(
     used: usize,
 ) -> Option<u64> {
     let frame = address & !(PAGE - 1);
-    if address & 7 != 0 || !(
-        frame == root || frame == pdpt || frame == pd ||
-        (frame >= pts && frame < pts + used as u64 * PAGE
-            && (frame - pts) & (PAGE - 1) == 0)
-    ) {
+    if address & 7 != 0
+        || !(frame == root
+            || frame == pdpt
+            || frame == pd
+            || (frame >= pts
+                && frame < pts + used as u64 * PAGE
+                && (frame - pts) & (PAGE - 1) == 0))
+    {
         return None;
     }
     crate::root::with_physical_window(frame, |window| {
         ptr::read_volatile(window.add((address - frame) as usize) as *const u64)
-    }).ok()
+    })
+    .ok()
 }
 
 /// Construct *only* the classified loaded-image subtree into owned, inert
@@ -122,10 +130,7 @@ unsafe fn read_candidate_entry(
 /// the whole-image backing check and strict PE parsing have succeeded.
 /// Loaded PE image and UEFI descriptors remain immutable and identity-backed.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn build_and_verify(
-    boot: &BootInfo,
-    map: &MemoryMap<'_>,
-) -> Result<Evidence, Error> {
+pub unsafe fn build_and_verify(boot: &BootInfo, map: &MemoryMap<'_>) -> Result<Evidence, Error> {
     if !boot.is_valid() || BUILT.swap(true, Ordering::AcqRel) {
         return Err(Error::AlreadyBuilt);
     }
@@ -133,19 +138,13 @@ pub unsafe fn build_and_verify(
     let flags: u64;
     core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
     core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
-    if flags & (1 << 9) != 0 ||
-        crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK)
-    {
+    if flags & (1 << 9) != 0 || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK) {
         return Err(Error::WrongCpuContext);
     }
-    supervisor_manifest::verify_loaded_image_extent(map, boot)
-        .map_err(|_| Error::InvalidImage)?;
-    let bytes = core::slice::from_raw_parts(
-        boot.image_base as *const u8,
-        image_sections::HEADER_LIMIT,
-    );
-    let layout = image_sections::parse(bytes, boot.image_size)
-        .map_err(|_| Error::InvalidImage)?;
+    supervisor_manifest::verify_loaded_image_extent(map, boot).map_err(|_| Error::InvalidImage)?;
+    let bytes =
+        core::slice::from_raw_parts(boot.image_base as *const u8, image_sections::HEADER_LIMIT);
+    let layout = image_sections::parse(bytes, boot.image_size).map_err(|_| Error::InvalidImage)?;
     let needed = required_pt_pages(boot.image_base, boot.image_size)?;
 
     let root = ptr::addr_of_mut!(IMAGE_ROOT) as u64;
@@ -185,7 +184,10 @@ pub unsafe fn build_and_verify(
         holes_unmapped: 0,
         table_frames: needed + 3,
     };
-    let end = boot.image_base.checked_add(boot.image_size).ok_or(Error::InvalidImage)?;
+    let end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
     let mut address = boot.image_base;
     let mut assigned = 0usize;
     while address < end {
@@ -204,10 +206,7 @@ pub unsafe fn build_and_verify(
             current & ADDRESS_MASK
         };
         if let Some(bits) = leaf_flags(layout.classify(address - boot.image_base)) {
-            ptr::write_volatile(
-                (pt_addr as *mut u64).add(pt_slot),
-                address | bits,
-            );
+            ptr::write_volatile((pt_addr as *mut u64).add(pt_slot), address | bits);
             match layout.classify(address - boot.image_base) {
                 image_sections::PagePolicy::Code => evidence.mapped_code += 1,
                 image_sections::PagePolicy::Writable => evidence.mapped_writable += 1,
@@ -231,11 +230,12 @@ pub unsafe fn build_and_verify(
         });
         match (expected, observed) {
             (None, Err(supervisor_audit::AuditError::MissingMapping)) => {}
-            (Some(bits), Ok(mapped)) if mapped.physical_address == address
-                && !mapped.user_accessible
-                && mapped.leaf_size == PAGE
-                && mapped.writable == (bits & WRITE != 0)
-                && mapped.executable == (bits & NX == 0) => {}
+            (Some(bits), Ok(mapped))
+                if mapped.physical_address == address
+                    && !mapped.user_accessible
+                    && mapped.leaf_size == PAGE
+                    && mapped.writable == (bits & WRITE != 0)
+                    && mapped.executable == (bits & NX == 0) => {}
             _ => return Err(Error::ValidationFailed),
         }
         address += PAGE;
@@ -243,7 +243,9 @@ pub unsafe fn build_and_verify(
     // Unmapped image tail: no accidental shared firmware PDPT linkage.
     if supervisor_audit::walk(root, end, |entry| {
         read_candidate_entry(entry, root, pdpt, pd, pts, needed)
-    }).is_ok() {
+    })
+    .is_ok()
+    {
         return Err(Error::ValidationFailed);
     }
     Ok(evidence)
@@ -256,9 +258,18 @@ mod tests {
     #[test]
     fn derives_exact_wx_split_and_rejects_unclassified() {
         assert_eq!(leaf_flags(image_sections::PagePolicy::Code), Some(1));
-        assert_eq!(leaf_flags(image_sections::PagePolicy::Writable), Some(1 | 2 | NX));
-        assert_eq!(leaf_flags(image_sections::PagePolicy::ReadOnly), Some(1 | NX));
-        assert_eq!(leaf_flags(image_sections::PagePolicy::Headers), Some(1 | NX));
+        assert_eq!(
+            leaf_flags(image_sections::PagePolicy::Writable),
+            Some(1 | 2 | NX)
+        );
+        assert_eq!(
+            leaf_flags(image_sections::PagePolicy::ReadOnly),
+            Some(1 | NX)
+        );
+        assert_eq!(
+            leaf_flags(image_sections::PagePolicy::Headers),
+            Some(1 | NX)
+        );
         assert_eq!(leaf_flags(image_sections::PagePolicy::Unclassified), None);
     }
 
@@ -266,9 +277,15 @@ mod tests {
     fn limits_candidate_to_bounded_single_one_gib_region() {
         assert_eq!(required_pt_pages(0x20_0000, 0x10_0000), Ok(1));
         assert_eq!(required_pt_pages(0x20_1000, 0x20_0000), Ok(2));
-        assert_eq!(required_pt_pages(0x3fff_f000, 0x2000), Err(Error::CrossesGigabyte));
+        assert_eq!(
+            required_pt_pages(0x3fff_f000, 0x2000),
+            Err(Error::CrossesGigabyte)
+        );
         assert_eq!(required_pt_pages(0x1000, 0), Err(Error::CrossesGigabyte));
         assert_eq!(required_pt_pages(0x1001, 4096), Err(Error::CrossesGigabyte));
-        assert_eq!(required_pt_pages(0x1000, u64::MAX), Err(Error::CrossesGigabyte));
+        assert_eq!(
+            required_pt_pages(0x1000, u64::MAX),
+            Err(Error::CrossesGigabyte)
+        );
     }
 }

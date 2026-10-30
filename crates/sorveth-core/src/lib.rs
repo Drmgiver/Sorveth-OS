@@ -7,8 +7,8 @@
 #[cfg(target_arch = "x86_64")]
 mod address_scheduler;
 mod fibers;
-mod image_sections;
 mod image_page_tables;
+mod image_sections;
 mod interrupts;
 #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
 mod isolation;
@@ -182,9 +182,8 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     // image addresses and strict PE W^X section metadata. Never activate it:
     // other supervisor regions and page-table ownership remain unproven.
     match unsafe { image_page_tables::build_and_verify(boot, &map) } {
-        Ok(proof) if proof.mapped_code > 0
-            && proof.mapped_writable > 0
-            && proof.table_frames >= 4 =>
+        Ok(proof)
+            if proof.mapped_code > 0 && proof.mapped_writable > 0 && proof.table_frames >= 4 =>
         {
             serial::write_line(
                 "SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked",
