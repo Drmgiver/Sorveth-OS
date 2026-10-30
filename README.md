@@ -121,7 +121,8 @@ identity dependencies, implement safe dynamic frame lifetime/reclamation,
 process creation/teardown, broader buffer operations and fault recovery.
 The current INT 0x80 memory-copy ABI remains **test-only** and limited to
 eight-byte transfers. The private high-half mappings are ownership-audited
-and verified in an inactive candidate hierarchy; they are not part of a
+and verified in an inactive candidate hierarchy. The framebuffer range is
+also checked and mapped uncached in that candidate; neither is part of a
 permanently independent kernel root. See [the active K plan](docs/M2-K-PLAN.md).
 
 Only after memory independence, process containment, services, security and

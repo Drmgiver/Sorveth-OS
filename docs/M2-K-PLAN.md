@@ -439,7 +439,31 @@ framebuffer cache policy and all remaining survival mappings are still
 outstanding. Host checks, UEFI cross-build, formatting and all seven QEMU
 variants passed in [run 41009221778](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41009221778).
 
-**Next:** extend the inactive root to include the remaining verified supervisor
-survival set, including explicit device cache attributes, before any broader
-CR3 transition is considered.
+### K.1i inactive framebuffer mapping with verified UC cache policy
+
+The candidate planner derives the full page-rounded GOP framebuffer range
+from the trusted handoff, requires matching identity-mapped endpoint samples,
+rejects overlap with the loaded image or planned RAM pages, and limits the
+range to 64 MiB. Before construction, the kernel checks every framebuffer page
+for a supervisor-writable identity mapping and rejects conflicting UEFI
+backing types.
+
+The candidate uses 4-KiB supervisor RW/NX leaves with PCD and PWT set, which
+select IA32_PAT entry 3 when the PAT bit is clear. The builder confirms PAT
+support and verifies entry 3 is UC before adding the leaves. It then checks
+the exact PTE cache bits through the Sorveth frame window and verifies the
+candidate walk. Across all seven QEMU variants, 1,000 framebuffer pages and
+the four private-window leaves passed. The expanded candidate remains
+inactive; this does not establish coverage for other non-image manifest
+mappings or justify a persistent CR3 transition. See the
+[Intel Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+for PAT selection and memory-type rules.
+
+Host checks, UEFI cross-build, formatting and QEMU passed in
+[run 41010104216](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216).
+
+**Next:** generalize the candidate hierarchy to include every verified
+non-image supervisor mapping, then audit the complete survival set before
+considering any persistent root transition.
+
 

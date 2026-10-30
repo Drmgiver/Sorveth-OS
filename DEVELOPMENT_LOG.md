@@ -665,3 +665,13 @@ M2-K.1 remains partial. Next is to construct and walk the owned high-half page-t
 - Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41009221778
 
 M2-K.1 remains partial. The candidate still lacks the complete non-image supervisor survival set and device cache policy required for a persistent independent root.
+
+
+## 2026-10-30 — M2-K.1i inactive UC framebuffer mapping
+
+- Added a page-rounded, bounded GOP framebuffer range to the supervisor plan, backed by the trusted framebuffer handoff and its audited endpoint samples.
+- The candidate accepts only identity-mapped supervisor-writable framebuffer pages with no conflicting RAM/firmware descriptor type. It verifies CPU PAT support and requires IA32_PAT entry 3 to be UC before using PCD+PWT leaves.
+- Candidate PTE cache bits are read through Sorveth's frame window and checked alongside supervisor, writable, NX and identity-translation properties. All seven QEMU variants verified 1,000 framebuffer pages plus the four private-window mappings.
+- No candidate CR3 was activated. Other non-image supervisor mappings are not yet supported by this builder. Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41010104216
+
+M2-K.1 remains partial; the inactive candidate still needs generalized non-image mapping coverage and a complete supervisor survival audit before any persistent CR3 transition.

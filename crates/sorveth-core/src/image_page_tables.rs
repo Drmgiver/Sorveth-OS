@@ -504,6 +504,7 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
     })
 }
 
+/// For 4-KiB leaves, PAT=0 with PCD|PWT selects IA32_PAT entry 3.
 #[cfg(target_arch = "x86_64")]
 unsafe fn pat_entry_three_is_uncacheable() -> bool {
     if core::arch::x86_64::__cpuid(1).edx & (1 << 16) == 0 {
