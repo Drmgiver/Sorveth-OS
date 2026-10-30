@@ -194,8 +194,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     let private_window = match unsafe { crate::root::audit_private_window(&crate::FRAME_POOL) } {
         Ok(evidence) => evidence,
-        Err(_) => {
-            crate::serial::write_line("FATAL: private high-half frame ownership audit failed");
+        Err(reason) => {
+            crate::serial::write("FATAL: private high-half frame ownership audit failed, code ");
+            crate::serial::write_u64(reason.code());
+            crate::serial::write_line("");
             crate::halt_forever();
         }
     };

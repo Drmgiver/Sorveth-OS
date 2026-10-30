@@ -554,6 +554,34 @@ pub(crate) struct PrivateWindowEvidence {
     pub last_virtual_page: u64,
 }
 
+/// Audit failure codes keep the boot diagnostic compact and stable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrivateWindowAuditFailure {
+    CpuContext,
+    BaseAddress,
+    PageTableAlias,
+    SelfOrReservedEntry,
+    LeafPermissions,
+    UnownedFrame,
+    DuplicateFrame,
+    PageCount,
+}
+
+impl PrivateWindowAuditFailure {
+    pub(crate) const fn code(self) -> u64 {
+        match self {
+            Self::CpuContext => 1,
+            Self::BaseAddress => 2,
+            Self::PageTableAlias => 3,
+            Self::SelfOrReservedEntry => 4,
+            Self::LeafPermissions => 5,
+            Self::UnownedFrame => 6,
+            Self::DuplicateFrame => 7,
+            Self::PageCount => 8,
+        }
+    }
+}
+
 /// Audit every present private-window leaf. Slot 1 remains the guard page,
 /// slot 510 is the page-table self-alias, and slot 511 must be empty while
 /// the temporary physical-frame window is idle.
@@ -563,18 +591,20 @@ pub(crate) struct PrivateWindowEvidence {
 #[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn audit_private_window(
     pool: &FramePool<256>,
-) -> Result<PrivateWindowEvidence, Error> {
-    let root = kernel_root_physical().ok_or(Error::RootNotInstalled)?;
-    let base = kernel_private_address().ok_or(Error::RootNotInstalled)?;
+) -> Result<PrivateWindowEvidence, PrivateWindowAuditFailure> {
+    use PrivateWindowAuditFailure as Failure;
+
+    let root = kernel_root_physical().ok_or(Failure::CpuContext)?;
+    let base = kernel_private_address().ok_or(Failure::CpuContext)?;
     let active: u64;
     let flags: u64;
     core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
     core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
     if active & ADDRESS_MASK != root || flags & (1 << 9) != 0 {
-        return Err(Error::WrongCpuContext);
+        return Err(Failure::CpuContext);
     }
     if base & 4095 != 0 || base >> 39 & 511 < 256 {
-        return Err(Error::VerificationFailed);
+        return Err(Failure::BaseAddress);
     }
 
     let table_alias = base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096;
@@ -585,7 +615,7 @@ pub(crate) unsafe fn audit_private_window(
             Some(ptr::read_volatile(address as *const u64))
         }) != Some(table_frame)
     {
-        return Err(Error::VerificationFailed);
+        return Err(Failure::PageTableAlias);
     }
 
     let entries = table_alias as *const u64;
@@ -595,7 +625,7 @@ pub(crate) unsafe fn audit_private_window(
         || ptr::read_volatile(entries.add(PHYSICAL_WINDOW_INDEX)) != 0
         || ptr::read_volatile(entries.add(1)) != 0
     {
-        return Err(Error::VerificationFailed);
+        return Err(Failure::SelfOrReservedEntry);
     }
 
     let allowed = ADDRESS_MASK | PRESENT | WRITE | NO_EXECUTE | (1 << 5) | (1 << 6);
@@ -609,22 +639,18 @@ pub(crate) unsafe fn audit_private_window(
         let entry = ptr::read_volatile(entries.add(slot));
         if entry & PRESENT == 0 {
             if entry != 0 {
-                return Err(Error::VerificationFailed);
+                return Err(Failure::LeafPermissions);
             }
             continue;
         }
         if entry & !allowed != 0
             || entry & (PRESENT | WRITE | NO_EXECUTE) != PRESENT | WRITE | NO_EXECUTE
         {
-            return Err(Error::VerificationFailed);
+            return Err(Failure::LeafPermissions);
         }
         let physical = entry & ADDRESS_MASK;
-        if physical == 0
-            || !pool
-                .owns_frame(physical)
-                .map_err(|_| Error::FrameUnavailable)?
-        {
-            return Err(Error::FrameUnavailable);
+        if physical == 0 || !pool.owns_frame(physical).unwrap_or(false) {
+            return Err(Failure::UnownedFrame);
         }
         for prior in 0..slot {
             if prior == 1 {
@@ -632,7 +658,7 @@ pub(crate) unsafe fn audit_private_window(
             }
             let prior_entry = ptr::read_volatile(entries.add(prior));
             if prior_entry & PRESENT != 0 && prior_entry & ADDRESS_MASK == physical {
-                return Err(Error::VerificationFailed);
+                return Err(Failure::DuplicateFrame);
             }
         }
         let virtual_page = base + slot as u64 * 4096;
@@ -644,7 +670,7 @@ pub(crate) unsafe fn audit_private_window(
     }
 
     if count == 0 || count != private_pages() {
-        return Err(Error::VerificationFailed);
+        return Err(Failure::PageCount);
     }
     Ok(PrivateWindowEvidence {
         base,
