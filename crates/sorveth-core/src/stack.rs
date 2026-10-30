@@ -170,7 +170,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             let plan = match unsafe {
                 crate::supervisor_root_plan::compile(&found, &boot, image_header)
             } {
-                Ok(plan) if plan.image_records() > 0 && plan.mapping_count() > 0 => plan,
+                Ok(plan) if plan.image_records() > 0 => plan,
                 _ => {
                     crate::serial::write_line("FATAL: supervisor survival mapping plan failed");
                     crate::halt_forever();
