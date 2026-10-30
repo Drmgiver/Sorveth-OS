@@ -329,6 +329,13 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
             let mapping = plan
                 .mapping(index)
                 .ok_or(Error::SupervisorMappingMismatch)?;
+            #[cfg(feature = "qemu-independent-root")]
+            let expected_physical = crate::image_page_tables::candidate_self_alias_frame(
+                mapping.virtual_page,
+            )
+                .unwrap_or(mapping.physical_page);
+            #[cfg(not(feature = "qemu-independent-root"))]
+            let expected_physical = mapping.physical_page;
             let observed =
                 match crate::supervisor_audit::walk(root, mapping.virtual_page, |entry| {
                     read_supervisor_table_entry(entry)
@@ -346,7 +353,7 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                         return Err(Error::SupervisorMappingMismatch);
                     }
                 };
-            if observed.physical_address != mapping.physical_page
+            if observed.physical_address != expected_physical
                 || observed.user_accessible
                 || mapping.writable && !observed.writable
                 || mapping.executable && !observed.executable
@@ -356,7 +363,7 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
                     crate::serial::write("K.1r process mapping mismatch at ");
                     crate::serial::write_u64(mapping.virtual_page);
                     crate::serial::write(" expected ");
-                    crate::serial::write_u64(mapping.physical_page);
+                    crate::serial::write_u64(expected_physical);
                     crate::serial::write(" observed ");
                     crate::serial::write_u64(observed.physical_address);
                     crate::serial::write_line("");

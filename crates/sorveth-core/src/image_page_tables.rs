@@ -412,6 +412,12 @@ pub(crate) unsafe fn read_candidate_table_entry(address: u64) -> Option<u64> {
     .ok()
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
+pub(crate) fn candidate_self_alias_frame(virtual_page: u64) -> Option<u64> {
+    let base = crate::root::kernel_private_address()?;
+    (virtual_page == base.checked_add(510 * PAGE)?).then_some(ptr::addr_of!(WINDOW_PT) as u64)
+}
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn ensure_candidate_child(
     parent: u64,
