@@ -266,7 +266,7 @@ mod tests {
         img[0x84..0x86].copy_from_slice(&(0x14cu16).to_le_bytes());
         assert!(matches!(parse(&img, 0x4000), Err(Error::UnsupportedMachine)));
         img = sample();
-        img[0x1b4..0x1b8].copy_from_slice(&(0x1000u32).to_le_bytes());
+        img[0x1bc..0x1c0].copy_from_slice(&(0x1000u32).to_le_bytes());
         assert!(matches!(parse(&img, 0x4000), Err(Error::SectionOverlap)));
         img = sample();
         img[0x1ac..0x1b0].copy_from_slice(&(0xe000_0020u32).to_le_bytes());

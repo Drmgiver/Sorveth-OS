@@ -103,6 +103,7 @@ for marker in \
   'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
+  'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -171,6 +172,7 @@ for marker in \
   'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
+  'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -232,6 +234,7 @@ for marker in \
   'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
+  'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -298,6 +301,7 @@ for side in a b; do
   'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
+  'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -353,6 +357,7 @@ for side in a b; do
   'SORVETH M2-K.1d: four owned kernel paging frames provenance verified' \
   'SORVETH M2-K.1d: boot handoff descriptor and framebuffer mappings audited' \
   'SORVETH M2-K.1d: full loaded image physical backing audited' \
+  'SORVETH M2-K.1d: PE32+ section permission policy audited' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \

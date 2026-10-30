@@ -194,3 +194,21 @@ the section-permission or independent paging construction gap. Next is
 strict PE32+ section parsing and page-by-page desired W^X policy, plus
 classification of image gaps and actual physical ownership. No inherited
 supervisor tables have yet been replaced or reclaimed.
+
+
+## Strict PE32+ section permission inventory (K.1d next increment)
+
+After validating the complete image's physical backing, Sorveth parses
+the first bounded 4-KiB of its actual in-memory PE32+ AMD64 image.
+The parser checks the DOS/PE signatures, AMD64 machine ID, optional header
+bounds and PE32+ magic, 4-KiB section alignment, total image size,
+section-table bounds and RVA ranges. A section may be executable **or**
+writable, but never both. Overlapping or out-of-range section pages
+are rejected; unknown pages between sections remain **unclassified** and
+must not be granted guessed permissions during an independent CR3 build.
+
+The runtime audit counts header/read-only, executable, writable and
+unclassified pages, and QEMU requires a separate proof marker. It does
+**not** yet change any PTE, nor establish a complete, installed W^X kernel.
+It proves that a desired permission plan can be derived from verified PE
+section metadata, separately from the inherited firmware's RWX mapping.

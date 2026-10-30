@@ -7,6 +7,7 @@
 #[cfg(target_arch = "x86_64")]
 mod address_scheduler;
 mod fibers;
+mod image_sections;
 mod interrupts;
 #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
 mod isolation;
@@ -126,6 +127,24 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
     serial::write_line("Sorveth private supervisor NX mapping: verified");
     serial::write_line("SORVETH M2-K.1c: self-mapped kernel paging table verified");
+
+    // Describe the PE32+ page permissions we will need when the inherited
+    // mappings are replaced. This only validates metadata; it does not
+    // modify current firmware-provided page protection bits.
+    match unsafe { image_sections::verify_loaded_pe_sections(boot) } {
+        Ok(policy) => {
+            serial::write_line("SORVETH M2-K.1d: PE32+ section permission policy audited");
+            serial::write("Sorveth PE sections: ");
+            serial::write_u64(policy.section_count as u64);
+            serial::write(" (unclassified image pages: ");
+            serial::write_u64(policy.unclassified_pages);
+            serial::write_line(")");
+        }
+        Err(_) => {
+            serial::write_line("FATAL: PE32+ section policy rejected");
+            halt_forever();
+        }
+    }
 
     // M1-C: first owned x86 IDT. Keep maskable interrupts disabled until
     // timer/IRQ delivery and proper alternate fault stacks are implemented.
