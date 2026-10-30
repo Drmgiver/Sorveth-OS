@@ -631,7 +631,7 @@ checkpoint, NOT a completed standalone kernel address space.
 
 - Added a bounded planner that validates manifest pages within the PE image against the parsed W^X section map and emits explicit non-image supervisor mappings when present.
 - The planner rejects noncanonical/unaligned addresses, image backing mismatches, unclassified image pages, unsupported external backing, rights escalation and physical aliases. Framebuffer endpoint samples are deliberately deferred until cache attributes are specified.
-- QEMU showed the current bounded manifest has 77 image-resident supervisor records and two deferred framebuffer endpoint records, leaving zero non-image RAM mappings to add. This exposed the next inventory gap: Sorveth's private high-half frame-window subtree and allocator-owned scratch mappings are not represented yet.
+- Across the seven QEMU variants, the bounded manifest has 77–86 image-resident supervisor records and two deferred framebuffer endpoint records per run, leaving zero non-image RAM mappings to add. This exposed the next inventory gap: Sorveth's private high-half frame-window subtree and allocator-owned scratch mappings are not represented yet.
 - No new page tables were installed and CR3 behavior is unchanged. Host checks, UEFI cross-build, formatting and QEMU acceptance passed: https://github.com/Drmgiver/Sorveth-OS/actions/runs/41006241220
 
 M2-K.1 remains partial. Next work is to inventory and ownership-check the private high-half mappings before extending the independent-root plan.
