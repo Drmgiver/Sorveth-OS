@@ -83,7 +83,10 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     let root_test = match boot_info {
         Some(info) => unsafe {
             crate::image_page_tables::verify_temporary_image_root(
-                info.image_base, info.image_size, base, end,
+                info.image_base,
+                info.image_size,
+                base,
+                end,
             )
         },
         None => Err(crate::image_page_tables::Error::InvalidImage),

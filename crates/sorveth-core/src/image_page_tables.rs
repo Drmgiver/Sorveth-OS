@@ -274,7 +274,9 @@ pub unsafe fn verify_temporary_image_root(
     if !BUILT.load(Ordering::Acquire) {
         return Err(Error::InvalidImage);
     }
-    let image_end = image_base.checked_add(image_size).ok_or(Error::InvalidImage)?;
+    let image_end = image_base
+        .checked_add(image_size)
+        .ok_or(Error::InvalidImage)?;
     let candidate = ptr::addr_of!(IMAGE_ROOT) as u64;
     let original: u64;
     let rsp: u64;
@@ -289,7 +291,9 @@ pub unsafe fn verify_temporary_image_root(
         || !(image_base <= candidate && candidate < image_end)
         || !(image_base <= verify_temporary_image_root as usize as u64
             && (verify_temporary_image_root as usize as u64) < image_end)
-        || !(image_base <= stack_start && stack_start < rsp && rsp < stack_end
+        || !(image_base <= stack_start
+            && stack_start < rsp
+            && rsp < stack_end
             && stack_end <= image_end)
     {
         return Err(Error::WrongCpuContext);
