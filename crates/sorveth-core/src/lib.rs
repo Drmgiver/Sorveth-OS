@@ -8,6 +8,7 @@
 mod address_scheduler;
 mod fibers;
 mod image_sections;
+mod image_page_tables;
 mod interrupts;
 #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
 mod isolation;
@@ -173,6 +174,29 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         }
         _ => {
             serial::write_line("FATAL: loaded image physical mapping failed");
+            halt_forever();
+        }
+    }
+
+    // Construct a separate PE-only supervisor paging hierarchy from verified
+    // image addresses and strict PE W^X section metadata. Never activate it:
+    // other supervisor regions and page-table ownership remain unproven.
+    match unsafe { image_page_tables::build_and_verify(boot, &map) } {
+        Ok(proof) if proof.mapped_code > 0
+            && proof.mapped_writable > 0
+            && proof.table_frames >= 4 =>
+        {
+            serial::write_line(
+                "SORVETH M2-K.1d: inactive owned PE image paging subtree constructed and walked",
+            );
+            serial::write("Sorveth candidate image tables: ");
+            serial::write_u64(proof.table_frames as u64);
+            serial::write(" (unmapped PE gaps: ");
+            serial::write_u64(proof.holes_unmapped);
+            serial::write_line(")");
+        }
+        _ => {
+            serial::write_line("FATAL: owned image paging candidate validation failed");
             halt_forever();
         }
     }

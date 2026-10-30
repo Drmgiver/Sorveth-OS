@@ -212,3 +212,24 @@ unclassified pages, and QEMU requires a separate proof marker. It does
 **not** yet change any PTE, nor establish a complete, installed W^X kernel.
 It proves that a desired permission plan can be derived from verified PE
 section metadata, separately from the inherited firmware's RWX mapping.
+
+
+## Inactive owned PE image paging subtree (K.1d construction checkpoint)
+
+A separate statically retained PML4, PDPT, PD and bounded bank of 4-KiB
+PT frames now receive explicit identity-backed mappings for **classified
+PE image sections only**. The program never copies firmware PML4 entries.
+Executable pages are supervisor read/execute; writable sections are
+supervisor writable and NX; read-only sections and PE headers are NX and
+read-only; unclassified PE gaps have absent leaf PTEs. Parent entries
+never set USER, and leaf effective permissions are independently walked
+through Sorveth's temporary, registered frame access window. Boundary
+checks forbid a 1-GiB crossing, more than 17 PTs or an unclassified tail
+being mapped. Host unit tests exercise page flag policy and bounds.
+
+This is an **inactive candidate**, not a bootable kernel CR3. It does not
+map all required stack, device, boot descriptor, exception or transient
+frame-window addresses and does not yet establish independent physical
+frame lifetime. No new page tables are activated, no legacy OVMF entries
+are removed, and no frame reclamation is permitted. The full QEMU smoke
+matrix must observe its construction-and-walk marker before proceeding.

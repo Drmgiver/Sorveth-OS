@@ -360,3 +360,13 @@ bounded image and verifies identity-backed supervisor page translations
 and loader/boot-services physical provenance. Legacy W+X is explicitly
 counted. This is image *backing* coverage, not a PE section permissions
 plan and not a new independent CR3. Dedicated QEMU marker required.
+
+
+### K.1d explicit inactive image-only page table construction
+
+Sorveth constructs a separate, statically retained PML4/PDPT/PD and
+limited 4-KiB PT subtree for a PE image limited to one 1-GiB region.
+Every section leaf is W^X or absent, with USER disabled; an independent
+walk verifies effective permissions and exact physical identity of each
+mapped image page. CR3 stays on the existing, shared-firmware kernel
+root. This milestone is explicitly NOT an independent supervisor CR3.
