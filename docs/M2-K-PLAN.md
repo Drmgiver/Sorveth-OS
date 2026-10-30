@@ -551,3 +551,16 @@ marker before user pages or tasks are installed. This proves the current
 process roots can supply the planned bootstrap dependencies; it does not
 remove their inherited firmware page-table ancestry or verify every
 unplanned dynamic mapping.
+
+
+### K.1p inherited page-table ancestry inventory
+
+Before user mappings are added, both scheduler roots are traversed through
+their reachable four-level page tables. A bounded deduplication inventory
+counts unique table frames, notes which frames are shared by both roots, and
+records UEFI descriptor types for each frame. Every table frame must remain
+identity-readable through the current kernel root and have exactly one
+covering descriptor; malformed entries or capacity exhaustion stop boot.
+Descriptor types are provenance only, not evidence of Sorveth ownership.
+This inventories the current ancestry and does not replace inherited tables
+or prove that their mappings are safe to retain in a future independent root.

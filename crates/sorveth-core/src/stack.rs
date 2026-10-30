@@ -364,6 +364,36 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
     }
+    match unsafe { crate::process_roots::audit_inherited_page_tables(&map) } {
+        Ok(inventory) => {
+            crate::serial::write_line(
+                "SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots",
+            );
+            crate::serial::write("Sorveth inherited table frames: ");
+            crate::serial::write_u64(inventory.unique_table_frames as u64);
+            crate::serial::write(" (shared by both roots: ");
+            crate::serial::write_u64(inventory.shared_table_frames as u64);
+            crate::serial::write_line(")");
+            crate::serial::write("Sorveth inherited table UEFI types 0..15: ");
+            for (index, count) in inventory.uefi_type_counts.iter().enumerate() {
+                if index != 0 {
+                    crate::serial::write(",");
+                }
+                crate::serial::write_u64(*count as u64);
+            }
+            crate::serial::write(" (other types: ");
+            crate::serial::write_u64(inventory.other_uefi_types as u64);
+            crate::serial::write_line(")");
+        }
+        Err(crate::process_roots::Error::InheritedTableInventoryFull) => {
+            crate::serial::write_line("FATAL: inherited page-table inventory capacity exceeded");
+            crate::halt_forever();
+        }
+        Err(_) => {
+            crate::serial::write_line("FATAL: inherited page-table ancestry audit failed");
+            crate::halt_forever();
+        }
+    }
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();

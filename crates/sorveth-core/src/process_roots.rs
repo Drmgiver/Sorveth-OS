@@ -38,6 +38,8 @@ const DIRTY: u64 = 1 << 6;
 const FIRST_TEST_WORD: u64 = 0x534f_5256_4541_4f4e;
 #[cfg(target_arch = "x86_64")]
 const SECOND_TEST_WORD: u64 = 0x534f_5256_4542_4f4e;
+#[cfg(target_arch = "x86_64")]
+const INHERITED_TABLE_CAPACITY: usize = 512;
 
 #[cfg(target_arch = "x86_64")]
 #[repr(C, align(4096))]
@@ -79,6 +81,34 @@ static FIRST_SLOT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static SECOND_SLOT: AtomicU64 = AtomicU64::new(0);
 
+// The inventory runs on the retained bootstrap stack, but its bounded
+// deduplication set lives in BSS so it does not consume several KiB of that
+// small stack. It is only touched by the single bootstrap CPU with IF=0.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+struct InheritedTableFrame {
+    physical: u64,
+    visits: u16,
+    roots: u8,
+}
+
+#[cfg(target_arch = "x86_64")]
+const EMPTY_INHERITED_TABLE: InheritedTableFrame = InheritedTableFrame {
+    physical: 0,
+    visits: 0,
+    roots: 0,
+};
+
+#[cfg(target_arch = "x86_64")]
+static mut INHERITED_TABLES: [InheritedTableFrame; INHERITED_TABLE_CAPACITY] =
+    [EMPTY_INHERITED_TABLE; INHERITED_TABLE_CAPACITY];
+#[cfg(target_arch = "x86_64")]
+static mut INHERITED_TABLE_COUNT: usize = 0;
+#[cfg(target_arch = "x86_64")]
+static mut INHERITED_UEFI_TYPE_COUNTS: [u16; 16] = [0; 16];
+#[cfg(target_arch = "x86_64")]
+static mut INHERITED_OTHER_UEFI_TYPES: u32 = 0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Unsupported,
@@ -91,6 +121,20 @@ pub enum Error {
     AlreadyMapped,
     PageTableStorageUnavailable,
     SupervisorMappingMismatch,
+    InheritedTableInventoryFailed,
+    InheritedTableInventoryFull,
+}
+
+/// Bounded facts about the inherited page-table ancestry reachable from
+/// both scheduler roots. UEFI types identify descriptor provenance only;
+/// they do not grant ownership of any frame.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InheritedTableInventory {
+    pub unique_table_frames: usize,
+    pub shared_table_frames: usize,
+    pub uefi_type_counts: [u16; 16],
+    pub other_uefi_types: u32,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -326,6 +370,169 @@ pub(crate) unsafe fn audit_supervisor_plan<const N: usize>(
         }
     }
     Ok(verified)
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn inventory_inherited_table(
+    frame: u64,
+    level: u8,
+    root_bit: u8,
+    map: &sorveth_memory::MemoryMap<'_>,
+) -> Result<(), Error> {
+    if !(1..=4).contains(&level)
+        || frame == 0
+        || frame & (PAGE - 1) != 0
+        || frame & !ADDRESS_MASK != 0
+    {
+        return Err(Error::InheritedTableInventoryFailed);
+    }
+
+    let tables = ptr::addr_of_mut!(INHERITED_TABLES).cast::<InheritedTableFrame>();
+    let count = ptr::addr_of_mut!(INHERITED_TABLE_COUNT);
+    let mut found = None;
+    for index in 0..ptr::read_volatile(count) {
+        if ptr::read_volatile(tables.add(index)).physical == frame {
+            found = Some(index);
+            break;
+        }
+    }
+
+    let visit_bit = 1u16 << ((level as u16 - 1) * 2 + root_bit.trailing_zeros() as u16);
+    match found {
+        Some(index) => {
+            let record = tables.add(index);
+            let mut visits = ptr::read_volatile(ptr::addr_of!((*record).visits));
+            let old_roots = ptr::read_volatile(ptr::addr_of!((*record).roots));
+            ptr::write_volatile(ptr::addr_of_mut!((*record).roots), old_roots | root_bit);
+            if visits & visit_bit != 0 {
+                return Ok(());
+            }
+            visits |= visit_bit;
+            ptr::write_volatile(ptr::addr_of_mut!((*record).visits), visits);
+        }
+        None => {
+            let current = ptr::read_volatile(count);
+            if current >= INHERITED_TABLE_CAPACITY {
+                return Err(Error::InheritedTableInventoryFull);
+            }
+            let descriptor = crate::supervisor_manifest::uefi_type_of(map, frame)
+                .map_err(|_| Error::InheritedTableInventoryFailed)?
+                .ok_or(Error::InheritedTableInventoryFailed)?;
+            let record = tables.add(current);
+            ptr::write_volatile(
+                record,
+                InheritedTableFrame {
+                    physical: frame,
+                    visits: visit_bit,
+                    roots: root_bit,
+                },
+            );
+            ptr::write_volatile(count, current + 1);
+            if (descriptor as usize) < 16 {
+                let counts = ptr::addr_of_mut!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>();
+                let type_count = counts.add(descriptor as usize);
+                let next = ptr::read_volatile(type_count)
+                    .checked_add(1)
+                    .ok_or(Error::InheritedTableInventoryFailed)?;
+                ptr::write_volatile(type_count, next);
+            } else {
+                let other = ptr::addr_of_mut!(INHERITED_OTHER_UEFI_TYPES);
+                let next = ptr::read_volatile(other)
+                    .checked_add(1)
+                    .ok_or(Error::InheritedTableInventoryFailed)?;
+                ptr::write_volatile(other, next);
+            }
+        }
+    }
+
+    for entry_index in 0..512u64 {
+        let address = frame
+            .checked_add(entry_index * 8)
+            .ok_or(Error::InheritedTableInventoryFailed)?;
+        let entry = crate::root::read_bootstrap_supervisor_entry(address)
+            .ok_or(Error::InheritedTableInventoryFailed)?;
+        if entry & PRESENT == 0 {
+            continue;
+        }
+        let huge = entry & (1 << 7) != 0;
+        if level == 4 {
+            if huge {
+                return Err(Error::InheritedTableInventoryFailed);
+            }
+        } else if level == 1 || huge {
+            continue;
+        }
+        let child = entry & ADDRESS_MASK;
+        if child == 0 {
+            return Err(Error::InheritedTableInventoryFailed);
+        }
+        inventory_inherited_table(child, level - 1, root_bit, map)?;
+    }
+
+    Ok(())
+}
+
+/// Inventory the page-table ancestry reachable from both prepared process
+/// roots. Every unique table page must remain identity-readable through the
+/// current kernel root and have exactly one covering UEFI descriptor. This
+/// intentionally does not interpret descriptor type as frame ownership.
+///
+/// # Safety
+/// Kernel CR3 active on the single bootstrap CPU with interrupts disabled;
+/// the UEFI memory map and inherited supervisor page tables remain stable.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn audit_inherited_page_tables(
+    map: &sorveth_memory::MemoryMap<'_>,
+) -> Result<InheritedTableInventory, Error> {
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+        return Err(Error::KernelUnavailable);
+    }
+
+    ptr::write_volatile(ptr::addr_of_mut!(INHERITED_TABLE_COUNT), 0);
+    ptr::write_bytes(
+        ptr::addr_of_mut!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>(),
+        0,
+        16,
+    );
+    ptr::write_volatile(ptr::addr_of_mut!(INHERITED_OTHER_UEFI_TYPES), 0);
+
+    for (process, root_bit) in [(Process::First, 1u8), (Process::Second, 2u8)] {
+        let root = process_root(process)
+            .map(|(root, _)| root)
+            .ok_or(Error::KernelUnavailable)?;
+        if root == kernel {
+            return Err(Error::VerificationFailed);
+        }
+        inventory_inherited_table(root, 4, root_bit, map)?;
+    }
+
+    let tables = ptr::addr_of!(INHERITED_TABLES).cast::<InheritedTableFrame>();
+    let count = ptr::read_volatile(ptr::addr_of!(INHERITED_TABLE_COUNT));
+    let mut shared = 0usize;
+    for index in 0..count {
+        if ptr::read_volatile(ptr::addr_of!((*tables.add(index)).roots)) == 3 {
+            shared = shared
+                .checked_add(1)
+                .ok_or(Error::InheritedTableInventoryFailed)?;
+        }
+    }
+    let mut uefi_type_counts = [0u16; 16];
+    ptr::copy_nonoverlapping(
+        ptr::addr_of!(INHERITED_UEFI_TYPE_COUNTS).cast::<u16>(),
+        uefi_type_counts.as_mut_ptr(),
+        uefi_type_counts.len(),
+    );
+    Ok(InheritedTableInventory {
+        unique_table_frames: count,
+        shared_table_frames: shared,
+        uefi_type_counts,
+        other_uefi_types: ptr::read_volatile(ptr::addr_of!(INHERITED_OTHER_UEFI_TYPES)),
+    })
 }
 
 /// One intentionally small physical user data page mapped at offset zero

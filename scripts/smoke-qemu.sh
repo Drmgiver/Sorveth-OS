@@ -112,6 +112,7 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
+  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -189,6 +190,7 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
+  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -259,6 +261,7 @@ for marker in \
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
+  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -334,6 +337,7 @@ for side in a b; do
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
+  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
@@ -398,6 +402,7 @@ for side in a b; do
   'SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned' \
   'SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely' \
   'SORVETH M2-K.1o: both process roots preserve planned supervisor mappings' \
+  'SORVETH M2-K.1p: inherited page-table ancestry inventoried across both process roots' \
   'SORVETH M2-K.1d: owned read-only mapping denial verified' \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
     'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
