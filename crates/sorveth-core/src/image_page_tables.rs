@@ -1088,22 +1088,23 @@ unsafe fn verify_temporary_root(
                 Ok(previous) => previous_words[index] = previous,
                 Err(_) => {
                     for restore in 0..index {
-                        let _ = crate::root::with_physical_window(
-                            probe_frames[restore],
-                            |window| {
-                                ptr::write_volatile(
-                                    window as *mut u64,
-                                    previous_words[restore],
-                                );
-                            },
-                        );
+                        let _ = crate::root::with_physical_window(probe_frames[restore], |window| {
+                            ptr::write_volatile(window as *mut u64, previous_words[restore]);
+                        });
                     }
                     return Err(Error::ValidationFailed);
                 }
             }
         }
         ptr::write_volatile(pte, probe_frames[0] | PRESENT | WRITE | NX);
-        Some((window_address, self_alias_pte, pte, probe_frames, previous_words, sentinels))
+        Some((
+            window_address,
+            self_alias_pte,
+            pte,
+            probe_frames,
+            previous_words,
+            sentinels,
+        ))
     } else {
         None
     };
