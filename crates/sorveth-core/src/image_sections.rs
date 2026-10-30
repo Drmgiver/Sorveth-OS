@@ -79,7 +79,9 @@ pub fn parse(header: &[u8], allocated_size: u64) -> Result<Layout, Error> {
     let count = word(header, pe + 6).ok_or(Error::InvalidHeaders)? as usize;
     let optional_size = word(header, pe + 20).ok_or(Error::InvalidHeaders)? as usize;
     let optional = pe.checked_add(24).ok_or(Error::InvalidHeaders)?;
-    let sections_start = optional.checked_add(optional_size).ok_or(Error::InvalidHeaders)?;
+    let sections_start = optional
+        .checked_add(optional_size)
+        .ok_or(Error::InvalidHeaders)?;
     if count == 0 || count > MAX_SECTIONS || optional_size < 64 {
         return Err(Error::InvalidHeaders);
     }
@@ -264,12 +266,18 @@ mod tests {
     fn rejects_wrong_machine_overlaps_and_wx_sections() {
         let mut img = sample();
         img[0x84..0x86].copy_from_slice(&(0x14cu16).to_le_bytes());
-        assert!(matches!(parse(&img, 0x4000), Err(Error::UnsupportedMachine)));
+        assert!(matches!(
+            parse(&img, 0x4000),
+            Err(Error::UnsupportedMachine)
+        ));
         img = sample();
         img[0x1bc..0x1c0].copy_from_slice(&(0x1000u32).to_le_bytes());
         assert!(matches!(parse(&img, 0x4000), Err(Error::SectionOverlap)));
         img = sample();
         img[0x1ac..0x1b0].copy_from_slice(&(0xe000_0020u32).to_le_bytes());
-        assert!(matches!(parse(&img, 0x4000), Err(Error::WritableExecutableSection)));
+        assert!(matches!(
+            parse(&img, 0x4000),
+            Err(Error::WritableExecutableSection)
+        ));
     }
 }
