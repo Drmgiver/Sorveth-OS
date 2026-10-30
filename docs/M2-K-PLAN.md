@@ -526,3 +526,15 @@ the kernel verifies the slot is empty and restores both original frame words.
 Every QEMU acceptance variant requires the new marker. This tests sequential
 slot reuse and stale-translation control; it still does not prove concurrent
 window use, reclamation, or full survival-manifest coverage.
+
+
+### K.1n occupied candidate physical-window slot denial
+
+Before the successful remapping probe, the kernel writes a known valid PTE
+into the candidate-only slot 511 and calls the normal probe path. The path
+must return `WindowCollision` before changing the candidate PTE, touching the
+sentinel frames, or activating the candidate root. The caller verifies the
+entry is unchanged and kernel CR3 remains active, then clears the staged PTE
+and runs the K.1m two-frame probe. Every QEMU variant requires the denial
+marker. This checks the collision preflight in one bootstrap context; it is
+not a concurrency or fault-recovery proof.

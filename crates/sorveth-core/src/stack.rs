@@ -295,6 +295,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 "SORVETH M2-K.1m: candidate frame window remapped across distinct frames and cleaned",
             );
             crate::serial::write_line(
+                "SORVETH M2-K.1n: occupied candidate frame-window slot rejected safely",
+            );
+            crate::serial::write_line(
                 "SORVETH M2-K.1k: expanded candidate CR3 and kernel stack restored safely",
             );
             crate::serial::write("Sorveth verified planner leaves: ");

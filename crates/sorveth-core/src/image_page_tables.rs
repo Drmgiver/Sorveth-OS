@@ -1007,6 +1007,39 @@ pub unsafe fn verify_temporary_survival_root(
     window_base: u64,
     probe_frames: [u64; 2],
 ) -> Result<(), Error> {
+    if window_base & (PAGE - 1) != 0
+        || probe_frames[0] == probe_frames[1]
+        || probe_frames
+            .iter()
+            .any(|frame| *frame == 0 || frame & (PAGE - 1) != 0)
+        || !crate::root::identity_mapped(ptr::addr_of!(WINDOW_PT) as u64)
+    {
+        return Err(Error::UnsupportedPlan);
+    }
+    let pte = (ptr::addr_of_mut!(WINDOW_PT) as *mut u64).add(511);
+    if ptr::read_volatile(pte) != 0 {
+        return Err(Error::WindowCollision);
+    }
+    let occupied = probe_frames[0] | PRESENT | WRITE | NX;
+    ptr::write_volatile(pte, occupied);
+    let collision = verify_temporary_root(
+        true,
+        image_base,
+        image_size,
+        stack_start,
+        stack_end,
+        Some((window_base, probe_frames)),
+    );
+    let preserved = ptr::read_volatile(pte) == occupied;
+    ptr::write_volatile(pte, 0);
+    let active: u64;
+    core::arch::asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    if !preserved
+        || !matches!(collision, Err(Error::WindowCollision))
+        || crate::root::kernel_root_physical() != Some(active & ADDRESS_MASK)
+    {
+        return Err(Error::ValidationFailed);
+    }
     verify_temporary_root(
         true,
         image_base,

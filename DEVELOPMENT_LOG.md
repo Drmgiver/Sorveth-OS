@@ -701,3 +701,9 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - Expanded the candidate probe to use two distinct writable NX frames and two different sentinels. Under one candidate CR3 activation, it reads frame one, clears and invalidates slot 511, maps frame two into the same slot, reads its sentinel, then clears and invalidates before restoring the original CR3.
 - After returning to the Sorveth root, the kernel verifies slot 511 is empty and restores both original frame words. All QEMU acceptance variants require the new marker.
 - This exercises sequential reuse and stale-translation control in the candidate. It does not prove concurrent use, frame reclamation, or a complete runtime survival inventory.
+
+## 2026-10-30 — M2-K.1n candidate window collision denial
+
+- Added an occupied-slot probe before the successful K.1m remap. It stages a valid candidate-only PTE, calls the regular probe path, and requires `WindowCollision` with the PTE unchanged and the original kernel CR3 still active before clearing the staged entry.
+- The normal two-frame remap then runs, and all QEMU acceptance variants require the collision-denial marker.
+- This exercises the collision preflight on the single bootstrap CPU; it is not a concurrent-use or fault-recovery guarantee.
