@@ -428,10 +428,7 @@ pub(crate) unsafe fn read_bootstrap_supervisor_entry(address: u64) -> Option<u64
 /// Kernel CR3 active on the single bootstrap CPU with IRQs disabled; the
 /// inherited page-table page is immutable for the duration of the copy.
 #[cfg(target_arch = "x86_64")]
-pub(crate) unsafe fn read_bootstrap_supervisor_table(
-    frame: u64,
-    entries: &mut [u64; 512],
-) -> bool {
+pub(crate) unsafe fn read_bootstrap_supervisor_table(frame: u64, entries: &mut [u64; 512]) -> bool {
     if frame == 0 || frame & 4095 != 0 || frame & !ADDRESS_MASK != 0 {
         return false;
     }
