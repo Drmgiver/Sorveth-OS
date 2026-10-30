@@ -214,21 +214,31 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_line(
                 "SORVETH M2-K.1g: audited high-half mappings added to candidate plan",
             );
-            let verified_window_mappings = match unsafe {
-                crate::image_page_tables::extend_and_verify_private_window(&boot, &plan)
+            let candidate_evidence = match unsafe {
+                crate::image_page_tables::extend_and_verify_private_window(&boot, &map, &plan)
             } {
-                Ok(count) if count == plan.private_window_records() => count,
+                Ok(evidence)
+                    if evidence.private_window_mappings == plan.private_window_records()
+                        && evidence.framebuffer_pages
+                            == plan.framebuffer().map_or(0, |framebuffer| framebuffer.pages) =>
+                {
+                    evidence
+                }
                 _ => {
                     crate::serial::write_line(
-                        "FATAL: inactive high-half candidate hierarchy verification failed",
+                        "FATAL: inactive supervisor candidate hierarchy verification failed",
                     );
                     crate::halt_forever();
                 }
             };
-            crate::serial::write_line("SORVETH M2-K.1h: inactive owned high-half hierarchy walked");
-            crate::serial::write("Sorveth verified high-half leaves: ");
-            crate::serial::write_u64(verified_window_mappings as u64);
-            crate::serial::write_line("");
+            crate::serial::write_line(
+                "SORVETH M2-K.1i: inactive framebuffer UC and supervisor mappings verified",
+            );
+            crate::serial.write("Sorveth verified high-half leaves: ");
+            crate::serial.write_u64(candidate_evidence.private_window_mappings as u64);
+            crate::serial.write(" (framebuffer UC pages: ");
+            crate::serial.write_u64(candidate_evidence.framebuffer_pages);
+            crate::serial.write_line(")");
 
             crate::serial::write("Sorveth private-window plan records: ");
             crate::serial::write_u64(plan.private_window_records() as u64);
@@ -240,8 +250,8 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::serial::write_u64(plan.mapping_count() as u64);
             crate::serial::write(" (image records checked: ");
             crate::serial::write_u64(plan.image_records() as u64);
-            crate::serial::write(", deferred device records: ");
-            crate::serial::write_u64(plan.deferred_device_records() as u64);
+            crate::serial::write(", framebuffer endpoint records checked: ");
+            crate::serial::write_u64(plan.device_endpoint_records() as u64);
             crate::serial::write_line(")");
         }
         _ => {

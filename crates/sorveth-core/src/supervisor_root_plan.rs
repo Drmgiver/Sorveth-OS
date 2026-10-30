@@ -24,6 +24,7 @@ pub enum Error {
     MissingBacking,
     InsufficientCurrentPermission,
     Full,
+    InvalidFramebuffer,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,12 +37,26 @@ pub struct Mapping {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CachePolicy {
+    Uncacheable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FramebufferMapping {
+    pub virtual_start: u64,
+    pub physical_start: u64,
+    pub pages: u64,
+    pub cache_policy: CachePolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan<const N: usize> {
     mappings: [Option<Mapping>; N],
     mapping_count: usize,
     image_records: usize,
-    deferred_device_records: usize,
+    device_endpoint_records: usize,
     private_window_records: usize,
+    framebuffer: Option<FramebufferMapping>,
 }
 
 impl<const N: usize> Plan<N> {
@@ -50,8 +65,9 @@ impl<const N: usize> Plan<N> {
             mappings: [None; N],
             mapping_count: 0,
             image_records: 0,
-            deferred_device_records: 0,
+            device_endpoint_records: 0,
             private_window_records: 0,
+            framebuffer: None,
         }
     }
 
@@ -63,8 +79,12 @@ impl<const N: usize> Plan<N> {
         self.image_records
     }
 
-    pub const fn deferred_device_records(&self) -> usize {
-        self.deferred_device_records
+    pub const fn device_endpoint_records(&self) -> usize {
+        self.device_endpoint_records
+    }
+
+    pub const fn framebuffer(&self) -> Option<FramebufferMapping> {
+        self.framebuffer
     }
 
     pub const fn private_window_records(&self) -> usize {
@@ -186,7 +206,7 @@ pub unsafe fn compile<const N: usize>(
         if record.kind == Kind::FramebufferDevice {
             // The manifest contains endpoint samples only. Do not turn those
             // into RAM mappings or guess the required PAT/cache policy.
-            plan.deferred_device_records += 1;
+            plan.device_endpoint_records += 1;
             continue;
         }
 
@@ -236,7 +256,81 @@ pub unsafe fn compile<const N: usize>(
         }
     }
 
+    plan.framebuffer = compile_framebuffer(manifest, boot, &plan)?;
     Ok(plan)
+}
+
+fn compile_framebuffer<const N: usize, const M: usize>(
+    manifest: &Manifest<M>,
+    boot: &BootInfo,
+    plan: &Plan<N>,
+) -> Result<Option<FramebufferMapping>, Error> {
+    let framebuffer = boot.framebuffer;
+    if !framebuffer.is_usable() {
+        return if plan.device_endpoint_records == 0 {
+            Ok(None)
+        } else {
+            Err(Error::InvalidFramebuffer)
+        };
+    }
+
+    const MAX_FRAMEBUFFER_BYTES: u64 = 64 * 1024 * 1024;
+    let end = framebuffer
+        .address
+        .checked_add(framebuffer.size_bytes)
+        .ok_or(Error::InvalidFramebuffer)?;
+    if framebuffer.size_bytes == 0 || framebuffer.size_bytes > MAX_FRAMEBUFFER_BYTES {
+        return Err(Error::InvalidFramebuffer);
+    }
+    let first = framebuffer.address & !(PAGE - 1);
+    let rounded_end = end.checked_add(PAGE - 1).ok_or(Error::InvalidFramebuffer)? & !(PAGE - 1);
+    let pages = (rounded_end - first) / PAGE;
+    let physical_end = first
+        .checked_add(pages.checked_mul(PAGE).ok_or(Error::InvalidFramebuffer)?)
+        .ok_or(Error::InvalidFramebuffer)?;
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    if !is_canonical(first)
+        || !is_canonical(physical_end - 1)
+        || physical_end > PHYSICAL_LIMIT
+        || first < image_end && physical_end > boot.image_base
+    {
+        return Err(Error::InvalidFramebuffer);
+    }
+
+    let mut first_sample = false;
+    let mut last_sample = false;
+    for index in 0..manifest.len() {
+        let record = manifest.get(index).ok_or(Error::InvalidAddress)?;
+        if record.kind != Kind::FramebufferDevice {
+            continue;
+        }
+        let allowed_type = record.uefi_type.is_none_or(|kind| matches!(kind, 0 | 11));
+        if !allowed_type || record.virtual_page != record.physical_page || !record.writable {
+            return Err(Error::InvalidFramebuffer);
+        }
+        first_sample |= record.physical_page == first;
+        last_sample |= record.physical_page == (physical_end - PAGE);
+    }
+    if plan.device_endpoint_records == 0 || !first_sample || !last_sample {
+        return Err(Error::InvalidFramebuffer);
+    }
+
+    for record in plan.mappings[..plan.mapping_count].iter().flatten() {
+        if (record.virtual_page >= first && record.virtual_page < physical_end)
+            || (record.physical_page >= first && record.physical_page < physical_end)
+        {
+            return Err(Error::InvalidFramebuffer);
+        }
+    }
+    Ok(Some(FramebufferMapping {
+        virtual_start: first,
+        physical_start: first,
+        pages,
+        cache_policy: CachePolicy::Uncacheable,
+    }))
 }
 
 /// Add the audited private high-half leaves to the candidate plan. The
@@ -262,6 +356,18 @@ pub fn include_private_window<const N: usize, const M: usize>(
 
     for index in 0..private.mapping_count {
         let mapping = private.mappings[index].ok_or(Error::InvalidAddress)?;
+        if let Some(framebuffer) = plan.framebuffer {
+            let end = framebuffer
+                .virtual_start
+                .checked_add(framebuffer.pages * PAGE)
+                .ok_or(Error::InvalidFramebuffer)?;
+            if mapping.virtual_page >= framebuffer.virtual_start
+                && mapping.virtual_page < end
+                || mapping.physical_page >= framebuffer.physical_start && mapping.physical_page < end
+            {
+                return Err(Error::InvalidFramebuffer);
+            }
+        }
         if mapping.virtual_page == 0
             || mapping.virtual_page & (PAGE - 1) != 0
             || !is_canonical(mapping.virtual_page)

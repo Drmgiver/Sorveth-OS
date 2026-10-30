@@ -23,10 +23,13 @@ const PAGE: u64 = 4096;
 const PRESENT: u64 = 1;
 const WRITE: u64 = 2;
 const NX: u64 = 1 << 63;
+const PWT: u64 = 1 << 3;
+const PCD: u64 = 1 << 4;
+const LARGE: u64 = 1 << 7;
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
-// A <=32-MiB PE image may touch at most 17 different 2-MiB slots if
-// the first page is not aligned on a 2-MiB boundary.
-const MAX_PT: usize = 17;
+// 17 PT pages cover the maximum PE image; remaining capacity supports
+// a bounded 64-MiB GOP framebuffer in this inactive candidate.
+const MAX_PT: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -39,6 +42,8 @@ pub enum Error {
     ValidationFailed,
     UnsupportedPlan,
     WindowCollision,
+    InvalidFramebuffer,
+    UnsupportedCachePolicy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +53,12 @@ pub struct Evidence {
     pub mapped_writable: u64,
     pub holes_unmapped: u64,
     pub table_frames: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CandidateEvidence {
+    pub private_window_mappings: usize,
+    pub framebuffer_pages: u64,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -68,6 +79,10 @@ static mut WINDOW_PDPT: Table = Table([0; 512]);
 static mut WINDOW_PD: Table = Table([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static mut WINDOW_PT: Table = Table([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut FRAMEBUFFER_PDPT: Table = Table([0; 512]);
+#[cfg(target_arch = "x86_64")]
+static mut FRAMEBUFFER_PD: Table = Table([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static BUILT: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
@@ -289,7 +304,9 @@ unsafe fn read_extended_candidate_entry(
                 && (frame - pts) & (PAGE - 1) == 0)
             || frame == window_pdpt
             || frame == window_pd
-            || frame == window_pt)
+            || frame == window_pt
+            || frame == ptr::addr_of!(FRAMEBUFFER_PDPT) as u64
+            || frame == ptr::addr_of!(FRAMEBUFFER_PD) as u64)
     {
         return None;
     }
@@ -312,8 +329,9 @@ unsafe fn read_extended_candidate_entry(
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn extend_and_verify_private_window<const N: usize>(
     boot: &BootInfo,
+    map: &MemoryMap<'_>,
     plan: &Plan<N>,
-) -> Result<usize, Error> {
+) -> Result<CandidateEvidence, Error> {
     if !BUILT.load(Ordering::Acquire)
         || WINDOW_BUILT.swap(true, Ordering::AcqRel)
         || !boot.is_valid()
@@ -479,7 +497,291 @@ pub unsafe fn extend_and_verify_private_window<const N: usize>(
             return Err(Error::ValidationFailed);
         }
     }
-    Ok(verified)
+    let framebuffer_pages =
+        build_and_verify_framebuffer(boot, map, plan, root, pml4_slot)?;
+    Ok(CandidateEvidence {
+        private_window_mappings: verified,
+        framebuffer_pages,
+    })
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn pat_entry_three_is_uncacheable() -> bool {
+    if core::arch::x86_64::__cpuid(1).edx & (1 << 16) == 0 {
+        return false;
+    }
+    let low: u32;
+    let high: u32;
+    core::arch::asm!(
+        "rdmsr",
+        in("ecx") 0x277u32,
+        out("eax") low,
+        out("edx") high,
+        options(nomem, nostack, preserves_flags),
+    );
+    let pat = ((high as u64) << 32) | low as u64;
+    ((pat >> 24) & 0xff) == 0
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn build_and_verify_framebuffer<const N: usize>(
+    boot: &BootInfo,
+    map: &MemoryMap<'_>,
+    plan: &Plan<N>,
+    root: u64,
+    window_pml4_slot: usize,
+) -> Result<u64, Error> {
+    use crate::supervisor_root_plan::CachePolicy;
+
+    let framebuffer = match plan.framebuffer() {
+        Some(value) => value,
+        None => return Ok(0),
+    };
+    if framebuffer.cache_policy != CachePolicy::Uncacheable || !pat_entry_three_is_uncacheable() {
+        return Err(Error::UnsupportedCachePolicy);
+    }
+    const MAX_FRAMEBUFFER_PAGES: u64 = (64 * 1024 * 1024) / PAGE;
+    if framebuffer.pages == 0 || framebuffer.pages > MAX_FRAMEBUFFER_PAGES {
+        return Err(Error::InvalidFramebuffer);
+    }
+    let end = framebuffer
+        .physical_start
+        .checked_add(framebuffer.pages * PAGE)
+        .ok_or(Error::InvalidFramebuffer)?;
+    if framebuffer.virtual_start != framebuffer.physical_start
+        || framebuffer.physical_start & (PAGE - 1) != 0
+        || framebuffer.physical_start == 0
+        || end > (1u64 << 52)
+    {
+        return Err(Error::InvalidFramebuffer);
+    }
+    for index in 0..plan.mapping_count() {
+        let record = plan.mapping(index).ok_or(Error::UnsupportedPlan)?;
+        if record.physical_page >= framebuffer.physical_start
+            && record.physical_page < end
+            || record.virtual_page >= framebuffer.virtual_start
+                && record.virtual_page < framebuffer.virtual_start + framebuffer.pages * PAGE
+        {
+            return Err(Error::InvalidFramebuffer);
+        }
+    }
+
+    let image_end = boot
+        .image_base
+        .checked_add(boot.image_size)
+        .ok_or(Error::InvalidImage)?;
+    if framebuffer.physical_start < image_end && end > boot.image_base {
+        return Err(Error::InvalidFramebuffer);
+    }
+    let fb_last = framebuffer
+        .virtual_start
+        .checked_add(framebuffer.pages * PAGE - 1)
+        .ok_or(Error::InvalidFramebuffer)?;
+    let image_pml4_slot = ((boot.image_base >> 39) & 511) as usize;
+    let fb_pml4_slot = ((framebuffer.virtual_start >> 39) & 511) as usize;
+    let image_pdpt_slot = ((boot.image_base >> 30) & 511) as usize;
+    let fb_pdpt_slot = ((framebuffer.virtual_start >> 30) & 511) as usize;
+    if fb_pml4_slot == window_pml4_slot
+        || fb_pml4_slot != ((fb_last >> 39) & 511) as usize
+        || fb_pdpt_slot != ((fb_last >> 30) & 511) as usize
+    {
+        return Err(Error::InvalidFramebuffer);
+    }
+
+    let current_root = crate::root::kernel_root_physical().ok_or(Error::WrongCpuContext)?;
+    for page_index in 0..framebuffer.pages {
+        let physical = framebuffer
+            .physical_start
+            .checked_add(page_index * PAGE)
+            .ok_or(Error::InvalidFramebuffer)?;
+        match supervisor_manifest::uefi_type_of(map, physical)
+            .map_err(|_| Error::InvalidFramebuffer)?
+        {
+            Some(0 | 11) | None => {}
+            _ => return Err(Error::InvalidFramebuffer),
+        }
+        let current = supervisor_audit::walk(current_root, physical, |entry| {
+            crate::root::read_bootstrap_supervisor_entry(entry)
+        })
+        .map_err(|_| Error::InvalidFramebuffer)?;
+        if current.physical_address != physical || current.user_accessible || !current.writable {
+            return Err(Error::InvalidFramebuffer);
+        }
+    }
+
+    let framebuffer_pdpt = if fb_pml4_slot == image_pml4_slot {
+        ptr::addr_of_mut!(IMAGE_PDPT) as u64
+    } else {
+        ptr::addr_of_mut!(FRAMEBUFFER_PDPT) as u64
+    };
+    let framebuffer_pd = if fb_pml4_slot == image_pml4_slot && fb_pdpt_slot == image_pdpt_slot {
+        ptr::addr_of_mut!(IMAGE_PD) as u64
+    } else {
+        ptr::addr_of_mut!(FRAMEBUFFER_PD) as u64
+    };
+    let framebuffer_pdpt_static = ptr::addr_of_mut!(FRAMEBUFFER_PDPT) as u64;
+    let framebuffer_pd_static = ptr::addr_of_mut!(FRAMEBUFFER_PD) as u64;
+    let image_pdpt = ptr::addr_of_mut!(IMAGE_PDPT) as u64;
+    let pts = ptr::addr_of_mut!(IMAGE_PTS) as u64;
+    let needed = required_pt_pages(boot.image_base, boot.image_size)?;
+    let header =
+        core::slice::from_raw_parts(boot.image_base as *const u8, image_sections::HEADER_LIMIT);
+    let layout = image_sections::parse(header, boot.image_size).map_err(|_| Error::InvalidImage)?;
+
+    for frame in [framebuffer_pdpt_static, framebuffer_pd_static] {
+        if frame & (PAGE - 1) != 0
+            || frame < boot.image_base
+            || frame.checked_add(PAGE).is_none_or(|frame_end| frame_end > image_end)
+            || !crate::root::identity_mapped(frame)
+            || layout.classify(frame - boot.image_base) != image_sections::PagePolicy::Writable
+        {
+            return Err(Error::UntrustedTableFrame);
+        }
+    }
+
+    if fb_pml4_slot != image_pml4_slot {
+        if ptr::read_volatile((root as *const u64).add(fb_pml4_slot)) != 0 {
+            return Err(Error::WindowCollision);
+        }
+        ptr::write_bytes(framebuffer_pdpt as *mut u8, 0, PAGE as usize);
+    }
+    if fb_pdpt_slot != image_pdpt_slot || fb_pml4_slot != image_pml4_slot {
+        if ptr::read_volatile((framebuffer_pdpt as *const u64).add(fb_pdpt_slot)) != 0 {
+            return Err(Error::WindowCollision);
+        }
+        ptr::write_bytes(framebuffer_pd as *mut u8, 0, PAGE as usize);
+        ptr::write_volatile(
+            (framebuffer_pdpt as *mut u64).add(fb_pdpt_slot),
+            framebuffer_pd | PRESENT | WRITE,
+        );
+    }
+
+    let mut used_pts = needed;
+    let mut tracked_pts: [Option<(u64, u64, u64)>; MAX_PT] = [None; MAX_PT];
+    let mut tracked_count = 0usize;
+    let mut page_index = 0u64;
+    while page_index < framebuffer.pages {
+        let virtual_page = framebuffer
+            .virtual_start
+            .checked_add(page_index * PAGE)
+            .ok_or(Error::InvalidFramebuffer)?;
+        let pd_slot = (virtual_page >> 21) & 511;
+        let pt_slot = ((virtual_page >> 12) & 511) as usize;
+        let mut parent = ptr::read_volatile((framebuffer_pd as *const u64).add(pd_slot as usize));
+        let pt_frame;
+        if parent & PRESENT == 0 {
+            if used_pts >= MAX_PT {
+                return Err(Error::TooManyPageTables);
+            }
+            pt_frame = pts + used_pts as u64 * PAGE;
+            used_pts += 1;
+            if pt_frame < boot.image_base
+                || pt_frame + PAGE > image_end
+                || !crate::root::identity_mapped(pt_frame)
+                || layout.classify(pt_frame - boot.image_base)
+                    != image_sections::PagePolicy::Writable
+            {
+                return Err(Error::UntrustedTableFrame);
+            }
+            ptr::write_bytes(pt_frame as *mut u8, 0, PAGE as usize);
+            parent = pt_frame | PRESENT | WRITE;
+            ptr::write_volatile((framebuffer_pd as *mut u64).add(pd_slot as usize), parent);
+        } else {
+            if parent & LARGE != 0 {
+                return Err(Error::WindowCollision);
+            }
+            pt_frame = parent & ADDRESS_MASK;
+            if pt_frame < pts
+                || pt_frame >= pts + MAX_PT as u64 * PAGE
+                || (pt_frame - pts) & (PAGE - 1) != 0
+            {
+                return Err(Error::UntrustedTableFrame);
+            }
+        }
+
+        let physical_page = framebuffer
+            .physical_start
+            .checked_add(page_index * PAGE)
+            .ok_or(Error::InvalidFramebuffer)?;
+        let entry = physical_page | PRESENT | WRITE | NX | PWT | PCD;
+        let leaf = (pt_frame as *mut u64).add(pt_slot);
+        if ptr::read_volatile(leaf) != 0 {
+            return Err(Error::WindowCollision);
+        }
+        ptr::write_volatile(leaf, entry);
+
+        if tracked_pts[..tracked_count]
+            .iter()
+            .flatten()
+            .all(|(tracked_pd, tracked_pt, _)| *tracked_pd != pd_slot || *tracked_pt != pt_frame)
+        {
+            if tracked_count == MAX_PT {
+                return Err(Error::TooManyPageTables);
+            }
+            tracked_pts[tracked_count] = Some((pd_slot, pt_frame, virtual_page));
+            tracked_count += 1;
+        }
+        page_index += 1;
+    }
+
+    if fb_pml4_slot != image_pml4_slot {
+        ptr::write_volatile(
+            (root as *mut u64).add(fb_pml4_slot),
+            framebuffer_pdpt | PRESENT | WRITE,
+        );
+    }
+
+    let pts_reader_limit = MAX_PT;
+    let cache_flags = PRESENT | WRITE | NX | PWT | PCD;
+    for (pd_slot, pt_frame, first_page) in
+        tracked_pts[..tracked_count].iter().flatten().copied()
+    {
+        let result = crate::root::with_physical_window(pt_frame, |window| {
+            let mut index = 0u64;
+            while index < framebuffer.pages {
+                let virtual_page = framebuffer.virtual_start + index * PAGE;
+                if (virtual_page >> 21) & 511 == pd_slot {
+                    let pt_slot = ((virtual_page >> 12) & 511) as usize;
+                    let expected = (framebuffer.physical_start + index * PAGE) | cache_flags;
+                    if ptr::read_volatile(window.add(pt_slot * 8) as *const u64) != expected {
+                        return false;
+                    }
+                }
+                index += 1;
+            }
+            true
+        })
+        .map_err(|_| Error::ValidationFailed)?;
+        if !result {
+            return Err(Error::ValidationFailed);
+        }
+
+        let observed = supervisor_audit::walk(root, first_page, |entry| {
+            read_extended_candidate_entry(
+                entry,
+                root,
+                image_pdpt,
+                ptr::addr_of!(IMAGE_PD) as u64,
+                pts,
+                pts_reader_limit,
+                ptr::addr_of!(WINDOW_PDPT) as u64,
+                ptr::addr_of!(WINDOW_PD) as u64,
+                ptr::addr_of!(WINDOW_PT) as u64,
+            )
+        })
+        .map_err(|_| Error::ValidationFailed)?;
+        let expected_physical = framebuffer.physical_start
+            + (first_page - framebuffer.virtual_start);
+        if observed.physical_address != expected_physical
+            || observed.user_accessible
+            || !observed.writable
+            || observed.executable
+            || observed.leaf_size != PAGE
+        {
+            return Err(Error::ValidationFailed);
+        }
+    }
+    Ok(framebuffer.pages)
 }
 
 /// In one uninterrupted assembly sequence, transiently activate the
