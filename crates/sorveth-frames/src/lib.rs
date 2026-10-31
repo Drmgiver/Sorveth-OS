@@ -262,7 +262,8 @@ impl<const N: usize> FrameAllocator<N> {
             .iter()
             .flatten()
             .any(|claim| {
-                !claim.quarantined && (claim.references != 0 || claim.mappings != 0)
+                !claim.quarantined
+                    && (claim.references != 0 || claim.mappings != 0)
                     && frame >= claim.span.start
                     && frame < claim.span.end_exclusive()
             })
@@ -425,11 +426,7 @@ impl<const N: usize> FrameAllocator<N> {
     }
 
     /// Record a mapping on a claim with a live owner reference.
-    pub fn retain_mapping(
-        &mut self,
-        handle: ClaimHandle,
-        owner: FrameOwner,
-    ) -> Result<u32, Error> {
+    pub fn retain_mapping(&mut self, handle: ClaimHandle, owner: FrameOwner) -> Result<u32, Error> {
         let claim = self.claim_mut(handle, owner)?;
         if claim.references == 0 || claim.quarantined {
             return Err(Error::InvalidClaim);
@@ -627,11 +624,7 @@ impl<const N: usize> FramePool<N> {
     }
 
     /// Record an installed mapping on a live owner claim.
-    pub fn retain_mapping(
-        &self,
-        handle: ClaimHandle,
-        owner: FrameOwner,
-    ) -> Result<u32, PoolError> {
+    pub fn retain_mapping(&self, handle: ClaimHandle, owner: FrameOwner) -> Result<u32, PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
         allocator
@@ -910,7 +903,10 @@ mod tests {
         let owner = FrameOwner::new(0xCAFE);
         let claim = allocator.allocate_owned(1, owner).unwrap();
         assert_eq!(allocator.retain_mapping(claim.handle, owner), Ok(1));
-        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Ok(0)
+        );
         assert!(allocator.owns_frame(claim.span.start));
         assert_eq!(
             allocator.begin_quarantine(claim.handle, owner),
