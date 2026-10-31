@@ -32,6 +32,11 @@ pub enum Error {
     OutOfMemory,
     ReservationsClosed,
     ClaimLedgerFull,
+    InvalidClaim,
+    StaleClaim,
+    WrongOwner,
+    ClaimReferenceUnderflow,
+    ClaimReferenceOverflow,
 }
 
 #[derive(Clone, Copy)]
@@ -54,8 +59,71 @@ pub struct FrameAllocator<const N: usize> {
     used: usize,
     available_pages: u64,
     allocations_started: bool,
-    claims: [Option<PhysSpan>; N],
+    claims: [Option<ClaimRecord>; N],
     claim_count: usize,
+}
+
+/// Stable kernel identity recorded on each allocation claim.
+///
+/// This identifier is accounting metadata, not a user-facing authority token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameOwner(u64);
+
+impl FrameOwner {
+    /// Owner used by the current bootstrap callers until each subsystem has
+    /// an explicit lifetime identity.
+    pub const BOOTSTRAP: Self = Self(1);
+    pub const ROOT_BOOTSTRAP: Self = Self(2);
+    pub const KERNEL_SCRATCH: Self = Self(3);
+    pub const USER_PROBE_CODE: Self = Self(4);
+    pub const USER_PROBE_STACK: Self = Self(5);
+    pub const PROCESS_FIRST_DATA: Self = Self(6);
+    pub const PROCESS_SECOND_DATA: Self = Self(7);
+
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
+/// Generation-bound reference to one allocation record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaimHandle {
+    slot: u16,
+    generation: u32,
+}
+
+/// Physical claim plus its owner/reference-ledger identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedSpan {
+    pub span: PhysSpan,
+    pub handle: ClaimHandle,
+}
+
+/// Read-only view of one persistent allocation record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaimRecord {
+    span: PhysSpan,
+    owner: FrameOwner,
+    generation: u32,
+    references: u32,
+}
+
+impl ClaimRecord {
+    pub const fn span(self) -> PhysSpan {
+        self.span
+    }
+
+    pub const fn owner(self) -> FrameOwner {
+        self.owner
+    }
+
+    pub const fn references(self) -> u32 {
+        self.references
+    }
+
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 impl<const N: usize> FrameAllocator<N> {
@@ -142,6 +210,15 @@ impl<const N: usize> FrameAllocator<N> {
     /// Return one recorded claim without exposing allocator internals.
     pub fn claim_at(&self, index: usize) -> Option<PhysSpan> {
         if index < self.claim_count {
+            self.claims[index].map(ClaimRecord::span)
+        } else {
+            None
+        }
+    }
+
+    /// Read ownership and reference metadata without exposing allocator state.
+    pub fn claim_record_at(&self, index: usize) -> Option<ClaimRecord> {
+        if index < self.claim_count {
             self.claims[index]
         } else {
             None
@@ -153,10 +230,11 @@ impl<const N: usize> FrameAllocator<N> {
         if frame % PAGE_BYTES != 0 {
             return false;
         }
-        self.claims[..self.claim_count]
-            .iter()
-            .flatten()
-            .any(|span| frame >= span.start && frame < span.end_exclusive())
+        self.claims[..self.claim_count].iter().flatten().any(|claim| {
+            claim.references != 0
+                && frame >= claim.span.start
+                && frame < claim.span.end_exclusive()
+        })
     }
 
     /// Prevent future allocation of a physical range. This must complete
@@ -236,13 +314,26 @@ impl<const N: usize> FrameAllocator<N> {
     /// All allocations are page-aligned and permanently removed from this
     /// prototype planner's free ranges. A future manager must also zero pages.
     pub fn allocate(&mut self, pages: u64) -> Result<PhysSpan, Error> {
+        self.allocate_owned(pages, FrameOwner::BOOTSTRAP)
+            .map(|claim| claim.span)
+    }
+
+    /// Claim a contiguous span and attach its initial owner reference.
+    /// Claims stay physically reserved even after their logical references
+    /// reach zero; mapping teardown, TLB quarantine, and zero-before-reuse are
+    /// separate K.2 gates and are deliberately not implied here.
+    pub fn allocate_owned(
+        &mut self,
+        pages: u64,
+        owner: FrameOwner,
+    ) -> Result<OwnedSpan, Error> {
         if pages == 0 {
             return Err(Error::InvalidRange);
         }
         for index in 0..self.used {
             let range = self.regions[index];
             if range.pages() >= pages {
-                if self.claim_count == N {
+                if self.claim_count == N || self.claim_count > u16::MAX as usize {
                     return Err(Error::ClaimLedgerFull);
                 }
                 let bytes = pages.checked_mul(PAGE_BYTES).ok_or(Error::InvalidRange)?;
@@ -256,18 +347,78 @@ impl<const N: usize> FrameAllocator<N> {
                     self.regions[index] = self.regions[self.used];
                     self.regions[self.used] = Region::EMPTY;
                 }
-                let claim = PhysSpan { start, pages };
-                self.claims[self.claim_count] = Some(claim);
+                let span = PhysSpan { start, pages };
+                let generation = 1;
+                let slot = self.claim_count as u16;
+                self.claims[self.claim_count] = Some(ClaimRecord {
+                    span,
+                    owner,
+                    generation,
+                    references: 1,
+                });
                 self.claim_count += 1;
-                return Ok(claim);
+                return Ok(OwnedSpan {
+                    span,
+                    handle: ClaimHandle { slot, generation },
+                });
             }
         }
         Err(Error::OutOfMemory)
     }
+
+    /// Add another logical reference to a live owner claim.
+    pub fn retain_claim(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, Error> {
+        let claim = self.claim_mut(handle, owner)?;
+        if claim.references == 0 {
+            return Err(Error::InvalidClaim);
+        }
+        claim.references = claim
+            .references
+            .checked_add(1)
+            .ok_or(Error::ClaimReferenceOverflow)?;
+        Ok(claim.references)
+    }
+
+    /// Drop one logical reference without releasing the physical pages.
+    /// The final drop retires only this record; the span remains unavailable
+    /// for reuse until mapping unmap, CPU invalidation, and zeroing are added.
+    pub fn release_claim_reference(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, Error> {
+        let claim = self.claim_mut(handle, owner)?;
+        if claim.references == 0 {
+            return Err(Error::ClaimReferenceUnderflow);
+        }
+        claim.references -= 1;
+        Ok(claim.references)
+    }
+
+    fn claim_mut(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<&mut ClaimRecord, Error> {
+        let claim = self
+            .claims
+            .get_mut(handle.slot as usize)
+            .and_then(Option::as_mut)
+            .filter(|claim| claim.generation == handle.generation)
+            .ok_or(Error::StaleClaim)?;
+        if claim.owner != owner {
+            return Err(Error::WrongOwner);
+        }
+        Ok(claim)
+    }
 }
 
 /// A page claim means *ownership*, not that the bytes are mapped or zeroed.
-/// No reclaimed pages are admitted, so claims remain irreversible in M1-A.
+/// Allocation reference counts are recorded, but frames remain unreclaimed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolStatus {
     pub available_pages: u64,
@@ -355,9 +506,47 @@ impl<const N: usize> FramePool<N> {
     /// Claims a frame span without mapping or clearing it. Do not dereference
     /// the returned physical address until paging and zeroing are implemented.
     pub fn claim_unmapped(&self, pages: u64) -> Result<PhysSpan, PoolError> {
+        self.claim_unmapped_for(pages, FrameOwner::BOOTSTRAP)
+            .map(|claim| claim.span)
+    }
+
+    /// Claim a span while recording the subsystem owner and generation handle.
+    pub fn claim_unmapped_for(
+        &self,
+        pages: u64,
+        owner: FrameOwner,
+    ) -> Result<OwnedSpan, PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
-        allocator.allocate(pages).map_err(PoolError::Allocation)
+        allocator
+            .allocate_owned(pages, owner)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Add a logical owner reference to a generation-matched claim.
+    pub fn retain_claim(
+        &self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .retain_claim(handle, owner)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Drop one logical owner reference without making pages allocator-visible.
+    pub fn release_claim_reference(
+        &self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .release_claim_reference(handle, owner)
+            .map_err(PoolError::Allocation)
     }
 
     /// Number of persistent physical claims, including claims made before
@@ -379,6 +568,16 @@ impl<const N: usize> FramePool<N> {
             .as_ref()
             .ok_or(PoolError::NotInstalled)?
             .claim_at(index))
+    }
+
+    /// Read a persistent claim's owner, reference count, and generation.
+    pub fn claim_record_at(&self, index: usize) -> Result<Option<ClaimRecord>, PoolError> {
+        let mut guard = self.lock();
+        Ok(guard
+            .state()
+            .as_ref()
+            .ok_or(PoolError::NotInstalled)?
+            .claim_record_at(index))
     }
 
     /// Check whether one aligned page belongs to a recorded Sorveth claim.
@@ -522,6 +721,75 @@ mod tests {
             pool.claim_unmapped(1),
             Err(PoolError::Allocation(Error::OutOfMemory))
         );
+    }
+
+    #[test]
+    fn owner_references_are_generation_checked_and_never_reclaim_pages() {
+        let data = desc(7, 0x1000, 4);
+        let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::new(0xCAFE);
+        let other = FrameOwner::new(0xBEEF);
+        let claim = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(claim.span.start, 0x1000);
+        assert_eq!(allocator.claim_record_at(0).unwrap().owner(), owner);
+        assert_eq!(allocator.claim_record_at(0).unwrap().references(), 1);
+        assert_eq!(allocator.retain_claim(claim.handle, owner), Ok(2));
+        assert_eq!(allocator.retain_claim(claim.handle, other), Err(Error::WrongOwner));
+        assert_eq!(
+            allocator.retain_claim(
+                ClaimHandle { generation: 2, ..claim.handle },
+                owner
+            ),
+            Err(Error::StaleClaim)
+        );
+        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(1));
+        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert!(!allocator.owns_frame(claim.span.start));
+        assert_eq!(allocator.retain_claim(claim.handle, owner), Err(Error::InvalidClaim));
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Err(Error::ClaimReferenceUnderflow)
+        );
+        assert_eq!(allocator.available_pages(), 3);
+        assert_eq!(allocator.allocate(3).unwrap().start, 0x2000);
+        assert_eq!(allocator.available_pages(), 0);
+    }
+
+    #[test]
+    fn persistent_pool_serializes_owned_claim_reference_updates() {
+        let data = desc(7, 0x1000, 3);
+        let pool = FramePool::<4>::new();
+        pool.install(FrameAllocator::<4>::from_map(&map(&data)).unwrap())
+            .unwrap();
+        let owner = FrameOwner::ROOT_BOOTSTRAP;
+        let claim = pool.claim_unmapped_for(1, owner).unwrap();
+        assert_eq!(pool.claim_record_at(0).unwrap().unwrap().owner(), owner);
+        assert_eq!(pool.retain_claim(claim.handle, owner), Ok(2));
+        assert_eq!(pool.release_claim_reference(claim.handle, owner), Ok(1));
+        assert_eq!(pool.release_claim_reference(claim.handle, owner), Ok(0));
+        assert_eq!(pool.status().unwrap().available_pages, 2);
+        assert_eq!(pool.owns_frame(claim.span.start), Ok(false));
+    }
+
+    #[test]
+    fn owner_reference_count_overflow_is_rejected_without_wrapping() {
+        let data = desc(7, 0x1000, 2);
+        let mut allocator = FrameAllocator::<2>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::BOOTSTRAP;
+        let claim = allocator.allocate_owned(1, owner).unwrap();
+        allocator.claims[claim.handle.slot as usize]
+            .as_mut()
+            .unwrap()
+            .references = u32::MAX;
+        assert_eq!(
+            allocator.retain_claim(claim.handle, owner),
+            Err(Error::ClaimReferenceOverflow)
+        );
+        assert_eq!(
+            allocator.claim_record_at(claim.handle.slot as usize).unwrap().references(),
+            u32::MAX
+        );
+        assert_eq!(allocator.available_pages(), 1);
     }
 
     #[test]

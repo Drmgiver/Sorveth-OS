@@ -140,9 +140,7 @@ fn execute(command: Command, memory: MapSummary, pool: &FramePool<256>) {
             }
             serial::write_line("");
             #[cfg(feature = "qemu-independent-root")]
-            serial::write_line(
-                "Frame claims remain unreclaimed; active page tables are Sorveth-owned",
-            );
+            serial::write_line("Frame claims remain unreclaimed; active page tables are Sorveth-owned");
             #[cfg(not(feature = "qemu-independent-root"))]
             serial::write_line("Claims remain unmapped; lower page tables are inherited");
         }

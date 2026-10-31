@@ -54,11 +54,24 @@ nested use, invalidates the TLB before access, then unmaps on return.
 Two early scratch claims no longer dereference their physical frame
 addresses through firmware's identity map.
 
-**Still pending:** completion of K.1b–d, all of K.2–K.5, production process scheduling,
-page reclamation, and safe arbitrary user mappings. The root's initial
-PML4 setup, existing page-table pointers and other kernel accesses still
-rely on inherited OVMF identity mappings. This is not an independent
-kernel memory subsystem yet.
+**K.1d accepted:** the Sorveth-owned candidate root remained active through
+the full normal, deliberate-fault, ring-3, A/B isolation, A/B copy-transfer,
+and interactive-monitor matrices. Host tests, UEFI cross-build, native ABI
+layout, formatting, normal-root QEMU, and independent-root QEMU all passed on
+the accepted `10a64f4` commit. CI evidence: [feature run
+41111097984](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41111097984)
+and [main run
+41222147869](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41222147869).
+
+**K.2 in progress:** the first step records an explicit owner, generation,
+and logical reference count for each allocation span. Dropping the final
+logical reference does not free physical pages. Mapping removal, active-CPU
+TLB quarantine, zeroing, and allocator reuse remain blocked until their own
+ordered lifecycle is implemented and tested.
+
+**Still pending:** all of K.2–K.5, production process scheduling, physical
+page reclamation, and safe arbitrary user mappings. K.1's independent root is
+a QEMU-verified bootstrap mapping set, not yet a production memory manager.
 
 
 ### K.1b intermediate checkpoint: user-copy frame access
@@ -588,8 +601,17 @@ kernel root and updates the trusted active-root record before process roots
 are created. The dedicated CI job runs the full normal, fault, ring-3, A/B
 isolation, A/B transfer and monitor acceptance suites with that root active.
 
-This is a test-only transition checkpoint, not yet K.1d completion. Host
-policy tests deny missing, USER and writable-executable leaves, and candidate
-construction checks every required plan mapping. CI must still prove the
-candidate remains active through every suite before closing K.1d or beginning
-K.2.
+Accepted K.1d: host policy tests deny missing, USER and writable-executable
+leaves, candidate construction checks every required plan mapping, and the
+independent candidate remained active through all required QEMU suites. The
+full acceptance evidence is recorded in the current implementation status.
+
+
+### K.2a owner and reference records
+
+Each claimed allocation span now carries a stable owner identity, generation,
+and checked logical reference count. Handles reject a mismatched generation,
+wrong owner, reference underflow, and count overflow. Dropping the final
+reference retires the logical record but leaves the physical span permanently
+reserved. This first K.2 step adds accounting only; it does not make a frame
+reclaimable, zero-on-reuse, or safe to detach from an active mapping.

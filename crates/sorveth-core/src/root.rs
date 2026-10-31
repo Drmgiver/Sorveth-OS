@@ -7,7 +7,7 @@
 //! PDPT/PD/PT tables; the remaining lower levels still belong to firmware.
 //! This is NOT yet a complete independent address space or user isolation.
 
-use sorveth_frames::FramePool;
+use sorveth_frames::{FrameOwner, FramePool};
 
 #[cfg(target_arch = "x86_64")]
 use core::{
@@ -243,7 +243,7 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         // ledger. The original firmware mapping must identity-map it before
         // we can safely clear its contents at this stage.
         let scratch = pool
-            .claim_unmapped(1)
+            .claim_unmapped_for(1, FrameOwner::ROOT_BOOTSTRAP)
             .map_err(|_| Error::FrameUnavailable)?;
         if inherited_translate(inherited_root, scratch.start) != Some(scratch.start) {
             return Err(Error::TestFrameNotIdentityMapped);
@@ -465,8 +465,9 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
             return Err(Error::NoFreeVirtualSlot);
         }
         let physical = pool
-            .claim_unmapped(1)
+            .claim_unmapped_for(1, FrameOwner::KERNEL_SCRATCH)
             .map_err(|_| Error::FrameUnavailable)?
+            .span
             .start;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         // K.1a: access this newly claimed frame through the Sorveth-owned
@@ -1098,12 +1099,14 @@ pub fn prepare_user_probe(
         }
 
         let code = pool
-            .claim_unmapped(1)
+            .claim_unmapped_for(1, FrameOwner::USER_PROBE_CODE)
             .map_err(|_| Error::FrameUnavailable)?
+            .span
             .start;
         let stack = pool
-            .claim_unmapped(1)
+            .claim_unmapped_for(1, FrameOwner::USER_PROBE_STACK)
             .map_err(|_| Error::FrameUnavailable)?
+            .span
             .start;
         if code == stack
             || !valid_physical_window_frame(code)
