@@ -72,11 +72,22 @@ that dropping the final reference does not free physical pages. Evidence:
 and [main run
 41222759256](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41222759256).
 
-**K.2b in progress:** allocation records now also track known mapping
-references and can enter quarantine only after owner and mapping counts reach
-zero. This is ledger state only; page-table teardown, real TLB invalidation,
-zeroing, and allocator reuse remain blocked until the kernel connects and
-tests those operations in order.
+**K.2b accepted:** allocation records also track mapping references and can
+enter quarantine only after owner and mapping counts reach zero. This is
+ledger state only; page-table teardown, real TLB invalidation, zeroing, and
+allocator reuse remain blocked until the kernel connects and tests those
+operations in order. Evidence: [feature run
+41223134856](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41223134856)
+and [main run
+41223296700](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41223296700).
+
+**K.2c in progress:** every current allocation-backed bootstrap leaf mapping
+records one mapping reference before its PTE becomes visible: the root
+bootstrap page, kernel scratch pages, process A/B data pages, and user probe
+code/stack pages. These mappings remain permanent and pinned. This closes
+known map-accounting gaps for the current fixed, single-CPU bootstrap paths;
+it does not yet implement unmapping, TLB shootdown, zero-before-reuse, or
+frame recycling.
 
 **Still pending:** all of K.2–K.5, production process scheduling, physical
 page reclamation, and safe arbitrary user mappings. K.1's independent root is

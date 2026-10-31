@@ -242,10 +242,10 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         // Claim an actual *conventional* frame from the locked ownership
         // ledger. The original firmware mapping must identity-map it before
         // we can safely clear its contents at this stage.
-        let scratch = pool
+        let scratch_claim = pool
             .claim_unmapped_for(1, FrameOwner::ROOT_BOOTSTRAP)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span;
+            .map_err(|_| Error::FrameUnavailable)?;
+        let scratch = scratch_claim.span;
         if inherited_translate(inherited_root, scratch.start) != Some(scratch.start) {
             return Err(Error::TestFrameNotIdentityMapped);
         }
@@ -260,6 +260,13 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         ptr::write_volatile(pdpt as *mut u64, pd | PRESENT | WRITE);
         ptr::write_volatile(pd as *mut u64, pt | PRESENT | WRITE);
         ptr::write_volatile(pt as *mut u64, scratch.start | PRESENT | WRITE | NO_EXECUTE);
+        if pool
+            .retain_mapping(scratch_claim.handle, FrameOwner::ROOT_BOOTSTRAP)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 1
+        {
+            return Err(Error::VerificationFailed);
+        }
         // Self-alias for editing this PT through Sorveth's own upper-half
         // page tables instead of via its inherited identity address.
         ptr::write_volatile(
@@ -465,11 +472,10 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         if !(2..PRIVATE_PT_ALIAS_INDEX as u64).contains(&slot) {
             return Err(Error::NoFreeVirtualSlot);
         }
-        let physical = pool
+        let claim = pool
             .claim_unmapped_for(1, FrameOwner::KERNEL_SCRATCH)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span
-            .start;
+            .map_err(|_| Error::FrameUnavailable)?;
+        let physical = claim.span.start;
         let root = ACTIVE_ROOT.load(Ordering::Acquire);
         // K.1a: access this newly claimed frame through the Sorveth-owned
         // high-half window instead of dereferencing a physical address.
@@ -478,6 +484,13 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         let pte = (base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096) as *mut u64;
         let pte = pte.add(slot as usize);
         if ptr::read_volatile(pte) != 0 {
+            return Err(Error::VerificationFailed);
+        }
+        if pool
+            .retain_mapping(claim.handle, FrameOwner::KERNEL_SCRATCH)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 1
+        {
             return Err(Error::VerificationFailed);
         }
         ptr::write_volatile(pte, physical | PRESENT | WRITE | NO_EXECUTE);
@@ -1099,16 +1112,14 @@ pub fn prepare_user_probe(
             }
         }
 
-        let code = pool
+        let code_claim = pool
             .claim_unmapped_for(1, FrameOwner::USER_PROBE_CODE)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span
-            .start;
-        let stack = pool
+            .map_err(|_| Error::FrameUnavailable)?;
+        let stack_claim = pool
             .claim_unmapped_for(1, FrameOwner::USER_PROBE_STACK)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span
-            .start;
+            .map_err(|_| Error::FrameUnavailable)?;
+        let code = code_claim.span.start;
+        let stack = stack_claim.span.start;
         if code == stack
             || !valid_physical_window_frame(code)
             || !valid_physical_window_frame(stack)
@@ -1125,6 +1136,18 @@ pub fn prepare_user_probe(
         with_physical_window(stack, |window| ptr::write_bytes(window, 0, 4096))?;
         for table in [pdpt, pd, pt] {
             with_physical_window(table, |window| ptr::write_bytes(window, 0, 4096))?;
+        }
+
+        if pool
+            .retain_mapping(code_claim.handle, FrameOwner::USER_PROBE_CODE)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 1
+            || pool
+                .retain_mapping(stack_claim.handle, FrameOwner::USER_PROBE_STACK)
+                .map_err(|_| Error::FrameUnavailable)?
+                != 1
+        {
+            return Err(Error::VerificationFailed);
         }
 
         with_physical_window(pdpt, |window| {

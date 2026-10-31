@@ -1236,16 +1236,14 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             }
         }
 
-        let frame_a = pool
+        let claim_a = pool
             .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span
-            .start;
-        let frame_b = pool
+            .map_err(|_| Error::FrameUnavailable)?;
+        let claim_b = pool
             .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
-            .map_err(|_| Error::FrameUnavailable)?
-            .span
-            .start;
+            .map_err(|_| Error::FrameUnavailable)?;
+        let frame_a = claim_a.span.start;
+        let frame_b = claim_b.span.start;
         if frame_a == frame_b
             || frame_a == 0
             || frame_b == 0
@@ -1281,6 +1279,23 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         }
         let (a_pdpt, a_pd, a_pt) = (tables[0], tables[1], tables[2]);
         let (b_pdpt, b_pd, b_pt) = (tables[3], tables[4], tables[5]);
+        if pool
+            .retain_mapping(
+                claim_a.handle,
+                sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+            )
+            .map_err(|_| Error::FrameUnavailable)?
+            != 1
+            || pool
+                .retain_mapping(
+                    claim_b.handle,
+                    sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+                )
+                .map_err(|_| Error::FrameUnavailable)?
+                != 1
+        {
+            return Err(Error::VerificationFailed);
+        }
         for (table, index, value) in [
             (a_pt, 0, frame_a | USER_DATA_FLAGS),
             (b_pt, 0, frame_b | USER_DATA_FLAGS),
