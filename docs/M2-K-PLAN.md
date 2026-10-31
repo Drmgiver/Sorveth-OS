@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 9011)
+Total output lines: 649
+
 # M2-K — Managed kernel memory and process lifetime
 
 This is the implementation plan after the **CI-verified M2-J.6** controlled
@@ -81,11 +84,13 @@ operations in order. Evidence: [feature run
 and [main run
 41223296700](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41223296700).
 
-**K.2c in progress:** every current allocation-backed bootstrap leaf mapping
-records one mapping reference before its PTE becomes visible: the root
-bootstrap page, kernel scratch pages, process A/B data pages, and user probe
-code/stack pages. These mappings remain permanent and pinned. This closes
-known map-accounting gaps for the current fixed, single-CPU bootstrap paths;
+**K.2c in progress:** each persistent allocation-backed bootstrap leaf
+mapping records one mapping reference before its PTE becomes visible: the
+root bootstrap page, kernel scratch pages, process A/B data pages, and user
+probe code/stack pages. These mappings remain permanent and pinned. The
+temporary physical-window alias remains scoped to a caller that holds the
+owner reference and is not counted in the mapping ledger. This closes known
+persistent-map accounting gaps for the fixed, single-CPU bootstrap paths;
 it does not yet implement unmapping, TLB shootdown, zero-before-reuse, or
 frame recycling.
 
@@ -295,86 +300,7 @@ A bounded read for one requested byte rejects offsets beyond the fixed
 still exercise the original audited user-memory copy routines, with
 both A/B cases checked before the new QEMU success marker is printed.
 
-This does not address dynamic data-frame pinning, multiple user pages,
-preemption or removing inherited supervisor code and stack mappings.
-
-
-### K.1d incremental checkpoint — owned ring-3 test loader mappings
-
-The QEMU-only ring-3 program builder now finds its unused kernel PML4
-slot by reading the registered root through Sorveth's high-half window.
-It zeros its two *ledger-claimed* 4-KiB code/stack frames and populates
-the generated program bytes through the owned window, with no direct
-physical frame pointer or requirement that OVMF identity map those frames.
-Its three static test paging-table frames are also initialized and linked
-through the owned window. The new USER PML4 entry is installed and both
-code/stack translations verified by a 4-level page walk that accepts only
-the four known root/PDPT/PD/PT frames. Foreign PTE-derived physical
-addresses cannot expand this verification whitelist.
-
-The legacy ring-3 probe, A/B hardware-isolation probes, and both 22-call
-memory-syscall probes must report a dedicated post-construction marker.
-The static test paging-table frames continue to be identity-validated
-at their early bootstrap physical addresses. This is not a general
-process loader, and active kernel code/stack/IDT mapping independence
-remains a separate K.1d acceptance target.
-
-
-### K.1d checkpoint: scheduler, copy and ring-3 loader owned mappings
-
-CI-verified: scheduler-owned PML4/data checks and negative test restoration,
-both bounded copy-integrity suites, and construction/translation of the
-ring-3 code/stack/table test subtree via Sorveth's owned frame window.
-Main verification: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918371037
-
-**K.1d remains open.** Next: the explicit supervisor mapping inventory,
-ownership and permissions for kernel executable, data, stacks, IDT/TSS,
-boot information, serial console and optional framebuffer; a separately
-QEMU-validated replacement kernel root that can drop all inherited OVMF
-lower-level tables. See M2-K1D-SUPERVISOR-TRANSITION.md.
-
-
-### K.1d read-only runtime survival audit
-
-Implemented a fail-closed, x86-64 supervisor page-walk audit of live
-kernel/serial/exception execution, GDTR/IDTR/TSS metadata and all pages
-of the kernel, worker and IST stacks (plus ring-3 trap stack when present).
-It uses an owned temporary high-half mapping for table reads but still
-preflights borrowed firmware table frames through inherited identity
-translation; no inherited page tables are removed by this checkpoint.
-The audit additionally counts legacy writable+executable kernel pages
-as remaining migration debt instead of claiming W^X is already complete.
-
-
-### K.1d verified boot handoff inventory
-
-Read-only QEMU inventory now covers mapped BootInfo, all UEFI descriptor
-buffer pages, and (if available) writable framebuffer boundaries, as
-well as code/stack/IDT/TSS survival mappings. Accepted evidence:
-https://github.com/Drmgiver/Sorveth-OS/actions/runs/40932702573
-
-This is not an independently mapped kernel. Mapping ownership and the
-replacement root still require separate implementation and QEMU proof.
-
-
-### K.1d physical backing provenance (bounded manifest)
-
-The kernel now captures a bounded, zero-heap 4-KiB page manifest for
-critical supervisor code samples, all active/worker/fault/trap stacks,
-CPU descriptor tables, persistent frame ledger and retained boot handoff.
-Each page records its actual translated backing and UEFI type; overlaps,
-unsafe conventional/MMIO types for kernel data, USER exposure and missing
-mapping evidence fail closed. The device-framebuffer exception remains
-marked explicitly as potentially unclassified. This is a runtime proof,
-not an owner ledger or an installable full-image mapping plan.
-
-
-### K.1d accepted physical-backing and owned table provenance
-
-Bounded, fail-closed runtime manifest checks current 4-KiB virtual/physical
-backing and UEFI provenance for critical kernel regions. A second dedicated
-QEMU gate verifies that all four static Sorveth-owned root/private paging
-frames have distinct, writable, aligned, classified backing. Host tests and
+This doe…1011 tokens truncated… aligned, classified backing. Host tests and
 all normal/fault/ring-3/isolation/transfer/monitor QEMU checks passed.
 Evidence: Actions 40942697712 and 40943212370.
 
