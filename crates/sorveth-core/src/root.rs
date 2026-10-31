@@ -244,7 +244,8 @@ pub unsafe fn install(inherited_root: u64, pool: &FramePool<256>) -> Result<(), 
         // we can safely clear its contents at this stage.
         let scratch = pool
             .claim_unmapped_for(1, FrameOwner::ROOT_BOOTSTRAP)
-            .map_err(|_| Error::FrameUnavailable)?;
+            .map_err(|_| Error::FrameUnavailable)?
+            .span;
         if inherited_translate(inherited_root, scratch.start) != Some(scratch.start) {
             return Err(Error::TestFrameNotIdentityMapped);
         }
