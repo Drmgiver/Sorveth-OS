@@ -37,6 +37,10 @@ pub enum Error {
     WrongOwner,
     ClaimReferenceUnderflow,
     ClaimReferenceOverflow,
+    ClaimMappingUnderflow,
+    ClaimReferencesActive,
+    ClaimMappingsActive,
+    ClaimAlreadyQuarantined,
 }
 
 #[derive(Clone, Copy)]
@@ -106,6 +110,8 @@ pub struct ClaimRecord {
     owner: FrameOwner,
     generation: u32,
     references: u32,
+    mappings: u32,
+    quarantined: bool,
 }
 
 impl ClaimRecord {
@@ -121,8 +127,30 @@ impl ClaimRecord {
         self.references
     }
 
+    pub const fn mappings(self) -> u32 {
+        self.mappings
+    }
+
+    pub const fn is_quarantined(self) -> bool {
+        self.quarantined
+    }
+
     pub const fn generation(self) -> u32 {
         self.generation
+    }
+}
+
+/// A claim whose owner references and known mappings have both reached zero.
+/// It is still reserved and cannot be reused until the span has been zeroed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuarantineTicket {
+    span: PhysSpan,
+    pub handle: ClaimHandle,
+}
+
+impl QuarantineTicket {
+    pub const fn span(self) -> PhysSpan {
+        self.span
     }
 }
 
@@ -234,7 +262,7 @@ impl<const N: usize> FrameAllocator<N> {
             .iter()
             .flatten()
             .any(|claim| {
-                claim.references != 0
+                !claim.quarantined && (claim.references != 0 || claim.mappings != 0)
                     && frame >= claim.span.start
                     && frame < claim.span.end_exclusive()
             })
@@ -354,6 +382,8 @@ impl<const N: usize> FrameAllocator<N> {
                     owner,
                     generation,
                     references: 1,
+                    mappings: 0,
+                    quarantined: false,
                 });
                 self.claim_count += 1;
                 return Ok(OwnedSpan {
@@ -368,7 +398,7 @@ impl<const N: usize> FrameAllocator<N> {
     /// Add another logical reference to a live owner claim.
     pub fn retain_claim(&mut self, handle: ClaimHandle, owner: FrameOwner) -> Result<u32, Error> {
         let claim = self.claim_mut(handle, owner)?;
-        if claim.references == 0 {
+        if claim.references == 0 || claim.quarantined {
             return Err(Error::InvalidClaim);
         }
         claim.references = claim
@@ -392,6 +422,62 @@ impl<const N: usize> FrameAllocator<N> {
         }
         claim.references -= 1;
         Ok(claim.references)
+    }
+
+    /// Record a mapping on a claim with a live owner reference.
+    pub fn retain_mapping(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, Error> {
+        let claim = self.claim_mut(handle, owner)?;
+        if claim.references == 0 || claim.quarantined {
+            return Err(Error::InvalidClaim);
+        }
+        claim.mappings = claim
+            .mappings
+            .checked_add(1)
+            .ok_or(Error::ClaimReferenceOverflow)?;
+        Ok(claim.mappings)
+    }
+
+    /// Drop a mapping reference after its PTE is removed and the required
+    /// local TLB invalidation or address-space shootdown has completed.
+    pub fn release_mapping(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, Error> {
+        let claim = self.claim_mut(handle, owner)?;
+        if claim.mappings == 0 || claim.quarantined {
+            return Err(Error::ClaimMappingUnderflow);
+        }
+        claim.mappings -= 1;
+        Ok(claim.mappings)
+    }
+
+    /// Quarantine a claim only after all owners and mappings are gone.
+    /// This does not return the span to the allocator or prove zeroing.
+    pub fn begin_quarantine(
+        &mut self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<QuarantineTicket, Error> {
+        let claim = self.claim_mut(handle, owner)?;
+        if claim.references != 0 {
+            return Err(Error::ClaimReferencesActive);
+        }
+        if claim.mappings != 0 {
+            return Err(Error::ClaimMappingsActive);
+        }
+        if claim.quarantined {
+            return Err(Error::ClaimAlreadyQuarantined);
+        }
+        claim.quarantined = true;
+        Ok(QuarantineTicket {
+            span: claim.span,
+            handle,
+        })
     }
 
     fn claim_mut(
@@ -537,6 +623,46 @@ impl<const N: usize> FramePool<N> {
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
         allocator
             .release_claim_reference(handle, owner)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Record an installed mapping on a live owner claim.
+    pub fn retain_mapping(
+        &self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .retain_mapping(handle, owner)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Drop a mapping reference after removing the PTE and invalidating its
+    /// translation on every CPU that could have used it.
+    pub fn release_mapping(
+        &self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<u32, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .release_mapping(handle, owner)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Quarantine an ownerless, unmapped claim without making it reusable.
+    pub fn begin_quarantine(
+        &self,
+        handle: ClaimHandle,
+        owner: FrameOwner,
+    ) -> Result<QuarantineTicket, PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .begin_quarantine(handle, owner)
             .map_err(PoolError::Allocation)
     }
 
@@ -775,6 +901,31 @@ mod tests {
         assert_eq!(pool.release_claim_reference(claim.handle, owner), Ok(0));
         assert_eq!(pool.status().unwrap().available_pages, 2);
         assert_eq!(pool.owns_frame(claim.span.start), Ok(false));
+    }
+
+    #[test]
+    fn mapping_references_block_quarantine_until_owner_and_map_are_gone() {
+        let data = desc(7, 0x1000, 3);
+        let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::new(0xCAFE);
+        let claim = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(allocator.retain_mapping(claim.handle, owner), Ok(1));
+        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert!(allocator.owns_frame(claim.span.start));
+        assert_eq!(
+            allocator.begin_quarantine(claim.handle, owner),
+            Err(Error::ClaimMappingsActive)
+        );
+        assert_eq!(
+            allocator.retain_mapping(claim.handle, owner),
+            Err(Error::InvalidClaim)
+        );
+        assert_eq!(allocator.release_mapping(claim.handle, owner), Ok(0));
+        assert!(!allocator.owns_frame(claim.span.start));
+        let ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
+        assert_eq!(ticket.span(), claim.span);
+        assert!(allocator.claim_record_at(0).unwrap().is_quarantined());
+        assert_eq!(allocator.available_pages(), 2);
     }
 
     #[test]

@@ -63,11 +63,20 @@ the accepted `10a64f4` commit. CI evidence: [feature run
 and [main run
 41222147869](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41222147869).
 
-**K.2 in progress:** the first step records an explicit owner, generation,
-and logical reference count for each allocation span. Dropping the final
-logical reference does not free physical pages. Mapping removal, active-CPU
-TLB quarantine, zeroing, and allocator reuse remain blocked until their own
-ordered lifecycle is implemented and tested.
+**K.2a accepted:** allocation spans have explicit subsystem owners,
+generation-bound handles, and checked logical reference counts. Host tests
+cover wrong owners, stale generations, double release, overflow, and the fact
+that dropping the final reference does not free physical pages. Evidence:
+[feature run
+41222639055](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41222639055)
+and [main run
+41222759256](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41222759256).
+
+**K.2b in progress:** allocation records now also track known mapping
+references and can enter quarantine only after owner and mapping counts reach
+zero. This is ledger state only; page-table teardown, real TLB invalidation,
+zeroing, and allocator reuse remain blocked until the kernel connects and
+tests those operations in order.
 
 **Still pending:** all of K.2–K.5, production process scheduling, physical
 page reclamation, and safe arbitrary user mappings. K.1's independent root is
@@ -615,3 +624,13 @@ wrong owner, reference underflow, and count overflow. Dropping the final
 reference retires the logical record but leaves the physical span permanently
 reserved. This first K.2 step adds accounting only; it does not make a frame
 reclaimable, zero-on-reuse, or safe to detach from an active mapping.
+
+
+### K.2b mapping references and quarantine state
+
+Allocation records now count mapped references independently from owner
+references. A final owner release prevents new mappings, while existing
+mapping references continue to keep the frame recognized as owned. The record
+can enter quarantine only after both counts are zero. This checkpoint does
+not yet modify a PTE, perform a TLB invalidation, zero memory, or return a
+frame to a free range; those remain explicit gates before any physical reuse.
