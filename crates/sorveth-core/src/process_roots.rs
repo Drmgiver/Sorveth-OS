@@ -1237,18 +1237,12 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         }
 
         let frame_a = pool
-            .claim_unmapped_for(
-                1,
-                sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
-            )
+            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
             .map_err(|_| Error::FrameUnavailable)?
             .span
             .start;
         let frame_b = pool
-            .claim_unmapped_for(
-                1,
-                sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
-            )
+            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
             .map_err(|_| Error::FrameUnavailable)?
             .span
             .start;

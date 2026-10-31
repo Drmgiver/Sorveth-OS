@@ -230,11 +230,14 @@ impl<const N: usize> FrameAllocator<N> {
         if frame % PAGE_BYTES != 0 {
             return false;
         }
-        self.claims[..self.claim_count].iter().flatten().any(|claim| {
-            claim.references != 0
-                && frame >= claim.span.start
-                && frame < claim.span.end_exclusive()
-        })
+        self.claims[..self.claim_count]
+            .iter()
+            .flatten()
+            .any(|claim| {
+                claim.references != 0
+                    && frame >= claim.span.start
+                    && frame < claim.span.end_exclusive()
+            })
     }
 
     /// Prevent future allocation of a physical range. This must complete
@@ -322,11 +325,7 @@ impl<const N: usize> FrameAllocator<N> {
     /// Claims stay physically reserved even after their logical references
     /// reach zero; mapping teardown, TLB quarantine, and zero-before-reuse are
     /// separate K.2 gates and are deliberately not implied here.
-    pub fn allocate_owned(
-        &mut self,
-        pages: u64,
-        owner: FrameOwner,
-    ) -> Result<OwnedSpan, Error> {
+    pub fn allocate_owned(&mut self, pages: u64, owner: FrameOwner) -> Result<OwnedSpan, Error> {
         if pages == 0 {
             return Err(Error::InvalidRange);
         }
@@ -367,11 +366,7 @@ impl<const N: usize> FrameAllocator<N> {
     }
 
     /// Add another logical reference to a live owner claim.
-    pub fn retain_claim(
-        &mut self,
-        handle: ClaimHandle,
-        owner: FrameOwner,
-    ) -> Result<u32, Error> {
+    pub fn retain_claim(&mut self, handle: ClaimHandle, owner: FrameOwner) -> Result<u32, Error> {
         let claim = self.claim_mut(handle, owner)?;
         if claim.references == 0 {
             return Err(Error::InvalidClaim);
@@ -524,11 +519,7 @@ impl<const N: usize> FramePool<N> {
     }
 
     /// Add a logical owner reference to a generation-matched claim.
-    pub fn retain_claim(
-        &self,
-        handle: ClaimHandle,
-        owner: FrameOwner,
-    ) -> Result<u32, PoolError> {
+    pub fn retain_claim(&self, handle: ClaimHandle, owner: FrameOwner) -> Result<u32, PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
         allocator
@@ -734,18 +725,33 @@ mod tests {
         assert_eq!(allocator.claim_record_at(0).unwrap().owner(), owner);
         assert_eq!(allocator.claim_record_at(0).unwrap().references(), 1);
         assert_eq!(allocator.retain_claim(claim.handle, owner), Ok(2));
-        assert_eq!(allocator.retain_claim(claim.handle, other), Err(Error::WrongOwner));
+        assert_eq!(
+            allocator.retain_claim(claim.handle, other),
+            Err(Error::WrongOwner)
+        );
         assert_eq!(
             allocator.retain_claim(
-                ClaimHandle { generation: 2, ..claim.handle },
+                ClaimHandle {
+                    generation: 2,
+                    ..claim.handle
+                },
                 owner
             ),
             Err(Error::StaleClaim)
         );
-        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(1));
-        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Ok(1)
+        );
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Ok(0)
+        );
         assert!(!allocator.owns_frame(claim.span.start));
-        assert_eq!(allocator.retain_claim(claim.handle, owner), Err(Error::InvalidClaim));
+        assert_eq!(
+            allocator.retain_claim(claim.handle, owner),
+            Err(Error::InvalidClaim)
+        );
         assert_eq!(
             allocator.release_claim_reference(claim.handle, owner),
             Err(Error::ClaimReferenceUnderflow)
@@ -786,7 +792,10 @@ mod tests {
             Err(Error::ClaimReferenceOverflow)
         );
         assert_eq!(
-            allocator.claim_record_at(claim.handle.slot as usize).unwrap().references(),
+            allocator
+                .claim_record_at(claim.handle.slot as usize)
+                .unwrap()
+                .references(),
             u32::MAX
         );
         assert_eq!(allocator.available_pages(), 1);
