@@ -1206,13 +1206,20 @@ pub unsafe fn verify_setup_rollback(
 ) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
-        let pages_before = pool.available_pages().map_err(|_| Error::FrameUnavailable)?;
+        let pages_before = pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages;
         let claims_before = pool.claim_count().map_err(|_| Error::FrameUnavailable)?;
         match unsafe { map_private_pages_inner(pool, true) } {
             Err(Error::SetupFailureInjected) => {}
             _ => return Err(Error::VerificationFailed),
         }
-        if pool.available_pages().map_err(|_| Error::FrameUnavailable)? != pages_before
+        if pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages
+            != pages_before
             || pool.claim_count().map_err(|_| Error::FrameUnavailable)? != claims_before
             || MAPPED.load(Ordering::Acquire)
         {
