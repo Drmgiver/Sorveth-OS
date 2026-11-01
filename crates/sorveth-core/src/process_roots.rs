@@ -1408,9 +1408,7 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
 /// # Safety
 /// The kernel root must be active on the sole CPU with interrupts masked.
 /// Neither process may be executing or concurrently inspected.
-pub unsafe fn teardown_private_pages(
-    pool: &sorveth_frames::FramePool<256>,
-) -> Result<(), Error> {
+pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if !MAPPED.load(Ordering::Acquire) {
@@ -1459,10 +1457,10 @@ pub unsafe fn teardown_private_pages(
         let (root_b, slot_b) = process_root(Process::Second).ok_or(Error::KernelUnavailable)?;
         let address_a = user_base(slot_a).ok_or(Error::VerificationFailed)?;
         let address_b = user_base(slot_b).ok_or(Error::VerificationFailed)?;
-        let saved_a = read_registered_table_word(root_a, slot_a as usize)
-            .ok_or(Error::VerificationFailed)?;
-        let saved_b = read_registered_table_word(root_b, slot_b as usize)
-            .ok_or(Error::VerificationFailed)?;
+        let saved_a =
+            read_registered_table_word(root_a, slot_a as usize).ok_or(Error::VerificationFailed)?;
+        let saved_b =
+            read_registered_table_word(root_b, slot_b as usize).ok_or(Error::VerificationFailed)?;
 
         if write_registered_table_word(root_a, slot_a as usize, 0).is_none() {
             return Err(Error::PageTableStorageUnavailable);
