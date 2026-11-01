@@ -483,6 +483,20 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     );
     crate::serial::write_line("SORVETH M2-K.1d: owned read-only mapping denial verified");
     crate::serial::write_line("SORVETH M2-K.1b: user copy via owned frame window verified");
+    if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: process address-space teardown failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.3a: process mappings removed before frames entered quarantine",
+    );
+    if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: process address-space recreation failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.3a: process mappings recreated from zeroed next-generation frames",
+    );
     #[cfg(feature = "qemu-user")]
     {
         #[cfg(any(feature = "qemu-transfer-a", feature = "qemu-transfer-b"))]

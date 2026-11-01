@@ -644,7 +644,7 @@ pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn zero_quarantined_span(
+pub(crate) unsafe fn zero_quarantined_span(
     pool: &FramePool<256>,
     ticket: QuarantineTicket,
     owner: FrameOwner,

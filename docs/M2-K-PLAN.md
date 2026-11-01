@@ -105,6 +105,14 @@ single-CPU teardown in the bootstrap root; SMP shootdown and general process
 address-space teardown remain pending, so the permanent bootstrap mappings
 remain pinned.
 
+**K.3 in progress:** the two fixed bootstrap process data mappings now retain
+their generation-bound claim handles for teardown. After all copy and
+isolation checks, QEMU removes both user PML4 entries, invalidates both local
+translations, drops mapping and owner references, quarantines and zeroes the
+frames, then recreates the mappings and checks that the same frames return
+under next-generation handles. This is a serialized single-CPU lifecycle
+proof; partial-failure rollback and general process creation remain pending.
+
 **Still pending:** K.2d completion and K.3–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
 mappings. K.1's independent root is a QEMU-verified bootstrap mapping set,

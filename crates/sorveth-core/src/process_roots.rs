@@ -11,7 +11,7 @@
 use core::{
     arch::asm,
     ptr,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{compiler_fence, AtomicBool, AtomicU64, Ordering},
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -76,6 +76,16 @@ static MAPPED: AtomicBool = AtomicBool::new(false);
 static FIRST_FRAME: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static SECOND_FRAME: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static FIRST_GENERATION: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static SECOND_GENERATION: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_arch = "x86_64")]
+static RECLAIMED_ONCE: AtomicBool = AtomicBool::new(false);
+#[cfg(target_arch = "x86_64")]
+static mut FIRST_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
+#[cfg(target_arch = "x86_64")]
+static mut SECOND_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
@@ -124,6 +134,7 @@ pub enum Error {
     VerificationFailed,
     FrameUnavailable,
     AlreadyMapped,
+    NotMapped,
     PageTableStorageUnavailable,
     SupervisorMappingMismatch,
     InheritedTableInventoryFailed,
@@ -1178,7 +1189,7 @@ unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, 
 /// # Safety
 /// Single QEMU bootstrap CPU only, kernel CPL0, interrupts masked; M2-I.1
 /// must be complete, and both roots and page-table frames identity-mapped.
-/// No process is executing concurrently, and mappings are never reclaimed.
+/// No process is executing concurrently or retaining an address-space lease.
 /// This verifies mapping ownership, NOT safe general userland or fault recovery.
 pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
@@ -1244,6 +1255,16 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
             .map_err(|_| Error::FrameUnavailable)?;
         let frame_a = claim_a.span.start;
         let frame_b = claim_b.span.start;
+        if RECLAIMED_ONCE.load(Ordering::Acquire)
+            && (frame_a != FIRST_FRAME.load(Ordering::Acquire)
+                || frame_b != SECOND_FRAME.load(Ordering::Acquire)
+                || FIRST_GENERATION.load(Ordering::Acquire).checked_add(1)
+                    != Some(claim_a.handle.generation() as u64)
+                || SECOND_GENERATION.load(Ordering::Acquire).checked_add(1)
+                    != Some(claim_b.handle.generation() as u64))
+        {
+            return Err(Error::VerificationFailed);
+        }
         if frame_a == frame_b
             || frame_a == 0
             || frame_b == 0
@@ -1364,7 +1385,155 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         }
         FIRST_FRAME.store(frame_a, Ordering::Release);
         SECOND_FRAME.store(frame_b, Ordering::Release);
+        FIRST_GENERATION.store(claim_a.handle.generation() as u64, Ordering::Release);
+        SECOND_GENERATION.store(claim_b.handle.generation() as u64, Ordering::Release);
+        unsafe {
+            FIRST_CLAIM = Some(claim_a);
+            SECOND_CLAIM = Some(claim_b);
+        }
+        RECLAIMED_ONCE.store(false, Ordering::Release);
         MAPPED.store(true, Ordering::Release);
+        Ok(())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::Unsupported)
+    }
+}
+
+/// Remove both bootstrap process data mappings, invalidate their local
+/// translations, and recycle the frames through the zero-before-reuse path.
+///
+/// # Safety
+/// The kernel root must be active on the sole CPU with interrupts masked.
+/// Neither process may be executing or concurrently inspected.
+pub unsafe fn teardown_private_pages(
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if !MAPPED.load(Ordering::Acquire) {
+            return Err(Error::NotMapped);
+        }
+        let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+        let active: u64;
+        let flags: u64;
+        asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+        asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+        if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+            return Err(Error::KernelUnavailable);
+        }
+
+        let claim_a = unsafe { FIRST_CLAIM }.ok_or(Error::FrameUnavailable)?;
+        let claim_b = unsafe { SECOND_CLAIM }.ok_or(Error::FrameUnavailable)?;
+        let owner_a = sorveth_frames::FrameOwner::PROCESS_FIRST_DATA;
+        let owner_b = sorveth_frames::FrameOwner::PROCESS_SECOND_DATA;
+        let record_a = pool
+            .claim_record_at(claim_a.handle.slot() as usize)
+            .map_err(|_| Error::FrameUnavailable)?
+            .ok_or(Error::FrameUnavailable)?;
+        let record_b = pool
+            .claim_record_at(claim_b.handle.slot() as usize)
+            .map_err(|_| Error::FrameUnavailable)?
+            .ok_or(Error::FrameUnavailable)?;
+        if record_a.generation() != claim_a.handle.generation()
+            || record_b.generation() != claim_b.handle.generation()
+            || record_a.owner() != owner_a
+            || record_b.owner() != owner_b
+            || record_a.span() != claim_a.span
+            || record_b.span() != claim_b.span
+            || record_a.references() != 1
+            || record_b.references() != 1
+            || record_a.mappings() != 1
+            || record_b.mappings() != 1
+            || record_a.is_quarantined()
+            || record_b.is_quarantined()
+            || checked_process_root(Process::First).is_none()
+            || checked_process_root(Process::Second).is_none()
+        {
+            return Err(Error::VerificationFailed);
+        }
+
+        let (root_a, slot_a) = process_root(Process::First).ok_or(Error::KernelUnavailable)?;
+        let (root_b, slot_b) = process_root(Process::Second).ok_or(Error::KernelUnavailable)?;
+        let address_a = user_base(slot_a).ok_or(Error::VerificationFailed)?;
+        let address_b = user_base(slot_b).ok_or(Error::VerificationFailed)?;
+        let saved_a = read_registered_table_word(root_a, slot_a as usize)
+            .ok_or(Error::VerificationFailed)?;
+        let saved_b = read_registered_table_word(root_b, slot_b as usize)
+            .ok_or(Error::VerificationFailed)?;
+
+        if write_registered_table_word(root_a, slot_a as usize, 0).is_none() {
+            return Err(Error::PageTableStorageUnavailable);
+        }
+        if write_registered_table_word(root_b, slot_b as usize, 0).is_none() {
+            if write_registered_table_word(root_a, slot_a as usize, saved_a).is_some() {
+                compiler_fence(Ordering::SeqCst);
+                asm!("invlpg [{}]", in(reg) address_a, options(nostack, preserves_flags));
+                asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+            }
+            return Err(Error::PageTableStorageUnavailable);
+        }
+        compiler_fence(Ordering::SeqCst);
+        asm!("invlpg [{}]", in(reg) address_a, options(nostack, preserves_flags));
+        asm!("invlpg [{}]", in(reg) address_b, options(nostack, preserves_flags));
+        // CR3 reload flushes the remaining non-global translations for this
+        // single CPU before the mapping ledger references are dropped.
+        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+
+        let tables = [
+            ptr::addr_of!(FIRST_PDPT) as u64,
+            ptr::addr_of!(FIRST_PD) as u64,
+            ptr::addr_of!(FIRST_PT) as u64,
+            ptr::addr_of!(SECOND_PDPT) as u64,
+            ptr::addr_of!(SECOND_PD) as u64,
+            ptr::addr_of!(SECOND_PT) as u64,
+        ];
+        for table in tables {
+            crate::root::with_physical_window(table, |window| {
+                ptr::write_bytes(window, 0, 4096);
+            })
+            .map_err(|_| Error::PageTableStorageUnavailable)?;
+        }
+        if read_registered_table_word(root_a, slot_a as usize) != Some(0)
+            || read_registered_table_word(root_b, slot_b as usize) != Some(0)
+        {
+            return Err(Error::VerificationFailed);
+        }
+
+        unsafe { pool.release_mapping(claim_a.handle, owner_a) }
+            .map_err(|_| Error::FrameUnavailable)?;
+        unsafe { pool.release_mapping(claim_b.handle, owner_b) }
+            .map_err(|_| Error::FrameUnavailable)?;
+        if pool
+            .release_claim_reference(claim_a.handle, owner_a)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+            || pool
+                .release_claim_reference(claim_b.handle, owner_b)
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let ticket_a = pool
+            .begin_quarantine(claim_a.handle, owner_a)
+            .map_err(|_| Error::FrameUnavailable)?;
+        let ticket_b = pool
+            .begin_quarantine(claim_b.handle, owner_b)
+            .map_err(|_| Error::FrameUnavailable)?;
+        unsafe { crate::root::zero_quarantined_span(pool, ticket_a, owner_a) }
+            .map_err(|_| Error::FrameUnavailable)?;
+        unsafe { crate::root::zero_quarantined_span(pool, ticket_b, owner_b) }
+            .map_err(|_| Error::FrameUnavailable)?;
+
+        unsafe {
+            FIRST_CLAIM = None;
+            SECOND_CLAIM = None;
+        }
+        MAPPED.store(false, Ordering::Release);
+        RECLAIMED_ONCE.store(true, Ordering::Release);
         Ok(())
     }
     #[cfg(not(target_arch = "x86_64"))]
