@@ -94,7 +94,7 @@ frame recycling. Evidence: [feature run
 and [main run
 41223828017](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41223828017).
 
-**K.2d in progress:** quarantined claims can be recycled only after the free
+**K.2d accepted:** quarantined claims can be recycled only after the free
 range insertion and next generation are preflighted, and a caller confirms
 that it zeroed the complete span. Failed preflight or zeroing leaves the
 claim quarantined and unavailable. A QEMU proof now installs a temporary
@@ -103,7 +103,8 @@ Sorveth-owned leaf mapping, writes through it, removes the PTE, performs local
 frame is returned zeroed with a new handle generation. This verifies only
 single-CPU teardown in the bootstrap root; SMP shootdown and general process
 address-space teardown remain pending, so the permanent bootstrap mappings
-remain pinned.
+remain pinned. Evidence: [main run
+41337609932](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41337609932).
 
 **K.3 in progress:** the two fixed bootstrap process data mappings now retain
 their generation-bound claim handles for teardown. After all copy and
@@ -114,9 +115,10 @@ under next-generation handles. This is a serialized single-CPU lifecycle
 proof. A forced setup failure after claim and mapping-reference staging now
 uses the same rollback path before PTE publication, and QEMU verifies the
 allocator's available-page and claim counts return to baseline. General
-process creation and SMP lifecycle handling remain pending.
+process creation and SMP lifecycle handling remain pending. Evidence:
+[feature run 41341768086](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41341768086).
 
-**Still pending:** K.2d completion and K.3–K.5, production process
+**Still pending:** general K.3 creation and teardown, K.4–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
 mappings. K.1's independent root is a QEMU-verified bootstrap mapping set,
 not yet a production memory manager.
