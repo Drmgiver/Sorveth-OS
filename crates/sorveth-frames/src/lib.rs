@@ -830,8 +830,7 @@ impl<const N: usize> FramePool<N> {
     ) -> Result<(), PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
-        unsafe { allocator.recycle_quarantined(ticket, owner, zero) }
-            .map_err(PoolError::Allocation)
+        unsafe { allocator.recycle_quarantined(ticket, owner, zero) }.map_err(PoolError::Allocation)
     }
 
     /// Number of active or quarantined physical claims.

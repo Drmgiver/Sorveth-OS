@@ -590,26 +590,30 @@ unsafe fn zero_quarantined_span(
     ticket: QuarantineTicket,
     owner: FrameOwner,
 ) -> Result<(), Error> {
-    unsafe { pool.recycle_quarantined(ticket, owner, |span| {
-        let Some(bytes) = span.pages.checked_mul(4096) else {
-            return false;
-        };
-        let Some(end) = span.start.checked_add(bytes) else {
-            return false;
-        };
-        let mut frame = span.start;
-        while frame < end {
-            if unsafe {
-                with_physical_window(frame, |window| unsafe { ptr::write_bytes(window, 0, 4096) })
-            }
-            .is_err()
-            {
+    unsafe {
+        pool.recycle_quarantined(ticket, owner, |span| {
+            let Some(bytes) = span.pages.checked_mul(4096) else {
                 return false;
+            };
+            let Some(end) = span.start.checked_add(bytes) else {
+                return false;
+            };
+            let mut frame = span.start;
+            while frame < end {
+                if unsafe {
+                    with_physical_window(frame, |window| unsafe {
+                        ptr::write_bytes(window, 0, 4096)
+                    })
+                }
+                .is_err()
+                {
+                    return false;
+                }
+                frame += 4096;
             }
-            frame += 4096;
-        }
-        true
-    }) }
+            true
+        })
+    }
     .map_err(|_| Error::FrameUnavailable)
 }
 
