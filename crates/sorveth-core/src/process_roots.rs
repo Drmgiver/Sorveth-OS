@@ -1201,9 +1201,7 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
 ///
 /// # Safety
 /// Same single-CPU, kernel-root, IRQ-masked conditions as `map_private_pages`.
-pub unsafe fn verify_setup_rollback(
-    pool: &sorveth_frames::FramePool<256>,
-) -> Result<(), Error> {
+pub unsafe fn verify_setup_rollback(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         let pages_before = pool
@@ -1307,23 +1305,22 @@ unsafe fn map_private_pages_inner(
         let claim_a = pool
             .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
             .map_err(|_| Error::FrameUnavailable)?;
-        let claim_b = match pool
-            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
-        {
-            Ok(claim) => claim,
-            Err(_) => {
-                unsafe {
-                    rollback_private_claims(
-                        pool,
-                        [Some(claim_a), None],
-                        [false; 2],
-                        [(first_root, first_slot), (second_root, second_slot)],
-                        tables,
-                    )?
-                };
-                return Err(Error::FrameUnavailable);
-            }
-        };
+        let claim_b =
+            match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
+                Ok(claim) => claim,
+                Err(_) => {
+                    unsafe {
+                        rollback_private_claims(
+                            pool,
+                            [Some(claim_a), None],
+                            [false; 2],
+                            [(first_root, first_slot), (second_root, second_slot)],
+                            tables,
+                        )?
+                    };
+                    return Err(Error::FrameUnavailable);
+                }
+            };
         let mut mapping_refs = [false; 2];
         let result = (|| -> Result<(), Error> {
             let frame_a = claim_a.span.start;
