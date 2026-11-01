@@ -97,11 +97,13 @@ and [main run
 **K.2d in progress:** quarantined claims can be recycled only after the free
 range insertion and next generation are preflighted, and a caller confirms
 that it zeroed the complete span. Failed preflight or zeroing leaves the
-claim quarantined and unavailable. A QEMU proof now exercises this sequence
-for a never-mapped frame through Sorveth's physical window, then checks that
-the same frame is returned zeroed with a new handle generation. This does
-not yet tear down persistent PTEs or perform SMP shootdown; those frames
-remain pinned until a real unmap path is verified.
+claim quarantined and unavailable. A QEMU proof now installs a temporary
+Sorveth-owned leaf mapping, writes through it, removes the PTE, performs local
+`invlpg`, drops the mapping and owner references, and checks that the same
+frame is returned zeroed with a new handle generation. This verifies only
+single-CPU teardown in the bootstrap root; SMP shootdown and general process
+address-space teardown remain pending, so the permanent bootstrap mappings
+remain pinned.
 
 **Still pending:** K.2d completion and K.3–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user

@@ -133,7 +133,7 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
         serial::write_line("FATAL: quarantined frame zero-before-reuse proof failed");
         halt_forever();
     }
-    serial::write_line("SORVETH M2-K.2d: unmapped frame zeroed before reuse");
+    serial::write_line("SORVETH M2-K.2d: mapping invalidated and frame zeroed before reuse");
 
     // Describe the PE32+ page permissions we will need when the inherited
     // mappings are replaced. This only validates metadata; it does not

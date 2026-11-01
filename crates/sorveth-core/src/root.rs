@@ -529,10 +529,10 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
     }
 }
 
-/// Exercise zero-before-reuse for a claim that was never mapped.
+/// Exercise single-CPU unmap, local invalidation, and zero-before-reuse.
 ///
-/// This bootstrap proof runs with one CPU, Sorveth's root active, and
-/// interrupts disabled. It does not test page-table teardown or SMP shootdown.
+/// This bootstrap proof runs with Sorveth's root active and interrupts
+/// disabled. It does not test SMP shootdown or arbitrary address-space teardown.
 pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -546,6 +546,62 @@ pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
         let first = pool
             .claim_unmapped_for(1, owner)
             .map_err(|_| Error::FrameUnavailable)?;
+        let slot = NEXT_PRIVATE_PAGE.load(Ordering::Acquire);
+        if !(2..PRIVATE_PT_ALIAS_INDEX as u64).contains(&slot) {
+            return Err(Error::NoFreeVirtualSlot);
+        }
+        let base = PRIVATE_BASE.load(Ordering::Acquire);
+        let virtual_address = base
+            .checked_add(slot * 4096)
+            .ok_or(Error::ScratchAddressUnavailable)?;
+        let pte = (base + PRIVATE_PT_ALIAS_INDEX as u64 * 4096) as *mut u64;
+        let pte = pte.add(slot as usize);
+        if ptr::read_volatile(pte) != 0 {
+            return Err(Error::VerificationFailed);
+        }
+        if pool
+            .retain_mapping(first.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 1
+        {
+            return Err(Error::VerificationFailed);
+        }
+        ptr::write_volatile(pte, first.span.start | PRESENT | WRITE | NO_EXECUTE);
+        compiler_fence(Ordering::SeqCst);
+        core::arch::asm!(
+            "invlpg [{}]",
+            in(reg) virtual_address,
+            options(nostack, preserves_flags),
+        );
+        NEXT_PRIVATE_PAGE.store(slot + 1, Ordering::Release);
+
+        const MAPPED_SENTINEL: u64 = 0x4b_3244_554e_4d41_50;
+        ptr::write_volatile(virtual_address as *mut u64, MAPPED_SENTINEL);
+        if ptr::read_volatile(virtual_address as *const u64) != MAPPED_SENTINEL {
+            return Err(Error::VerificationFailed);
+        }
+        let observed = with_physical_window(first.span.start, |window| {
+            ptr::read_volatile(window as *const u64)
+        })?;
+        if observed != MAPPED_SENTINEL {
+            return Err(Error::VerificationFailed);
+        }
+
+        // Remove the leaf and invalidate its translation before decrementing
+        // the mapping ledger. Only then may the claim enter quarantine.
+        ptr::write_volatile(pte, 0);
+        compiler_fence(Ordering::SeqCst);
+        core::arch::asm!(
+            "invlpg [{}]",
+            in(reg) virtual_address,
+            options(nostack, preserves_flags),
+        );
+        if unsafe { pool.release_mapping(first.handle, owner) }
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
         if pool
             .release_claim_reference(first.handle, owner)
             .map_err(|_| Error::FrameUnavailable)?
@@ -563,7 +619,7 @@ pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
             .map_err(|_| Error::FrameUnavailable)?;
         if second.span != first.span
             || second.handle.slot() != first.handle.slot()
-            || second.handle.generation() != first.handle.generation() + 1
+            || Some(second.handle.generation()) != first.handle.generation().checked_add(1)
         {
             return Err(Error::VerificationFailed);
         }
