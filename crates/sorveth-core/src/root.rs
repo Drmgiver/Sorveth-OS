@@ -7,7 +7,7 @@
 //! PDPT/PD/PT tables; the remaining lower levels still belong to firmware.
 //! This is NOT yet a complete independent address space or user isolation.
 
-use sorveth_frames::{FrameOwner, FramePool};
+use sorveth_frames::{FrameOwner, FramePool, QuarantineTicket};
 
 #[cfg(target_arch = "x86_64")]
 use core::{
@@ -527,6 +527,90 @@ pub fn claim_kernel_scratch(pool: &FramePool<256>) -> Result<u64, Error> {
         let _ = pool;
         Err(Error::UnsupportedArchitecture)
     }
+}
+
+/// Exercise zero-before-reuse for a claim that was never mapped.
+///
+/// This bootstrap proof runs with one CPU, Sorveth's root active, and
+/// interrupts disabled. It does not test page-table teardown or SMP shootdown.
+pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let flags: u64;
+        core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+        if !active() || flags & (1 << 9) != 0 {
+            return Err(Error::WrongCpuContext);
+        }
+
+        let owner = FrameOwner::new(0x4B_3244);
+        let first = pool
+            .claim_unmapped_for(1, owner)
+            .map_err(|_| Error::FrameUnavailable)?;
+        if pool
+            .release_claim_reference(first.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let ticket = pool
+            .begin_quarantine(first.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?;
+        zero_quarantined_span(pool, ticket, owner)?;
+
+        let second = pool
+            .claim_unmapped_for(1, owner)
+            .map_err(|_| Error::FrameUnavailable)?;
+        if second.span != first.span
+            || second.handle.slot() != first.handle.slot()
+            || second.handle.generation() != first.handle.generation() + 1
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let all_zero = with_physical_window(second.span.start, |window| {
+            core::slice::from_raw_parts(window as *const u8, 4096)
+                .iter()
+                .all(|byte| *byte == 0)
+        })?;
+        if !all_zero {
+            return Err(Error::VerificationFailed);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::UnsupportedArchitecture)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn zero_quarantined_span(
+    pool: &FramePool<256>,
+    ticket: QuarantineTicket,
+    owner: FrameOwner,
+) -> Result<(), Error> {
+    unsafe { pool.recycle_quarantined(ticket, owner, |span| {
+        let Some(bytes) = span.pages.checked_mul(4096) else {
+            return false;
+        };
+        let Some(end) = span.start.checked_add(bytes) else {
+            return false;
+        };
+        let mut frame = span.start;
+        while frame < end {
+            if unsafe {
+                with_physical_window(frame, |window| unsafe { ptr::write_bytes(window, 0, 4096) })
+            }
+            .is_err()
+            {
+                return false;
+            }
+            frame += 4096;
+        }
+        true
+    }) }
+    .map_err(|_| Error::FrameUnavailable)
 }
 
 /// Number of 4 KiB Sorveth-owned mappings in the initial private PT.

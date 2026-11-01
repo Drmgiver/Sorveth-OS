@@ -129,6 +129,11 @@ pub fn kernel_main(boot: &BootInfo) -> ! {
     serial::write_line("Sorveth PML4 root: active (firmware lower levels shared)");
     serial::write_line("Sorveth private supervisor NX mapping: verified");
     serial::write_line("SORVETH M2-K.1c: self-mapped kernel paging table verified");
+    if root::verify_quarantined_recycle(&FRAME_POOL).is_err() {
+        serial::write_line("FATAL: quarantined frame zero-before-reuse proof failed");
+        halt_forever();
+    }
+    serial::write_line("SORVETH M2-K.2d: unmapped frame zeroed before reuse");
 
     // Describe the PE32+ page permissions we will need when the inherited
     // mappings are replaced. This only validates metadata; it does not

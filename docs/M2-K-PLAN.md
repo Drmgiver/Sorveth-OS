@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 9172)
-Total output lines: 659
-
 # M2-K — Managed kernel memory and process lifetime
 
 This is the implementation plan after the **CI-verified M2-J.6** controlled
@@ -97,16 +94,19 @@ frame recycling. Evidence: [feature run
 and [main run
 41223828017](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41223828017).
 
-**K.2d next:** implement real teardown and recycling for a claim only after
-all recorded mappings are removed and the relevant CPU translations are
-invalidated. Zero the quarantined span through the owned physical window,
-then transactionally return its range and advance the claim-slot generation.
-The first reclaim path must operate only on claims proven unmapped; firmware,
-runtime, active page-table, and permanent bootstrap frames remain pinned.
+**K.2d in progress:** quarantined claims can be recycled only after the free
+range insertion and next generation are preflighted, and a caller confirms
+that it zeroed the complete span. Failed preflight or zeroing leaves the
+claim quarantined and unavailable. A QEMU proof now exercises this sequence
+for a never-mapped frame through Sorveth's physical window, then checks that
+the same frame is returned zeroed with a new handle generation. This does
+not yet tear down persistent PTEs or perform SMP shootdown; those frames
+remain pinned until a real unmap path is verified.
 
-**Still pending:** K.2d–K.5, production process scheduling, general physical
-page reclamation, and safe arbitrary user mappings. K.1's independent root is
-a QEMU-verified bootstrap mapping set, not yet a production memory manager.
+**Still pending:** K.2d completion and K.3–K.5, production process
+scheduling, general physical page reclamation, and safe arbitrary user
+mappings. K.1's independent root is a QEMU-verified bootstrap mapping set,
+not yet a production memory manager.
 
 
 ### K.1b intermediate checkpoint: user-copy frame access
@@ -335,7 +335,21 @@ process loader, and active kernel code/stack/IDT mapping independence
 remains a separate K.1d acceptance target.
 
 
-### K.1d checkpoint: scheduler, copy and ring-3 loade…172 tokens truncated… runtime survival audit
+### K.1d checkpoint: scheduler, copy and ring-3 loader owned mappings
+
+CI-verified: scheduler-owned PML4/data checks and negative test restoration,
+both bounded copy-integrity suites, and construction/translation of the
+ring-3 code/stack/table test subtree via Sorveth's owned frame window.
+Main verification: https://github.com/Drmgiver/Sorveth-OS/actions/runs/40918371037
+
+**K.1d remains open.** Next: the explicit supervisor mapping inventory,
+ownership and permissions for kernel executable, data, stacks, IDT/TSS,
+boot information, serial console and optional framebuffer; a separately
+QEMU-validated replacement kernel root that can drop all inherited OVMF
+lower-level tables. See M2-K1D-SUPERVISOR-TRANSITION.md.
+
+
+### K.1d read-only runtime survival audit
 
 Implemented a fail-closed, x86-64 supervisor page-walk audit of live
 kernel/serial/exception execution, GDTR/IDTR/TSS metadata and all pages

@@ -460,7 +460,11 @@ impl<const N: usize> FrameAllocator<N> {
 
     /// Drop a mapping reference after its PTE is removed and the required
     /// local TLB invalidation or address-space shootdown has completed.
-    pub fn release_mapping(
+    ///
+    /// # Safety
+    /// The caller must have removed the mapping and completed invalidation on
+    /// every CPU that could have used it before dropping this reference.
+    pub unsafe fn release_mapping(
         &mut self,
         handle: ClaimHandle,
         owner: FrameOwner,
@@ -503,7 +507,12 @@ impl<const N: usize> FrameAllocator<N> {
     /// runs. If either preflight or zeroing fails, the claim remains
     /// quarantined and unavailable. The callback must clear every byte in the
     /// span and must not re-enter this allocator.
-    pub fn recycle_quarantined(
+    ///
+    /// # Safety
+    /// Before calling, every mapping represented by the claim must have been
+    /// removed and invalidated on all CPUs that could have used it. The
+    /// callback must zero every byte before returning `true`.
+    pub unsafe fn recycle_quarantined(
         &mut self,
         ticket: QuarantineTicket,
         owner: FrameOwner,
@@ -776,16 +785,18 @@ impl<const N: usize> FramePool<N> {
 
     /// Drop a mapping reference after removing the PTE and invalidating its
     /// translation on every CPU that could have used it.
-    pub fn release_mapping(
+    ///
+    /// # Safety
+    /// The caller must have removed the mapping and completed invalidation on
+    /// every CPU that could have used it before dropping this reference.
+    pub unsafe fn release_mapping(
         &self,
         handle: ClaimHandle,
         owner: FrameOwner,
     ) -> Result<u32, PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
-        allocator
-            .release_mapping(handle, owner)
-            .map_err(PoolError::Allocation)
+        unsafe { allocator.release_mapping(handle, owner) }.map_err(PoolError::Allocation)
     }
 
     /// Quarantine an ownerless, unmapped claim without making it reusable.
@@ -806,7 +817,12 @@ impl<const N: usize> FramePool<N> {
     /// The pool lock remains held during `zero`; the callback must not call
     /// back into this pool. The caller must also prevent interrupt or CPU
     /// activity that could violate the callback's access assumptions.
-    pub fn recycle_quarantined(
+    ///
+    /// # Safety
+    /// Before calling, every mapping represented by the claim must have been
+    /// removed and invalidated on all CPUs that could have used it. The
+    /// callback must zero every byte before returning `true`.
+    pub unsafe fn recycle_quarantined(
         &self,
         ticket: QuarantineTicket,
         owner: FrameOwner,
@@ -814,8 +830,7 @@ impl<const N: usize> FramePool<N> {
     ) -> Result<(), PoolError> {
         let mut guard = self.lock();
         let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
-        allocator
-            .recycle_quarantined(ticket, owner, zero)
+        unsafe { allocator.recycle_quarantined(ticket, owner, zero) }
             .map_err(PoolError::Allocation)
     }
 
@@ -1075,7 +1090,10 @@ mod tests {
             allocator.retain_mapping(claim.handle, owner),
             Err(Error::InvalidClaim)
         );
-        assert_eq!(allocator.release_mapping(claim.handle, owner), Ok(0));
+        assert_eq!(
+            unsafe { allocator.release_mapping(claim.handle, owner) },
+            Ok(0)
+        );
         assert!(!allocator.owns_frame(claim.span.start));
         let ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
         assert_eq!(ticket.span(), claim.span);
@@ -1097,10 +1115,12 @@ mod tests {
         let mut zeroed = None;
 
         assert_eq!(
-            allocator.recycle_quarantined(ticket, owner, |span| {
-                zeroed = Some(span);
-                true
-            }),
+            unsafe {
+                allocator.recycle_quarantined(ticket, owner, |span| {
+                    zeroed = Some(span);
+                    true
+                })
+            },
             Ok(())
         );
         assert_eq!(zeroed, Some(first.span));
@@ -1116,7 +1136,7 @@ mod tests {
             Err(Error::StaleClaim)
         );
         assert_eq!(
-            allocator.recycle_quarantined(ticket, owner, |_| true),
+            unsafe { allocator.recycle_quarantined(ticket, owner, |_| true) },
             Err(Error::StaleClaim)
         );
     }
@@ -1134,7 +1154,7 @@ mod tests {
         let ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
 
         assert_eq!(
-            allocator.recycle_quarantined(ticket, owner, |_| false),
+            unsafe { allocator.recycle_quarantined(ticket, owner, |_| false) },
             Err(Error::ZeroingFailed)
         );
         assert_eq!(allocator.available_pages(), 2);
@@ -1164,10 +1184,12 @@ mod tests {
         let mut called = false;
 
         assert_eq!(
-            allocator.recycle_quarantined(ticket, owner, |_| {
-                called = true;
-                true
-            }),
+            unsafe {
+                allocator.recycle_quarantined(ticket, owner, |_| {
+                    called = true;
+                    true
+                })
+            },
             Err(Error::ClaimGenerationExhausted)
         );
         assert!(!called);
