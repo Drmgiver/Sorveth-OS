@@ -429,6 +429,13 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line(
         "SORVETH M2-K.1r: inherited firmware table ancestry absent from active process roots",
     );
+    if unsafe { crate::process_roots::verify_setup_rollback(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: process mapping setup rollback failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.3b: failed mapping setup rolled claims back through zeroed quarantine",
+    );
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process-private user mapping validation failed");
         crate::halt_forever();

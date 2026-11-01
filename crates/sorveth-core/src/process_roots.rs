@@ -135,6 +135,7 @@ pub enum Error {
     FrameUnavailable,
     AlreadyMapped,
     NotMapped,
+    SetupFailureInjected,
     PageTableStorageUnavailable,
     SupervisorMappingMismatch,
     InheritedTableInventoryFailed,
@@ -1192,6 +1193,44 @@ unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, 
 /// No process is executing concurrently or retaining an address-space lease.
 /// This verifies mapping ownership, NOT safe general userland or fault recovery.
 pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
+    unsafe { map_private_pages_inner(pool, false) }
+}
+
+/// Fail after both claims and mapping references are staged, then prove the
+/// real setup rollback returns every frame to the allocator.
+///
+/// # Safety
+/// Same single-CPU, kernel-root, IRQ-masked conditions as `map_private_pages`.
+pub unsafe fn verify_setup_rollback(
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let pages_before = pool.available_pages().map_err(|_| Error::FrameUnavailable)?;
+        let claims_before = pool.claim_count().map_err(|_| Error::FrameUnavailable)?;
+        match unsafe { map_private_pages_inner(pool, true) } {
+            Err(Error::SetupFailureInjected) => {}
+            _ => return Err(Error::VerificationFailed),
+        }
+        if pool.available_pages().map_err(|_| Error::FrameUnavailable)? != pages_before
+            || pool.claim_count().map_err(|_| Error::FrameUnavailable)? != claims_before
+            || MAPPED.load(Ordering::Acquire)
+        {
+            return Err(Error::VerificationFailed);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::Unsupported)
+    }
+}
+
+unsafe fn map_private_pages_inner(
+    pool: &sorveth_frames::FramePool<256>,
+    inject_failure_after_staging: bool,
+) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if !READY.load(Ordering::Acquire) {
@@ -1233,6 +1272,17 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
                 return Err(Error::PageTableStorageUnavailable);
             }
         }
+        // Preflight both reserved root slots before changing any of the
+        // lower-level tables they might reference.
+        if read_registered_table_word(first_root, first_slot as usize) != Some(0)
+            || read_registered_table_word(second_root, second_slot as usize) != Some(0)
+            || read_registered_table_word(first_root, second_slot as usize) != Some(0)
+            || read_registered_table_word(second_root, first_slot as usize) != Some(0)
+            || read_registered_table_word(kernel, first_slot as usize) != Some(0)
+            || read_registered_table_word(kernel, second_slot as usize) != Some(0)
+        {
+            return Err(Error::VerificationFailed);
+        }
         for table in tables {
             // The six static paging frames were validated above. Initialize
             // through a Sorveth-owned virtual mapping, not a physical pointer.
@@ -1250,156 +1300,260 @@ pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result
         let claim_a = pool
             .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
             .map_err(|_| Error::FrameUnavailable)?;
-        let claim_b = pool
+        let claim_b = match pool
             .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
-            .map_err(|_| Error::FrameUnavailable)?;
-        let frame_a = claim_a.span.start;
-        let frame_b = claim_b.span.start;
-        if RECLAIMED_ONCE.load(Ordering::Acquire)
-            && (frame_a != FIRST_FRAME.load(Ordering::Acquire)
-                || frame_b != SECOND_FRAME.load(Ordering::Acquire)
-                || FIRST_GENERATION.load(Ordering::Acquire).checked_add(1)
-                    != Some(claim_a.handle.generation() as u64)
-                || SECOND_GENERATION.load(Ordering::Acquire).checked_add(1)
-                    != Some(claim_b.handle.generation() as u64))
         {
-            return Err(Error::VerificationFailed);
-        }
-        if frame_a == frame_b
-            || frame_a == 0
-            || frame_b == 0
-            || frame_a & 4095 != 0
-            || frame_b & 4095 != 0
-        {
-            return Err(Error::FrameUnavailable);
-        }
-        // Both ledger-claimed data frames are initialized through Sorveth's
-        // temporary supervisor alias. Their physical addresses are not
-        // directly dereferenced and need no firmware identity mapping.
-        for frame in [frame_a, frame_b] {
-            let zeroed = crate::root::with_physical_window(frame, |window| {
-                ptr::write_bytes(window, 0, 4096);
-                ptr::read_volatile(window as *const u64) == 0
-            })
-            .map_err(|_| Error::FrameUnavailable)?;
-            if !zeroed {
+            Ok(claim) => claim,
+            Err(_) => {
+                unsafe {
+                    rollback_private_claims(
+                        pool,
+                        [Some(claim_a), None],
+                        [false; 2],
+                        [(first_root, first_slot), (second_root, second_slot)],
+                        tables,
+                    )?
+                };
+                return Err(Error::FrameUnavailable);
+            }
+        };
+        let mut mapping_refs = [false; 2];
+        let result = (|| -> Result<(), Error> {
+            let frame_a = claim_a.span.start;
+            let frame_b = claim_b.span.start;
+            if RECLAIMED_ONCE.load(Ordering::Acquire)
+                && (frame_a != FIRST_FRAME.load(Ordering::Acquire)
+                    || frame_b != SECOND_FRAME.load(Ordering::Acquire)
+                    || FIRST_GENERATION.load(Ordering::Acquire).checked_add(1)
+                        != Some(claim_a.handle.generation() as u64)
+                    || SECOND_GENERATION.load(Ordering::Acquire).checked_add(1)
+                        != Some(claim_b.handle.generation() as u64))
+            {
                 return Err(Error::VerificationFailed);
             }
-        }
+            if frame_a == frame_b
+                || frame_a == 0
+                || frame_b == 0
+                || frame_a & 4095 != 0
+                || frame_b & 4095 != 0
+            {
+                return Err(Error::FrameUnavailable);
+            }
+            // Both ledger-claimed data frames are initialized through Sorveth's
+            // temporary supervisor alias. Their physical addresses are not
+            // directly dereferenced and need no firmware identity mapping.
+            for frame in [frame_a, frame_b] {
+                let zeroed = crate::root::with_physical_window(frame, |window| {
+                    ptr::write_bytes(window, 0, 4096);
+                    ptr::read_volatile(window as *const u64) == 0
+                })
+                .map_err(|_| Error::FrameUnavailable)?;
+                if !zeroed {
+                    return Err(Error::VerificationFailed);
+                }
+            }
 
-        // Each process gets distinct PML4/PDPT/PD/PT ancestors; both
-        // entire root slots and private paths are preflighted before writes.
-        if read_registered_table_word(first_root, first_slot as usize) != Some(0)
-            || read_registered_table_word(second_root, second_slot as usize) != Some(0)
-            || read_registered_table_word(first_root, second_slot as usize) != Some(0)
-            || read_registered_table_word(second_root, first_slot as usize) != Some(0)
-            || read_registered_table_word(kernel, first_slot as usize) != Some(0)
-            || read_registered_table_word(kernel, second_slot as usize) != Some(0)
-        {
-            return Err(Error::VerificationFailed);
-        }
-        let (a_pdpt, a_pd, a_pt) = (tables[0], tables[1], tables[2]);
-        let (b_pdpt, b_pd, b_pt) = (tables[3], tables[4], tables[5]);
-        if pool
-            .retain_mapping(
-                claim_a.handle,
-                sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
-            )
-            .map_err(|_| Error::FrameUnavailable)?
-            != 1
-            || pool
+            // Each process gets distinct PML4/PDPT/PD/PT ancestors. Their root
+            // slots were verified empty before any frame was claimed.
+            let (a_pdpt, a_pd, a_pt) = (tables[0], tables[1], tables[2]);
+            let (b_pdpt, b_pd, b_pt) = (tables[3], tables[4], tables[5]);
+            if pool
+                .retain_mapping(
+                    claim_a.handle,
+                    sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+                )
+                .map_err(|_| Error::FrameUnavailable)?
+                != 1
+            {
+                return Err(Error::VerificationFailed);
+            }
+            mapping_refs[0] = true;
+            if pool
                 .retain_mapping(
                     claim_b.handle,
                     sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
                 )
                 .map_err(|_| Error::FrameUnavailable)?
                 != 1
-        {
-            return Err(Error::VerificationFailed);
-        }
-        for (table, index, value) in [
-            (a_pt, 0, frame_a | USER_DATA_FLAGS),
-            (b_pt, 0, frame_b | USER_DATA_FLAGS),
-            (a_pd, 0, a_pt | USER_TABLE_FLAGS),
-            (b_pd, 0, b_pt | USER_TABLE_FLAGS),
-            (a_pdpt, 0, a_pd | USER_TABLE_FLAGS),
-            (b_pdpt, 0, b_pd | USER_TABLE_FLAGS),
-            (first_root, first_slot as usize, a_pdpt | USER_TABLE_FLAGS),
-            (second_root, second_slot as usize, b_pdpt | USER_TABLE_FLAGS),
-        ] {
-            write_registered_table_word(table, index, value)
-                .ok_or(Error::PageTableStorageUnavailable)?;
-        }
-        if !validate_user_path(first_root, first_slot, a_pdpt, a_pd, a_pt, frame_a)
-            || !validate_user_path(second_root, second_slot, b_pdpt, b_pd, b_pt, frame_b)
-            || read_registered_table_word(first_root, second_slot as usize) != Some(0)
-            || read_registered_table_word(second_root, first_slot as usize) != Some(0)
-        {
-            return Err(Error::VerificationFailed);
-        }
+            {
+                return Err(Error::VerificationFailed);
+            }
+            mapping_refs[1] = true;
+            if inject_failure_after_staging {
+                return Err(Error::SetupFailureInjected);
+            }
+            for (table, index, value) in [
+                (a_pt, 0, frame_a | USER_DATA_FLAGS),
+                (b_pt, 0, frame_b | USER_DATA_FLAGS),
+                (a_pd, 0, a_pt | USER_TABLE_FLAGS),
+                (b_pd, 0, b_pt | USER_TABLE_FLAGS),
+                (a_pdpt, 0, a_pd | USER_TABLE_FLAGS),
+                (b_pdpt, 0, b_pd | USER_TABLE_FLAGS),
+                (first_root, first_slot as usize, a_pdpt | USER_TABLE_FLAGS),
+                (second_root, second_slot as usize, b_pdpt | USER_TABLE_FLAGS),
+            ] {
+                write_registered_table_word(table, index, value)
+                    .ok_or(Error::PageTableStorageUnavailable)?;
+            }
+            if !validate_user_path(first_root, first_slot, a_pdpt, a_pd, a_pt, frame_a)
+                || !validate_user_path(second_root, second_slot, b_pdpt, b_pd, b_pt, frame_b)
+                || read_registered_table_word(first_root, second_slot as usize) != Some(0)
+                || read_registered_table_word(second_root, first_slot as usize) != Some(0)
+            {
+                return Err(Error::VerificationFailed);
+            }
 
-        // Actual x86 translation and memory writes under each independent
-        // CR3 root, with a full CR3 reload flushing non-global TLB entries.
-        let mut valid = true;
-        for (root, address, expected) in [
-            (first_root, first_virt, FIRST_TEST_WORD),
-            (second_root, second_virt, SECOND_TEST_WORD),
-        ] {
-            asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
-            let mut observed: u64;
-            asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
-            if observed & ADDRESS_MASK != root {
-                valid = false;
-                break;
+            // Actual x86 translation and memory writes under each independent
+            // CR3 root, with a full CR3 reload flushing non-global TLB entries.
+            let mut valid = true;
+            for (root, address, expected) in [
+                (first_root, first_virt, FIRST_TEST_WORD),
+                (second_root, second_virt, SECOND_TEST_WORD),
+            ] {
+                asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+                let mut observed: u64;
+                asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
+                if observed & ADDRESS_MASK != root {
+                    valid = false;
+                    break;
+                }
+                ptr::write_volatile(address as *mut u64, expected);
+                // The user-virtual read proves data visibility under the selected
+                // process root. Physical-frame verification follows after the
+                // kernel CR3 is restored, through its own mapped window.
+                if ptr::read_volatile(address as *const u64) != expected {
+                    valid = false;
+                    break;
+                }
             }
-            ptr::write_volatile(address as *mut u64, expected);
-            // The user-virtual read proves data visibility under the selected
-            // process root. Physical-frame verification follows after the
-            // kernel CR3 is restored, through its own mapped window.
-            if ptr::read_volatile(address as *const u64) != expected {
-                valid = false;
-                break;
+            asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+            let restored: u64;
+            asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
+            if restored & ADDRESS_MASK != kernel {
+                return Err(Error::VerificationFailed);
             }
+            let observed_a = crate::root::with_physical_window(frame_a, |window| {
+                ptr::read_volatile(window as *const u64)
+            })
+            .map_err(|_| Error::VerificationFailed)?;
+            let observed_b = crate::root::with_physical_window(frame_b, |window| {
+                ptr::read_volatile(window as *const u64)
+            })
+            .map_err(|_| Error::VerificationFailed)?;
+            if !valid
+                || observed_a != FIRST_TEST_WORD
+                || observed_b != SECOND_TEST_WORD
+                || ptr::read_volatile((kernel as *const u64).add(first_slot as usize)) != 0
+                || ptr::read_volatile((kernel as *const u64).add(second_slot as usize)) != 0
+            {
+                return Err(Error::VerificationFailed);
+            }
+            FIRST_FRAME.store(frame_a, Ordering::Release);
+            SECOND_FRAME.store(frame_b, Ordering::Release);
+            FIRST_GENERATION.store(claim_a.handle.generation() as u64, Ordering::Release);
+            SECOND_GENERATION.store(claim_b.handle.generation() as u64, Ordering::Release);
+            unsafe {
+                FIRST_CLAIM = Some(claim_a);
+                SECOND_CLAIM = Some(claim_b);
+            }
+            RECLAIMED_ONCE.store(false, Ordering::Release);
+            MAPPED.store(true, Ordering::Release);
+            Ok(())
+        })();
+        if result.is_err() {
+            unsafe {
+                rollback_private_claims(
+                    pool,
+                    [Some(claim_a), Some(claim_b)],
+                    mapping_refs,
+                    [(first_root, first_slot), (second_root, second_slot)],
+                    tables,
+                )?
+            };
         }
-        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-        let restored: u64;
-        asm!("mov {}, cr3", out(reg) restored, options(nomem, nostack, preserves_flags));
-        if restored & ADDRESS_MASK != kernel {
-            return Err(Error::VerificationFailed);
-        }
-        let observed_a = crate::root::with_physical_window(frame_a, |window| {
-            ptr::read_volatile(window as *const u64)
-        })
-        .map_err(|_| Error::VerificationFailed)?;
-        let observed_b = crate::root::with_physical_window(frame_b, |window| {
-            ptr::read_volatile(window as *const u64)
-        })
-        .map_err(|_| Error::VerificationFailed)?;
-        if !valid
-            || observed_a != FIRST_TEST_WORD
-            || observed_b != SECOND_TEST_WORD
-            || ptr::read_volatile((kernel as *const u64).add(first_slot as usize)) != 0
-            || ptr::read_volatile((kernel as *const u64).add(second_slot as usize)) != 0
-        {
-            return Err(Error::VerificationFailed);
-        }
-        FIRST_FRAME.store(frame_a, Ordering::Release);
-        SECOND_FRAME.store(frame_b, Ordering::Release);
-        FIRST_GENERATION.store(claim_a.handle.generation() as u64, Ordering::Release);
-        SECOND_GENERATION.store(claim_b.handle.generation() as u64, Ordering::Release);
-        unsafe {
-            FIRST_CLAIM = Some(claim_a);
-            SECOND_CLAIM = Some(claim_b);
-        }
-        RECLAIMED_ONCE.store(false, Ordering::Release);
-        MAPPED.store(true, Ordering::Release);
-        Ok(())
+        result
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
         let _ = pool;
         Err(Error::Unsupported)
     }
+}
+
+/// Roll back claims that have not been committed as a process address space.
+/// Clearing both reserved root slots first covers failures before, during, or
+/// after leaf publication; mapping references are dropped only after the local
+/// address translations have been invalidated.
+#[cfg(target_arch = "x86_64")]
+unsafe fn rollback_private_claims(
+    pool: &sorveth_frames::FramePool<256>,
+    claims: [Option<sorveth_frames::OwnedSpan>; 2],
+    mapping_refs: [bool; 2],
+    roots: [(u64, u16); 2],
+    tables: [u64; 6],
+) -> Result<(), Error> {
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    if active & ADDRESS_MASK != kernel {
+        return Err(Error::KernelUnavailable);
+    }
+    let addresses = [
+        user_base(roots[0].1).ok_or(Error::VerificationFailed)?,
+        user_base(roots[1].1).ok_or(Error::VerificationFailed)?,
+    ];
+    for (root, slot) in roots {
+        if write_registered_table_word(root, slot as usize, 0).is_none() {
+            return Err(Error::PageTableStorageUnavailable);
+        }
+    }
+    compiler_fence(Ordering::SeqCst);
+    for address in addresses {
+        asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags));
+    }
+    asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+    for table in tables {
+        crate::root::with_physical_window(table, |window| {
+            ptr::write_bytes(window, 0, 4096);
+        })
+        .map_err(|_| Error::PageTableStorageUnavailable)?;
+    }
+
+    for (index, claim) in claims.into_iter().enumerate() {
+        let Some(claim) = claim else {
+            continue;
+        };
+        let owner = if index == 0 {
+            sorveth_frames::FrameOwner::PROCESS_FIRST_DATA
+        } else {
+            sorveth_frames::FrameOwner::PROCESS_SECOND_DATA
+        };
+        if mapping_refs[index]
+            && unsafe { pool.release_mapping(claim.handle, owner) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
+        if pool
+            .release_claim_reference(claim.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let ticket = pool
+            .begin_quarantine(claim.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?;
+        unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+            .map_err(|_| Error::FrameUnavailable)?;
+    }
+    unsafe {
+        FIRST_CLAIM = None;
+        SECOND_CLAIM = None;
+    }
+    MAPPED.store(false, Ordering::Release);
+    Ok(())
 }
 
 /// Remove both bootstrap process data mappings, invalidate their local

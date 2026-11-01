@@ -111,7 +111,10 @@ isolation checks, QEMU removes both user PML4 entries, invalidates both local
 translations, drops mapping and owner references, quarantines and zeroes the
 frames, then recreates the mappings and checks that the same frames return
 under next-generation handles. This is a serialized single-CPU lifecycle
-proof; partial-failure rollback and general process creation remain pending.
+proof. A forced setup failure after claim and mapping-reference staging now
+uses the same rollback path before PTE publication, and QEMU verifies the
+allocator's available-page and claim counts return to baseline. General
+process creation and SMP lifecycle handling remain pending.
 
 **Still pending:** K.2d completion and K.3–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
