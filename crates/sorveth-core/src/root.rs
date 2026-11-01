@@ -631,6 +631,9 @@ pub fn verify_quarantined_recycle(pool: &FramePool<256>) -> Result<(), Error> {
         if !all_zero {
             return Err(Error::VerificationFailed);
         }
+        // The temporary leaf is gone and its translation was invalidated,
+        // so return the virtual slot to the bootstrap page allocator.
+        NEXT_PRIVATE_PAGE.store(slot, Ordering::Release);
         Ok(())
     }
     #[cfg(not(target_arch = "x86_64"))]
