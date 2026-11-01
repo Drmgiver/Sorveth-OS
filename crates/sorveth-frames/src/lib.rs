@@ -5,8 +5,8 @@
 //! This is a *frame ownership planner*, not an installed memory manager.
 //! It does not map memory, create page tables, access RAM or synchronize CPUs.
 //! The caller must retain the allocator and reserve any independently owned
-//! physical buffers before allocations. Releasing frames is intentionally
-//! unsupported until object-lifetime and zeroing rules are implemented.
+//! physical buffers before allocations. A quarantined claim can only be
+//! recycled through an explicit zero-before-reuse callback.
 
 use sorveth_memory::{MapError, MemoryMap, PAGE_BYTES};
 
@@ -41,6 +41,11 @@ pub enum Error {
     ClaimReferencesActive,
     ClaimMappingsActive,
     ClaimAlreadyQuarantined,
+    ClaimTicketMismatch,
+    ClaimGenerationExhausted,
+    ReclaimOverlap,
+    ReclaimRegionFull,
+    ZeroingFailed,
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +69,7 @@ pub struct FrameAllocator<const N: usize> {
     available_pages: u64,
     allocations_started: bool,
     claims: [Option<ClaimRecord>; N],
+    generations: [u32; N],
     claim_count: usize,
 }
 
@@ -94,6 +100,16 @@ impl FrameOwner {
 pub struct ClaimHandle {
     slot: u16,
     generation: u32,
+}
+
+impl ClaimHandle {
+    pub const fn slot(self) -> u16 {
+        self.slot
+    }
+
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 /// Physical claim plus its owner/reference-ledger identity.
@@ -165,6 +181,7 @@ impl<const N: usize> FrameAllocator<N> {
             available_pages: 0,
             allocations_started: false,
             claims: [None; N],
+            generations: [1; N],
             claim_count: 0,
         };
 
@@ -230,27 +247,19 @@ impl<const N: usize> FrameAllocator<N> {
         self.used
     }
 
-    /// Number of irreversible spans claimed from conventional memory.
+    /// Number of active or quarantined claims in the ownership ledger.
     pub fn claim_count(&self) -> usize {
         self.claim_count
     }
 
-    /// Return one recorded claim without exposing allocator internals.
+    /// Return the claim occupying one ledger slot, if any.
     pub fn claim_at(&self, index: usize) -> Option<PhysSpan> {
-        if index < self.claim_count {
-            self.claims[index].map(ClaimRecord::span)
-        } else {
-            None
-        }
+        self.claims.get(index).copied().flatten().map(ClaimRecord::span)
     }
 
-    /// Read ownership and reference metadata without exposing allocator state.
+    /// Read ownership and reference metadata for one ledger slot.
     pub fn claim_record_at(&self, index: usize) -> Option<ClaimRecord> {
-        if index < self.claim_count {
-            self.claims[index]
-        } else {
-            None
-        }
+        self.claims.get(index).copied().flatten()
     }
 
     /// Whether an aligned physical page belongs to any recorded claim.
@@ -258,7 +267,7 @@ impl<const N: usize> FrameAllocator<N> {
         if frame % PAGE_BYTES != 0 {
             return false;
         }
-        self.claims[..self.claim_count]
+        self.claims
             .iter()
             .flatten()
             .any(|claim| {
@@ -343,17 +352,17 @@ impl<const N: usize> FrameAllocator<N> {
     }
 
     /// Hand out one contiguous physical span, without mapping or touching it.
-    /// All allocations are page-aligned and permanently removed from this
-    /// prototype planner's free ranges. A future manager must also zero pages.
+    /// Allocated pages remain absent from free ranges until they pass through
+    /// quarantine and the zero-before-reuse path.
     pub fn allocate(&mut self, pages: u64) -> Result<PhysSpan, Error> {
         self.allocate_owned(pages, FrameOwner::BOOTSTRAP)
             .map(|claim| claim.span)
     }
 
     /// Claim a contiguous span and attach its initial owner reference.
-    /// Claims stay physically reserved even after their logical references
-    /// reach zero; mapping teardown, TLB quarantine, and zero-before-reuse are
-    /// separate K.2 gates and are deliberately not implied here.
+    /// Claims stay physically reserved after their logical references reach
+    /// zero until all mappings are removed, invalidations complete, and the
+    /// quarantined span has been zeroed.
     pub fn allocate_owned(&mut self, pages: u64, owner: FrameOwner) -> Result<OwnedSpan, Error> {
         if pages == 0 {
             return Err(Error::InvalidRange);
@@ -361,7 +370,16 @@ impl<const N: usize> FrameAllocator<N> {
         for index in 0..self.used {
             let range = self.regions[index];
             if range.pages() >= pages {
-                if self.claim_count == N || self.claim_count > u16::MAX as usize {
+                let slot = self
+                    .claims
+                    .iter()
+                    .position(Option::is_none)
+                    .ok_or(Error::ClaimLedgerFull)?;
+                if slot > u16::MAX as usize {
+                    return Err(Error::ClaimLedgerFull);
+                }
+                let generation = self.generations[slot];
+                if generation == 0 {
                     return Err(Error::ClaimLedgerFull);
                 }
                 let bytes = pages.checked_mul(PAGE_BYTES).ok_or(Error::InvalidRange)?;
@@ -376,9 +394,7 @@ impl<const N: usize> FrameAllocator<N> {
                     self.regions[self.used] = Region::EMPTY;
                 }
                 let span = PhysSpan { start, pages };
-                let generation = 1;
-                let slot = self.claim_count as u16;
-                self.claims[self.claim_count] = Some(ClaimRecord {
+                self.claims[slot] = Some(ClaimRecord {
                     span,
                     owner,
                     generation,
@@ -389,7 +405,10 @@ impl<const N: usize> FrameAllocator<N> {
                 self.claim_count += 1;
                 return Ok(OwnedSpan {
                     span,
-                    handle: ClaimHandle { slot, generation },
+                    handle: ClaimHandle {
+                        slot: slot as u16,
+                        generation,
+                    },
                 });
             }
         }
@@ -477,6 +496,128 @@ impl<const N: usize> FrameAllocator<N> {
         })
     }
 
+    /// Zero a quarantined span and return it to the conventional free ranges.
+    ///
+    /// Range insertion and generation advancement are checked before `zero`
+    /// runs. If either preflight or zeroing fails, the claim remains
+    /// quarantined and unavailable. The callback must clear every byte in the
+    /// span and must not re-enter this allocator.
+    pub fn recycle_quarantined(
+        &mut self,
+        ticket: QuarantineTicket,
+        owner: FrameOwner,
+        mut zero: impl FnMut(PhysSpan) -> bool,
+    ) -> Result<(), Error> {
+        let slot = ticket.handle.slot as usize;
+        let claim = self
+            .claims
+            .get(slot)
+            .and_then(Option::as_ref)
+            .copied()
+            .filter(|claim| claim.generation == ticket.handle.generation)
+            .ok_or(Error::StaleClaim)?;
+        if claim.owner != owner {
+            return Err(Error::WrongOwner);
+        }
+        if self.generations[slot] != claim.generation {
+            return Err(Error::StaleClaim);
+        }
+        if claim.span != ticket.span {
+            return Err(Error::ClaimTicketMismatch);
+        }
+        if !claim.quarantined {
+            return Err(Error::InvalidClaim);
+        }
+        if claim.references != 0 {
+            return Err(Error::ClaimReferencesActive);
+        }
+        if claim.mappings != 0 {
+            return Err(Error::ClaimMappingsActive);
+        }
+
+        let next_generation = claim
+            .generation
+            .checked_add(1)
+            .ok_or(Error::ClaimGenerationExhausted)?;
+        let length = claim
+            .span
+            .pages
+            .checked_mul(PAGE_BYTES)
+            .ok_or(Error::InvalidRange)?;
+        let end = claim
+            .span
+            .start
+            .checked_add(length)
+            .ok_or(Error::InvalidRange)?;
+        let mut next_regions = self.regions;
+        let mut next_used = self.used;
+        Self::insert_reclaimed_region(
+            &mut next_regions,
+            &mut next_used,
+            Region {
+                start: claim.span.start,
+                end,
+            },
+        )?;
+        let next_available = self
+            .available_pages
+            .checked_add(claim.span.pages)
+            .ok_or(Error::InvalidRange)?;
+
+        if !zero(claim.span) {
+            return Err(Error::ZeroingFailed);
+        }
+
+        self.regions = next_regions;
+        self.used = next_used;
+        self.available_pages = next_available;
+        self.claims[slot] = None;
+        self.generations[slot] = next_generation;
+        self.claim_count -= 1;
+        Ok(())
+    }
+
+    fn insert_reclaimed_region(
+        regions: &mut [Region; N],
+        used: &mut usize,
+        incoming: Region,
+    ) -> Result<(), Error> {
+        let position = (0..*used)
+            .find(|&index| regions[index].start >= incoming.start)
+            .unwrap_or(*used);
+        if position > 0 && regions[position - 1].end > incoming.start
+            || position < *used && incoming.end > regions[position].start
+        {
+            return Err(Error::ReclaimOverlap);
+        }
+
+        let joins_previous = position > 0 && regions[position - 1].end == incoming.start;
+        let joins_next = position < *used && incoming.end == regions[position].start;
+        match (joins_previous, joins_next) {
+            (true, true) => {
+                regions[position - 1].end = regions[position].end;
+                for index in position..(*used - 1) {
+                    regions[index] = regions[index + 1];
+                }
+                *used -= 1;
+                regions[*used] = Region::EMPTY;
+            }
+            (true, false) => regions[position - 1].end = incoming.end,
+            (false, true) => regions[position].start = incoming.start,
+            (false, false) => {
+                if *used == N {
+                    return Err(Error::ReclaimRegionFull);
+                }
+                for index in (position..*used).rev() {
+                    regions[index + 1] = regions[index];
+                }
+                regions[position] = incoming;
+                *used += 1;
+            }
+        }
+        Ok(())
+    }
+
     fn claim_mut(
         &mut self,
         handle: ClaimHandle,
@@ -496,7 +637,7 @@ impl<const N: usize> FrameAllocator<N> {
 }
 
 /// A page claim means *ownership*, not that the bytes are mapped or zeroed.
-/// Allocation reference counts are recorded, but frames remain unreclaimed.
+/// Claims are reusable only after quarantine and explicit zeroing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolStatus {
     pub available_pages: u64,
@@ -659,8 +800,25 @@ impl<const N: usize> FramePool<N> {
             .map_err(PoolError::Allocation)
     }
 
-    /// Number of persistent physical claims, including claims made before
-    /// the ledger was installed into this pool.
+    /// Zero and recycle an ownerless, unmapped quarantine ticket.
+    ///
+    /// The pool lock remains held during `zero`; the callback must not call
+    /// back into this pool. The caller must also prevent interrupt or CPU
+    /// activity that could violate the callback's access assumptions.
+    pub fn recycle_quarantined(
+        &self,
+        ticket: QuarantineTicket,
+        owner: FrameOwner,
+        zero: impl FnMut(PhysSpan) -> bool,
+    ) -> Result<(), PoolError> {
+        let mut guard = self.lock();
+        let allocator = guard.state().as_mut().ok_or(PoolError::NotInstalled)?;
+        allocator
+            .recycle_quarantined(ticket, owner, zero)
+            .map_err(PoolError::Allocation)
+    }
+
+    /// Number of active or quarantined physical claims.
     pub fn claim_count(&self) -> Result<usize, PoolError> {
         let mut guard = self.lock();
         Ok(guard
@@ -922,6 +1080,89 @@ mod tests {
         assert_eq!(ticket.span(), claim.span);
         assert!(allocator.claim_record_at(0).unwrap().is_quarantined());
         assert_eq!(allocator.available_pages(), 2);
+    }
+
+    #[test]
+    fn recycled_quarantine_is_zeroed_before_reuse_with_new_generation() {
+        let data = desc(7, 0x1000, 3);
+        let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::new(0xCAFE);
+        let first = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(allocator.release_claim_reference(first.handle, owner), Ok(0));
+        let ticket = allocator.begin_quarantine(first.handle, owner).unwrap();
+        let mut zeroed = None;
+
+        assert_eq!(
+            allocator.recycle_quarantined(ticket, owner, |span| {
+                zeroed = Some(span);
+                true
+            }),
+            Ok(())
+        );
+        assert_eq!(zeroed, Some(first.span));
+        assert_eq!(allocator.claim_count(), 0);
+        assert_eq!(allocator.available_pages(), 3);
+
+        let second = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(second.span, first.span);
+        assert_eq!(second.handle.slot, first.handle.slot);
+        assert_eq!(second.handle.generation, first.handle.generation + 1);
+        assert_eq!(
+            allocator.retain_claim(first.handle, owner),
+            Err(Error::StaleClaim)
+        );
+        assert_eq!(
+            allocator.recycle_quarantined(ticket, owner, |_| true),
+            Err(Error::StaleClaim)
+        );
+    }
+
+    #[test]
+    fn failed_zeroing_keeps_quarantined_pages_unavailable() {
+        let data = desc(7, 0x1000, 3);
+        let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::new(0xCAFE);
+        let claim = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        let ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
+
+        assert_eq!(
+            allocator.recycle_quarantined(ticket, owner, |_| false),
+            Err(Error::ZeroingFailed)
+        );
+        assert_eq!(allocator.available_pages(), 2);
+        assert_eq!(allocator.claim_count(), 1);
+        assert!(allocator
+            .claim_record_at(claim.handle.slot as usize)
+            .unwrap()
+            .is_quarantined());
+        assert_eq!(allocator.allocate(3), Err(Error::OutOfMemory));
+    }
+
+    #[test]
+    fn generation_exhaustion_is_rejected_before_zeroing_or_reuse() {
+        let data = desc(7, 0x1000, 2);
+        let mut allocator = FrameAllocator::<2>::from_map(&map(&data)).unwrap();
+        let owner = FrameOwner::BOOTSTRAP;
+        let claim = allocator.allocate_owned(1, owner).unwrap();
+        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        let mut ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
+        let slot = claim.handle.slot as usize;
+        allocator.claims[slot].as_mut().unwrap().generation = u32::MAX;
+        allocator.generations[slot] = u32::MAX;
+        ticket.handle.generation = u32::MAX;
+        let mut called = false;
+
+        assert_eq!(
+            allocator.recycle_quarantined(ticket, owner, |_| {
+                called = true;
+                true
+            }),
+            Err(Error::ClaimGenerationExhausted)
+        );
+        assert!(!called);
+        assert_eq!(allocator.available_pages(), 1);
+        assert_eq!(allocator.claim_count(), 1);
     }
 
     #[test]
