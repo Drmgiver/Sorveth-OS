@@ -254,7 +254,11 @@ impl<const N: usize> FrameAllocator<N> {
 
     /// Return the claim occupying one ledger slot, if any.
     pub fn claim_at(&self, index: usize) -> Option<PhysSpan> {
-        self.claims.get(index).copied().flatten().map(ClaimRecord::span)
+        self.claims
+            .get(index)
+            .copied()
+            .flatten()
+            .map(ClaimRecord::span)
     }
 
     /// Read ownership and reference metadata for one ledger slot.
@@ -267,15 +271,12 @@ impl<const N: usize> FrameAllocator<N> {
         if frame % PAGE_BYTES != 0 {
             return false;
         }
-        self.claims
-            .iter()
-            .flatten()
-            .any(|claim| {
-                !claim.quarantined
-                    && (claim.references != 0 || claim.mappings != 0)
-                    && frame >= claim.span.start
-                    && frame < claim.span.end_exclusive()
-            })
+        self.claims.iter().flatten().any(|claim| {
+            !claim.quarantined
+                && (claim.references != 0 || claim.mappings != 0)
+                && frame >= claim.span.start
+                && frame < claim.span.end_exclusive()
+        })
     }
 
     /// Prevent future allocation of a physical range. This must complete
@@ -1088,7 +1089,10 @@ mod tests {
         let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
         let owner = FrameOwner::new(0xCAFE);
         let first = allocator.allocate_owned(1, owner).unwrap();
-        assert_eq!(allocator.release_claim_reference(first.handle, owner), Ok(0));
+        assert_eq!(
+            allocator.release_claim_reference(first.handle, owner),
+            Ok(0)
+        );
         let ticket = allocator.begin_quarantine(first.handle, owner).unwrap();
         let mut zeroed = None;
 
@@ -1123,7 +1127,10 @@ mod tests {
         let mut allocator = FrameAllocator::<4>::from_map(&map(&data)).unwrap();
         let owner = FrameOwner::new(0xCAFE);
         let claim = allocator.allocate_owned(1, owner).unwrap();
-        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Ok(0)
+        );
         let ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
 
         assert_eq!(
@@ -1145,7 +1152,10 @@ mod tests {
         let mut allocator = FrameAllocator::<2>::from_map(&map(&data)).unwrap();
         let owner = FrameOwner::BOOTSTRAP;
         let claim = allocator.allocate_owned(1, owner).unwrap();
-        assert_eq!(allocator.release_claim_reference(claim.handle, owner), Ok(0));
+        assert_eq!(
+            allocator.release_claim_reference(claim.handle, owner),
+            Ok(0)
+        );
         let mut ticket = allocator.begin_quarantine(claim.handle, owner).unwrap();
         let slot = claim.handle.slot as usize;
         allocator.claims[slot].as_mut().unwrap().generation = u32::MAX;
