@@ -133,6 +133,8 @@ lifecycle gaps. Evidence: [feature run
 **K.3d in progress:** the two bootstrap process PML4 roots are now claimed
 from the frame ledger under a dedicated owner, initialized through the
 Sorveth-owned physical window, and verified by switching CR3 to each root.
+The cross-process fault verifier now checks root entries through that window
+instead of assuming that physical root frames are identity mapped.
 Their generation-bound claims stay pinned because the bootstrap scheduler can
 still select either address space; retiring those roots safely requires
 scheduler-reference retirement and remains future work. CI evidence is

@@ -5,7 +5,6 @@
 
 use core::{
     arch::asm,
-    ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -94,13 +93,22 @@ pub fn expected_foreign_fault(address: u64, error: u64) -> bool {
     if current & CR3_MASK != root {
         return false;
     }
-    // The process's own PML4 entry must remain USER=1, while the other
-    // process's top-level user slot must be nonpresent.
+    // Process roots are physical frames, not identity-mapped pointers. Switch
+    // to the kernel root and inspect both slots through the owned frame window.
+    let kernel = match crate::root::kernel_root_physical() {
+        Some(kernel) => kernel,
+        None => return false,
+    };
     unsafe {
-        let pml4 = root as *const u64;
-        ptr::read_volatile(pml4.add(own_slot as usize)) & 0x5 == 0x5
-            && ptr::read_volatile(pml4.add(foreign_slot as usize)) == 0
+        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
     }
+    let own_entry = unsafe { process_roots::read_process_root_slot(owner(), own_slot) };
+    let foreign_entry = unsafe { process_roots::read_process_root_slot(owner(), foreign_slot) };
+    unsafe {
+        asm!("mov cr3, {}", in(reg) current, options(nostack, preserves_flags));
+    }
+    own_entry.map_or(false, |entry| entry & 0x5 == 0x5)
+        && foreign_entry == Some(0)
 }
 
 pub fn success_marker() -> &'static str {
