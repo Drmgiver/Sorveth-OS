@@ -177,9 +177,7 @@ fn vacant_slots(mut entry: impl FnMut(usize) -> u64) -> Option<(usize, usize)> {
 /// pool. Root frames are copied through the owned physical window; supervisor
 /// executable/stack mapping inheritance remains.
 
-pub unsafe fn prepare_and_verify(
-    pool: &sorveth_frames::FramePool<256>,
-) -> Result<(), Error> {
+pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if READY.load(Ordering::Acquire) {
@@ -197,9 +195,7 @@ pub unsafe fn prepare_and_verify(
             pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_ROOTS)
                 .map_err(|_| Error::FrameUnavailable)?,
         );
-        claims[1] = match pool
-            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_ROOTS)
-        {
+        claims[1] = match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_ROOTS) {
             Ok(claim) => Some(claim),
             Err(_) => {
                 unsafe { rollback_process_root_claims(pool, claims)? };
