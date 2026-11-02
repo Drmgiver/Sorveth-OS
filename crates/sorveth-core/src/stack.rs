@@ -441,6 +441,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line(
+        "SORVETH M2-K.3c: private paging trees allocated from the frame ledger",
+    );
+    crate::serial::write_line(
         "Sorveth private process pages: distinct user RW/NX mappings verified",
     );
     crate::serial::write_line("SORVETH M2-K.1c: owned process paging-table construction verified");

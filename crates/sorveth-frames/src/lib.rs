@@ -89,6 +89,7 @@ impl FrameOwner {
     pub const USER_PROBE_STACK: Self = Self(5);
     pub const PROCESS_FIRST_DATA: Self = Self(6);
     pub const PROCESS_SECOND_DATA: Self = Self(7);
+    pub const PROCESS_PAGE_TABLES: Self = Self(8);
 
     pub const fn new(id: u64) -> Self {
         Self(id)

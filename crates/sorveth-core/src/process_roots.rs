@@ -50,20 +50,11 @@ static mut FIRST: Page = Page([0; 512]);
 #[cfg(target_arch = "x86_64")]
 static mut SECOND: Page = Page([0; 512]);
 
-// Unlike inherited firmware trees, these six lower-level tables are owned
-// separately by Sorveth and never referenced by the other process root.
+// The two roots are still bootstrap fixtures, but their private lower-level
+// paging frames are claimed from the frame ledger for each address-space
+// mapping lifetime instead of being permanently pinned in BSS.
 #[cfg(target_arch = "x86_64")]
-static mut FIRST_PDPT: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut FIRST_PD: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut FIRST_PT: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut SECOND_PDPT: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut SECOND_PD: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut SECOND_PT: Page = Page([0; 512]);
+static mut PROCESS_TABLE_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 6] = [None; 6];
 #[cfg(target_arch = "x86_64")]
 static READY: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
@@ -770,21 +761,35 @@ fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> 
 ///
 /// # Safety
 /// Requires the existing single-core, IRQ-masked, kernel-CR3 bootstrap.
-/// The physical values of these static table frames were checked during
-/// firmware handoff and process root/table initialization.
+/// The kernel and bootstrap root frames are fixed; private paging frames must
+/// be present in the active process-table claim set.
 #[cfg(target_arch = "x86_64")]
 fn registered_table_frames() -> Option<[u64; 9]> {
     let kernel = crate::root::kernel_root_physical()?;
+    let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
     Some([
         kernel,
         ptr::addr_of!(FIRST).cast::<u64>() as u64,
         ptr::addr_of!(SECOND).cast::<u64>() as u64,
-        ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
-        ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
-        ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+        table_claims[0].map_or(0, |claim| claim.span.start),
+        table_claims[1].map_or(0, |claim| claim.span.start),
+        table_claims[2].map_or(0, |claim| claim.span.start),
+        table_claims[3].map_or(0, |claim| claim.span.start),
+        table_claims[4].map_or(0, |claim| claim.span.start),
+        table_claims[5].map_or(0, |claim| claim.span.start),
+    ])
+}
+
+#[cfg(target_arch = "x86_64")]
+fn process_table_frames() -> Option<[u64; 6]> {
+    let claims = unsafe { PROCESS_TABLE_CLAIMS };
+    Some([
+        claims[0]?.span.start,
+        claims[1]?.span.start,
+        claims[2]?.span.start,
+        claims[3]?.span.start,
+        claims[4]?.span.start,
+        claims[5]?.span.start,
     ])
 }
 
@@ -901,7 +906,7 @@ unsafe fn write_registered_table_word(frame: u64, index: usize, value: u64) -> O
 ///
 /// # Safety
 /// Restricted to the single QEMU bootstrap CPU, with IRQs disabled,
-/// registered static table frames and no concurrent page-table edits.
+/// registered table frames and no concurrent page-table edits.
 /// Reads use the Sorveth-owned window, not raw physical-pointer casts.
 pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     if !MAPPED.load(Ordering::Acquire) {
@@ -927,16 +932,9 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     {
         return None;
     }
-    let tables_a = [
-        ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
-        ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
-        ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
-    ];
-    let tables_b = [
-        ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
-    ];
+    let tables = process_table_frames()?;
+    let tables_a = [tables[0], tables[1], tables[2]];
+    let tables_b = [tables[3], tables[4], tables[5]];
     for (i, table) in tables_a.iter().chain(tables_b.iter()).enumerate() {
         if *table == 0
             || *table & 4095 != 0
@@ -995,9 +993,13 @@ pub unsafe fn verify_readonly_copy_out_denied(process: Process) -> bool {
         Some(value) => value,
         None => return false,
     };
+    let tables = match process_table_frames() {
+        Some(tables) => tables,
+        None => return false,
+    };
     let leaf = match process {
-        Process::First => ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
-        Process::Second => ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+        Process::First => tables[2],
+        Process::Second => tables[5],
     };
     let previous = match read_registered_table_word(leaf, 0) {
         Some(entry) => entry,
@@ -1053,18 +1055,19 @@ pub unsafe fn walk_process_user_range(
 
     // Reuse M2-I.5 ownership auditing, not a user-supplied physical root.
     let root = checked_process_root(process).ok_or(WalkError::InvalidRoot)?;
+    let tables = process_table_frames().ok_or(WalkError::InvalidRoot)?;
     let owned = match process {
         Process::First => [
             root,
-            ptr::addr_of!(FIRST_PDPT).cast::<u64>() as u64,
-            ptr::addr_of!(FIRST_PD).cast::<u64>() as u64,
-            ptr::addr_of!(FIRST_PT).cast::<u64>() as u64,
+            tables[0],
+            tables[1],
+            tables[2],
         ],
         Process::Second => [
             root,
-            ptr::addr_of!(SECOND_PDPT).cast::<u64>() as u64,
-            ptr::addr_of!(SECOND_PD).cast::<u64>() as u64,
-            ptr::addr_of!(SECOND_PT).cast::<u64>() as u64,
+            tables[3],
+            tables[4],
+            tables[5],
         ],
     };
 
@@ -1166,7 +1169,7 @@ pub unsafe fn verify_user_page_walk() -> bool {
 
 /// Check all four PML4/PDPT/PD/PT entries without using user virtual
 /// addresses or a physical identity-pointer dereference. Only the known
-/// registered static paging frames can be read through the owned window.
+/// registered owned paging frames can be read through the owned window.
 #[cfg(target_arch = "x86_64")]
 unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, data: u64) -> bool {
     let (Some(pml4_entry), Some(pdpt_entry), Some(pd_entry), Some(leaf_entry)) = (
@@ -1189,7 +1192,7 @@ unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, 
 ///
 /// # Safety
 /// Single QEMU bootstrap CPU only, kernel CPL0, interrupts masked; M2-I.1
-/// must be complete, and both roots and page-table frames identity-mapped.
+/// must be complete, and Sorveth's temporary physical window must be active.
 /// No process is executing concurrently or retaining an address-space lease.
 /// This verifies mapping ownership, NOT safe general userland or fault recovery.
 pub unsafe fn map_private_pages(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
@@ -1260,23 +1263,6 @@ unsafe fn map_private_pages_inner(
             return Err(Error::KernelUnavailable);
         }
 
-        let tables = [
-            ptr::addr_of_mut!(FIRST_PDPT).cast::<u64>() as u64,
-            ptr::addr_of_mut!(FIRST_PD).cast::<u64>() as u64,
-            ptr::addr_of_mut!(FIRST_PT).cast::<u64>() as u64,
-            ptr::addr_of_mut!(SECOND_PDPT).cast::<u64>() as u64,
-            ptr::addr_of_mut!(SECOND_PD).cast::<u64>() as u64,
-            ptr::addr_of_mut!(SECOND_PT).cast::<u64>() as u64,
-        ];
-        for (i, &table) in tables.iter().enumerate() {
-            if table == 0
-                || table & 4095 != 0
-                || !crate::root::identity_mapped(table)
-                || tables[..i].contains(&table)
-            {
-                return Err(Error::PageTableStorageUnavailable);
-            }
-        }
         // Preflight both reserved root slots before changing any of the
         // lower-level tables they might reference.
         if read_registered_table_word(first_root, first_slot as usize) != Some(0)
@@ -1288,40 +1274,79 @@ unsafe fn map_private_pages_inner(
         {
             return Err(Error::VerificationFailed);
         }
-        for table in tables {
-            // The six static paging frames were validated above. Initialize
-            // through a Sorveth-owned virtual mapping, not a physical pointer.
-            crate::root::with_physical_window(table, |window| {
-                ptr::write_bytes(window, 0, 4096);
-            })
-            .map_err(|_| Error::PageTableStorageUnavailable)?;
-            if read_registered_table_word(table, 0) != Some(0)
-                || read_registered_table_word(table, 511) != Some(0)
-            {
-                return Err(Error::VerificationFailed);
-            }
-        }
 
-        let claim_a = pool
-            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
-            .map_err(|_| Error::FrameUnavailable)?;
-        let claim_b =
-            match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
-                Ok(claim) => claim,
+        // Every mapping lifetime owns its six private paging frames through
+        // the same generation-checked frame ledger as its user data pages.
+        let roots = [(first_root, first_slot), (second_root, second_slot)];
+        let mut claims = [None; 8];
+        for index in 0..6 {
+            match pool.claim_unmapped_for(
+                1,
+                sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
+            ) {
+                Ok(claim) => claims[index + 2] = Some(claim),
                 Err(_) => {
                     unsafe {
-                        rollback_private_claims(
-                            pool,
-                            [Some(claim_a), None],
-                            [false; 2],
-                            [(first_root, first_slot), (second_root, second_slot)],
-                            tables,
-                        )?
+                        rollback_private_claims(pool, claims, [false; 8], roots, [0; 6])?
                     };
                     return Err(Error::FrameUnavailable);
                 }
-            };
-        let mut mapping_refs = [false; 2];
+            }
+        }
+        let tables = core::array::from_fn(|index| claims[index + 2].unwrap().span.start);
+        for (index, table) in tables.iter().enumerate() {
+            if *table == 0 || *table & 4095 != 0 || tables[..index].contains(table) {
+                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                return Err(Error::PageTableStorageUnavailable);
+            }
+        }
+        unsafe {
+            PROCESS_TABLE_CLAIMS = core::array::from_fn(|index| claims[index + 2]);
+        }
+        for table in tables {
+            let initialized = crate::root::with_physical_window(table, |window| {
+                ptr::write_bytes(window, 0, 4096);
+                ptr::read_volatile(window as *const u64) == 0
+                    && ptr::read_volatile((window as *const u64).add(511)) == 0
+            });
+            match initialized {
+                Ok(true) => {}
+                Ok(false) => {
+                    unsafe {
+                        rollback_private_claims(pool, claims, [false; 8], roots, tables)?
+                    };
+                    return Err(Error::VerificationFailed);
+                }
+                Err(_) => {
+                    unsafe {
+                        rollback_private_claims(pool, claims, [false; 8], roots, tables)?
+                    };
+                    return Err(Error::PageTableStorageUnavailable);
+                }
+            }
+        }
+
+        claims[0] = match pool
+            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
+        {
+            Ok(claim) => Some(claim),
+            Err(_) => {
+                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                return Err(Error::FrameUnavailable);
+            }
+        };
+        claims[1] = match pool
+            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
+        {
+            Ok(claim) => Some(claim),
+            Err(_) => {
+                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                return Err(Error::FrameUnavailable);
+            }
+        };
+        let claim_a = claims[0].unwrap();
+        let claim_b = claims[1].unwrap();
+        let mut mapping_refs = [false; 8];
         let result = (|| -> Result<(), Error> {
             let frame_a = claim_a.span.start;
             let frame_b = claim_b.span.start;
@@ -1361,6 +1386,20 @@ unsafe fn map_private_pages_inner(
             // slots were verified empty before any frame was claimed.
             let (a_pdpt, a_pd, a_pt) = (tables[0], tables[1], tables[2]);
             let (b_pdpt, b_pd, b_pt) = (tables[3], tables[4], tables[5]);
+            for index in 0..6 {
+                let claim = claims[index + 2].ok_or(Error::FrameUnavailable)?;
+                if pool
+                    .retain_mapping(
+                        claim.handle,
+                        sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
+                    )
+                    .map_err(|_| Error::FrameUnavailable)?
+                    != 1
+                {
+                    return Err(Error::VerificationFailed);
+                }
+                mapping_refs[index + 2] = true;
+            }
             if pool
                 .retain_mapping(
                     claim_a.handle,
@@ -1468,9 +1507,9 @@ unsafe fn map_private_pages_inner(
             unsafe {
                 rollback_private_claims(
                     pool,
-                    [Some(claim_a), Some(claim_b)],
+                    claims,
                     mapping_refs,
-                    [(first_root, first_slot), (second_root, second_slot)],
+                    roots,
                     tables,
                 )?
             };
@@ -1491,8 +1530,8 @@ unsafe fn map_private_pages_inner(
 #[cfg(target_arch = "x86_64")]
 unsafe fn rollback_private_claims(
     pool: &sorveth_frames::FramePool<256>,
-    claims: [Option<sorveth_frames::OwnedSpan>; 2],
-    mapping_refs: [bool; 2],
+    claims: [Option<sorveth_frames::OwnedSpan>; 8],
+    mapping_refs: [bool; 8],
     roots: [(u64, u16); 2],
     tables: [u64; 6],
 ) -> Result<(), Error> {
@@ -1516,7 +1555,7 @@ unsafe fn rollback_private_claims(
         asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags));
     }
     asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-    for table in tables {
+    for table in tables.into_iter().filter(|table| *table != 0) {
         crate::root::with_physical_window(table, |window| {
             ptr::write_bytes(window, 0, 4096);
         })
@@ -1527,10 +1566,10 @@ unsafe fn rollback_private_claims(
         let Some(claim) = claim else {
             continue;
         };
-        let owner = if index == 0 {
-            sorveth_frames::FrameOwner::PROCESS_FIRST_DATA
-        } else {
-            sorveth_frames::FrameOwner::PROCESS_SECOND_DATA
+        let owner = match index {
+            0 => sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+            1 => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+            _ => sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
         };
         if mapping_refs[index]
             && unsafe { pool.release_mapping(claim.handle, owner) }
@@ -1555,6 +1594,7 @@ unsafe fn rollback_private_claims(
     unsafe {
         FIRST_CLAIM = None;
         SECOND_CLAIM = None;
+        PROCESS_TABLE_CLAIMS = [None; 6];
     }
     MAPPED.store(false, Ordering::Release);
     Ok(())
@@ -1580,9 +1620,16 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
         }
+        let pages_before = pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages;
+        let claims_before = pool.claim_count().map_err(|_| Error::FrameUnavailable)?;
 
         let claim_a = unsafe { FIRST_CLAIM }.ok_or(Error::FrameUnavailable)?;
         let claim_b = unsafe { SECOND_CLAIM }.ok_or(Error::FrameUnavailable)?;
+        let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
+        let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
         let owner_a = sorveth_frames::FrameOwner::PROCESS_FIRST_DATA;
         let owner_b = sorveth_frames::FrameOwner::PROCESS_SECOND_DATA;
         let record_a = pool
@@ -1609,6 +1656,21 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             || checked_process_root(Process::Second).is_none()
         {
             return Err(Error::VerificationFailed);
+        }
+        for claim in table_claims.into_iter().flatten() {
+            let record = pool
+                .claim_record_at(claim.handle.slot() as usize)
+                .map_err(|_| Error::FrameUnavailable)?
+                .ok_or(Error::FrameUnavailable)?;
+            if record.generation() != claim.handle.generation()
+                || record.owner() != sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES
+                || record.span() != claim.span
+                || record.references() != 1
+                || record.mappings() != 1
+                || record.is_quarantined()
+            {
+                return Err(Error::VerificationFailed);
+            }
         }
 
         let (root_a, slot_a) = process_root(Process::First).ok_or(Error::KernelUnavailable)?;
@@ -1638,14 +1700,6 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         // single CPU before the mapping ledger references are dropped.
         asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
 
-        let tables = [
-            ptr::addr_of!(FIRST_PDPT) as u64,
-            ptr::addr_of!(FIRST_PD) as u64,
-            ptr::addr_of!(FIRST_PT) as u64,
-            ptr::addr_of!(SECOND_PDPT) as u64,
-            ptr::addr_of!(SECOND_PD) as u64,
-            ptr::addr_of!(SECOND_PT) as u64,
-        ];
         for table in tables {
             crate::root::with_physical_window(table, |window| {
                 ptr::write_bytes(window, 0, 4096);
@@ -1658,10 +1712,15 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             return Err(Error::VerificationFailed);
         }
 
-        unsafe { pool.release_mapping(claim_a.handle, owner_a) }
-            .map_err(|_| Error::FrameUnavailable)?;
-        unsafe { pool.release_mapping(claim_b.handle, owner_b) }
-            .map_err(|_| Error::FrameUnavailable)?;
+        if unsafe { pool.release_mapping(claim_a.handle, owner_a) }
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+            || unsafe { pool.release_mapping(claim_b.handle, owner_b) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
         if pool
             .release_claim_reference(claim_a.handle, owner_a)
             .map_err(|_| Error::FrameUnavailable)?
@@ -1684,9 +1743,46 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         unsafe { crate::root::zero_quarantined_span(pool, ticket_b, owner_b) }
             .map_err(|_| Error::FrameUnavailable)?;
 
+        for claim in table_claims.into_iter().flatten() {
+            let owner = sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES;
+            if unsafe { pool.release_mapping(claim.handle, owner) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+            {
+                return Err(Error::VerificationFailed);
+            }
+            if pool
+                .release_claim_reference(claim.handle, owner)
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+            {
+                return Err(Error::VerificationFailed);
+            }
+            let ticket = pool
+                .begin_quarantine(claim.handle, owner)
+                .map_err(|_| Error::FrameUnavailable)?;
+            unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+                .map_err(|_| Error::FrameUnavailable)?;
+        }
+        if pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages
+            != pages_before
+                .checked_add(8)
+                .ok_or(Error::VerificationFailed)?
+            || pool.claim_count().map_err(|_| Error::FrameUnavailable)?
+                != claims_before
+                    .checked_sub(8)
+                    .ok_or(Error::VerificationFailed)?
+        {
+            return Err(Error::VerificationFailed);
+        }
+
         unsafe {
             FIRST_CLAIM = None;
             SECOND_CLAIM = None;
+            PROCESS_TABLE_CLAIMS = [None; 6];
         }
         MAPPED.store(false, Ordering::Release);
         RECLAIMED_ONCE.store(true, Ordering::Release);
