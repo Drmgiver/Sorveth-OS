@@ -118,7 +118,7 @@ allocator's available-page and claim counts return to baseline. General
 process creation and SMP lifecycle handling remain pending. Evidence:
 [feature run 41341768086](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41341768086).
 
-**K.3c in progress:** each setup attempt now claims six private paging frames
+**K.3c accepted:** each setup attempt now claims six private paging frames
 from the owner ledger, initializes them through the Sorveth-owned physical
 window, and builds both process-private page-table trees in those frames.
 The parent-entry references are recorded before PTE publication. Partial
@@ -127,7 +127,8 @@ entries are cleared and the local translations are invalidated, then quarantine
 and zero the frames before reuse. QEMU also checks all eight claims return to
 the allocator after teardown. The two top-level bootstrap roots remain fixed;
 allocator-backed root creation and SMP invalidation are still the next
-lifecycle gaps.
+lifecycle gaps. Evidence: [feature run
+41544614572](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41544614572).
 
 **Still pending:** general K.3 creation and teardown, K.4–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
