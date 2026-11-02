@@ -1057,18 +1057,8 @@ pub unsafe fn walk_process_user_range(
     let root = checked_process_root(process).ok_or(WalkError::InvalidRoot)?;
     let tables = process_table_frames().ok_or(WalkError::InvalidRoot)?;
     let owned = match process {
-        Process::First => [
-            root,
-            tables[0],
-            tables[1],
-            tables[2],
-        ],
-        Process::Second => [
-            root,
-            tables[3],
-            tables[4],
-            tables[5],
-        ],
+        Process::First => [root, tables[0], tables[1], tables[2]],
+        Process::Second => [root, tables[3], tables[4], tables[5]],
     };
 
     // Deny any entry outside this process's audited four-frame whitelist,
@@ -1280,15 +1270,10 @@ unsafe fn map_private_pages_inner(
         let roots = [(first_root, first_slot), (second_root, second_slot)];
         let mut claims = [None; 8];
         for index in 0..6 {
-            match pool.claim_unmapped_for(
-                1,
-                sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
-            ) {
+            match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES) {
                 Ok(claim) => claims[index + 2] = Some(claim),
                 Err(_) => {
-                    unsafe {
-                        rollback_private_claims(pool, claims, [false; 8], roots, [0; 6])?
-                    };
+                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, [0; 6])? };
                     return Err(Error::FrameUnavailable);
                 }
             }
@@ -1312,22 +1297,17 @@ unsafe fn map_private_pages_inner(
             match initialized {
                 Ok(true) => {}
                 Ok(false) => {
-                    unsafe {
-                        rollback_private_claims(pool, claims, [false; 8], roots, tables)?
-                    };
+                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
                     return Err(Error::VerificationFailed);
                 }
                 Err(_) => {
-                    unsafe {
-                        rollback_private_claims(pool, claims, [false; 8], roots, tables)?
-                    };
+                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
                     return Err(Error::PageTableStorageUnavailable);
                 }
             }
         }
 
-        claims[0] = match pool
-            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
+        claims[0] = match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
         {
             Ok(claim) => Some(claim),
             Err(_) => {
@@ -1335,15 +1315,14 @@ unsafe fn map_private_pages_inner(
                 return Err(Error::FrameUnavailable);
             }
         };
-        claims[1] = match pool
-            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA)
-        {
-            Ok(claim) => Some(claim),
-            Err(_) => {
-                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
-                return Err(Error::FrameUnavailable);
-            }
-        };
+        claims[1] =
+            match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
+                Ok(claim) => Some(claim),
+                Err(_) => {
+                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    return Err(Error::FrameUnavailable);
+                }
+            };
         let claim_a = claims[0].unwrap();
         let claim_b = claims[1].unwrap();
         let mut mapping_refs = [false; 8];
@@ -1504,15 +1483,7 @@ unsafe fn map_private_pages_inner(
             Ok(())
         })();
         if result.is_err() {
-            unsafe {
-                rollback_private_claims(
-                    pool,
-                    claims,
-                    mapping_refs,
-                    roots,
-                    tables,
-                )?
-            };
+            unsafe { rollback_private_claims(pool, claims, mapping_refs, roots, tables)? };
         }
         result
     }
