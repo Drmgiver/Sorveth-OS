@@ -130,15 +130,15 @@ allocator-backed root creation and SMP invalidation are still the next
 lifecycle gaps. Evidence: [feature run
 41544614572](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41544614572).
 
-**K.3d in progress:** the two bootstrap process PML4 roots are now claimed
+**K.3d accepted:** the two bootstrap process PML4 roots are now claimed
 from the frame ledger under a dedicated owner, initialized through the
 Sorveth-owned physical window, and verified by switching CR3 to each root.
 The cross-process fault verifier now checks root entries through that window
 instead of assuming that physical root frames are identity mapped.
 Their generation-bound claims stay pinned because the bootstrap scheduler can
 still select either address space; retiring those roots safely requires
-scheduler-reference retirement and remains future work. CI evidence is
-pending.
+scheduler-reference retirement and remains future work. Evidence: [feature run
+41545934932](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41545934932).
 
 **Still pending:** general K.3 creation and teardown, K.4–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
