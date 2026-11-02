@@ -107,8 +107,7 @@ pub fn expected_foreign_fault(address: u64, error: u64) -> bool {
     unsafe {
         asm!("mov cr3, {}", in(reg) current, options(nostack, preserves_flags));
     }
-    own_entry.map_or(false, |entry| entry & 0x5 == 0x5)
-        && foreign_entry == Some(0)
+    own_entry.map_or(false, |entry| entry & 0x5 == 0x5) && foreign_entry == Some(0)
 }
 
 pub fn success_marker() -> &'static str {
