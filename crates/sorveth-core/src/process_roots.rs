@@ -41,18 +41,11 @@ const SECOND_TEST_WORD: u64 = 0x534f_5256_4542_4f4e;
 #[cfg(target_arch = "x86_64")]
 const INHERITED_TABLE_CAPACITY: usize = 8192;
 
+// Process PML4 roots and their private lower-level tables have explicit
+// generation-bound claims. Root claims remain pinned while bootstrap
+// scheduler slots can still select these address spaces.
 #[cfg(target_arch = "x86_64")]
-#[repr(C, align(4096))]
-struct Page([u64; 512]);
-
-#[cfg(target_arch = "x86_64")]
-static mut FIRST: Page = Page([0; 512]);
-#[cfg(target_arch = "x86_64")]
-static mut SECOND: Page = Page([0; 512]);
-
-// The two roots are still bootstrap fixtures, but their private lower-level
-// paging frames are claimed from the frame ledger for each address-space
-// mapping lifetime instead of being permanently pinned in BSS.
+static mut PROCESS_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
 #[cfg(target_arch = "x86_64")]
 static mut PROCESS_TABLE_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 6] = [None; 6];
 #[cfg(target_arch = "x86_64")]
@@ -80,7 +73,7 @@ static mut SECOND_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
-    frame == ptr::addr_of!(FIRST) as u64 || frame == ptr::addr_of!(SECOND) as u64
+    frame == FIRST_ROOT.load(Ordering::Acquire) || frame == SECOND_ROOT.load(Ordering::Acquire)
 }
 #[cfg(target_arch = "x86_64")]
 static FIRST_SLOT: AtomicU64 = AtomicU64::new(0);
@@ -176,15 +169,17 @@ fn vacant_slots(mut entry: impl FnMut(usize) -> u64) -> Option<(usize, usize)> {
     None
 }
 
-/// Initialize two distinct static PML4 pages, then switch CR3 to each and
-/// back while verifying the existing supervisor scratch mapping.
+/// Claim two PML4 pages for the bootstrap scheduler, clone the verified
+/// supervisor mappings into them, then switch CR3 to each and back.
 ///
 /// # Safety
-/// Requires CPL0, Sorveth's active root, one CPU, IRQs masked and static
-/// PML4 frame ownership. The PML4 pages are copied through an owned virtual
-/// frame window; supervisor executable/stack mapping inheritance remains.
+/// Requires CPL0, Sorveth's active root, one CPU, IRQs masked and a live frame
+/// pool. Root frames are copied through the owned physical window; supervisor
+/// executable/stack mapping inheritance remains.
 
-pub unsafe fn prepare_and_verify() -> Result<(), Error> {
+pub unsafe fn prepare_and_verify(
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if READY.load(Ordering::Acquire) {
@@ -192,78 +187,104 @@ pub unsafe fn prepare_and_verify() -> Result<(), Error> {
         }
         let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
         let scratch = crate::root::kernel_private_address().ok_or(Error::KernelUnavailable)?;
-        let a = ptr::addr_of_mut!(FIRST).cast::<u64>() as u64;
-        let b = ptr::addr_of_mut!(SECOND).cast::<u64>() as u64;
-        if a == b || a == kernel || b == kernel || a & 4095 != 0 || b & 4095 != 0 {
-            return Err(Error::VerificationFailed);
-        }
         let mut active: u64;
         asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
         if active & ADDRESS_MASK != kernel {
             return Err(Error::KernelUnavailable);
         }
-        // Snapshot Sorveth's known kernel PML4 while its own CR3 is active.
-        // Only the existing owned window may dereference physical table RAM.
-        let mut entries = [0u64; 512];
-        crate::root::with_physical_window(kernel, |window| {
-            let source = window as *const u64;
-            for (index, entry) in entries.iter_mut().enumerate() {
-                *entry = ptr::read_volatile(source.add(index));
-            }
-        })
-        .map_err(|_| Error::PageTableStorageUnavailable)?;
-        let (slot_a, slot_b) =
-            vacant_slots(|i| entries[i]).ok_or(Error::PrivateSlotsUnavailable)?;
-        for entry in &mut entries {
-            *entry = supervisor_entry(*entry);
-        }
-        // The entire process root is initialized and verified through the
-        // Sorveth-owned high-half alias, without physical-pointer dereference.
-        for process_root in [a, b] {
-            let verified = crate::root::with_physical_window(process_root, |window| {
-                let destination = window as *mut u64;
-                for (index, entry) in entries.iter().enumerate() {
-                    ptr::write_volatile(destination.add(index), *entry);
-                }
-                if ptr::read_volatile(destination.add(slot_a)) != 0
-                    || ptr::read_volatile(destination.add(slot_b)) != 0
-                {
-                    return false;
-                }
-                for (index, expected) in entries.iter().enumerate() {
-                    let actual = ptr::read_volatile(destination.add(index));
-                    if actual != *expected || (actual & PRESENT != 0 && actual & USER != 0) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .map_err(|_| Error::PageTableStorageUnavailable)?;
-            if !verified {
-                return Err(Error::VerificationFailed);
-            }
-        }
-        let expected = ptr::read_volatile(scratch as *const u64);
-        let mut success = true;
-        for process_root in [a, b] {
-            asm!("mov cr3, {}", in(reg) process_root, options(nostack, preserves_flags));
-            asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
-            if active & ADDRESS_MASK != process_root
-                || ptr::read_volatile(scratch as *const u64) != expected
-            {
-                success = false;
-                break;
-            }
-        }
-        // Restore the kernel CR3 even after a nonfatal verification mismatch.
-        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-        asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
-        if !success
-            || active & ADDRESS_MASK != kernel
-            || ptr::read_volatile(scratch as *const u64) != expected
+        let mut claims = [None; 2];
+        claims[0] = Some(
+            pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_ROOTS)
+                .map_err(|_| Error::FrameUnavailable)?,
+        );
+        claims[1] = match pool
+            .claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_ROOTS)
         {
+            Ok(claim) => Some(claim),
+            Err(_) => {
+                unsafe { rollback_process_root_claims(pool, claims)? };
+                return Err(Error::FrameUnavailable);
+            }
+        };
+        let a = claims[0].unwrap().span.start;
+        let b = claims[1].unwrap().span.start;
+        if a == b || a == kernel || b == kernel || a & 4095 != 0 || b & 4095 != 0 {
+            unsafe { rollback_process_root_claims(pool, claims)? };
             return Err(Error::VerificationFailed);
         }
+        let result = (|| -> Result<(u16, u16), Error> {
+            // Snapshot Sorveth's known kernel PML4 while its own CR3 is active.
+            // Only the existing owned window may dereference physical table RAM.
+            let mut entries = [0u64; 512];
+            crate::root::with_physical_window(kernel, |window| {
+                let source = window as *const u64;
+                for (index, entry) in entries.iter_mut().enumerate() {
+                    *entry = ptr::read_volatile(source.add(index));
+                }
+            })
+            .map_err(|_| Error::PageTableStorageUnavailable)?;
+            let (slot_a, slot_b) =
+                vacant_slots(|i| entries[i]).ok_or(Error::PrivateSlotsUnavailable)?;
+            for entry in &mut entries {
+                *entry = supervisor_entry(*entry);
+            }
+            // Initialize both claimed process roots through the owned window.
+            for process_root in [a, b] {
+                let verified = crate::root::with_physical_window(process_root, |window| {
+                    let destination = window as *mut u64;
+                    for (index, entry) in entries.iter().enumerate() {
+                        ptr::write_volatile(destination.add(index), *entry);
+                    }
+                    if ptr::read_volatile(destination.add(slot_a)) != 0
+                        || ptr::read_volatile(destination.add(slot_b)) != 0
+                    {
+                        return false;
+                    }
+                    for (index, expected) in entries.iter().enumerate() {
+                        let actual = ptr::read_volatile(destination.add(index));
+                        if actual != *expected || (actual & PRESENT != 0 && actual & USER != 0) {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .map_err(|_| Error::PageTableStorageUnavailable)?;
+                if !verified {
+                    return Err(Error::VerificationFailed);
+                }
+            }
+            let expected = ptr::read_volatile(scratch as *const u64);
+            let mut success = true;
+            for process_root in [a, b] {
+                asm!("mov cr3, {}", in(reg) process_root, options(nostack, preserves_flags));
+                asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+                if active & ADDRESS_MASK != process_root
+                    || ptr::read_volatile(scratch as *const u64) != expected
+                {
+                    success = false;
+                    break;
+                }
+            }
+            // Restore the kernel CR3 even after a nonfatal verification mismatch.
+            asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+            asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+            if !success
+                || active & ADDRESS_MASK != kernel
+                || ptr::read_volatile(scratch as *const u64) != expected
+            {
+                return Err(Error::VerificationFailed);
+            }
+            Ok((slot_a as u16, slot_b as u16))
+        })();
+        let (slot_a, slot_b) = match result {
+            Ok(slots) => slots,
+            Err(error) => {
+                asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+                unsafe { rollback_process_root_claims(pool, claims)? };
+                return Err(error);
+            }
+        };
+        unsafe { PROCESS_ROOT_CLAIMS = claims };
         FIRST_ROOT.store(a, Ordering::Release);
         SECOND_ROOT.store(b, Ordering::Release);
         FIRST_SLOT.store(slot_a as u64, Ordering::Release);
@@ -273,8 +294,38 @@ pub unsafe fn prepare_and_verify() -> Result<(), Error> {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
+        let _ = pool;
         Err(Error::Unsupported)
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn rollback_process_root_claims(
+    pool: &sorveth_frames::FramePool<256>,
+    claims: [Option<sorveth_frames::OwnedSpan>; 2],
+) -> Result<(), Error> {
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    if active & ADDRESS_MASK != kernel {
+        return Err(Error::KernelUnavailable);
+    }
+    for claim in claims.into_iter().flatten() {
+        let owner = sorveth_frames::FrameOwner::PROCESS_ROOTS;
+        if pool
+            .release_claim_reference(claim.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let ticket = pool
+            .begin_quarantine(claim.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?;
+        unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+            .map_err(|_| Error::FrameUnavailable)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -766,11 +817,12 @@ fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> 
 #[cfg(target_arch = "x86_64")]
 fn registered_table_frames() -> Option<[u64; 9]> {
     let kernel = crate::root::kernel_root_physical()?;
+    let root_claims = unsafe { PROCESS_ROOT_CLAIMS };
     let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
     Some([
         kernel,
-        ptr::addr_of!(FIRST).cast::<u64>() as u64,
-        ptr::addr_of!(SECOND).cast::<u64>() as u64,
+        root_claims[0]?.span.start,
+        root_claims[1]?.span.start,
         table_claims[0].map_or(0, |claim| claim.span.start),
         table_claims[1].map_or(0, |claim| claim.span.start),
         table_claims[2].map_or(0, |claim| claim.span.start),
