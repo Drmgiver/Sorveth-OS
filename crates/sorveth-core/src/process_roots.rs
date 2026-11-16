@@ -1353,9 +1353,7 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FrameP
         let pages_unchanged = pool
             .status()
             .is_ok_and(|status| status.available_pages == pages_before);
-        let claims_unchanged = pool
-            .claim_count()
-            .is_ok_and(|count| count == claims_before);
+        let claims_unchanged = pool.claim_count().is_ok_and(|count| count == claims_before);
         if rollback_result != Err(Error::SetupFailureInjected)
             || !pages_unchanged
             || !claims_unchanged
