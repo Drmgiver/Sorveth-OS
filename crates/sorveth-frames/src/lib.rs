@@ -202,10 +202,7 @@ impl<const N: usize> FrameAllocator<N> {
             if result.used == N {
                 return Err(Error::TooManyRegions);
             }
-            result.regions[result.used] = Region {
-                start,
-                end,
-            };
+            result.regions[result.used] = Region { start, end };
             result.used += 1;
             result.available_pages = result
                 .available_pages
