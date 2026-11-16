@@ -185,6 +185,16 @@ two-page single-CPU proof; dynamic user mappings and recoverable faults remain
 pending. Evidence: [run
 43920506854](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43920506854).
 
+**K.4d accepted:** ring-3 now copies the entire 8 KiB two-page span in both
+directions, in addition to the 256-byte boundary case. The syscall rejects
+8,193 bytes at this fixed bootstrap limit. QEMU verifies the complete copied
+pattern, checks the full-span integrity image after every syscall, and
+restores every original byte before success. Host, UEFI, ABI, formatting,
+normal-root QEMU, independent-root QEMU, and monitor gates passed. This is
+still a fixed two-page, single-CPU buffer proof; dynamic user mappings and
+recoverable faults remain pending. Evidence: [run
+43923234072](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43923234072).
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified

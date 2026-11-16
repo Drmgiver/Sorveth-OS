@@ -430,6 +430,7 @@ for side in a b; do
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
     'SORVETH M2-K.4c: ring-3 256-byte copy-in/out crossed the user-page boundary' \
+    'SORVETH M2-K.4d: ring-3 copied the complete bounded two-page span' \
     'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
@@ -466,5 +467,5 @@ for side in a b; do
     fi
   done
   require_independent_root_marker "$TMP/transfer-$side-serial.log"
-  echo "PASS: process $side issued 24 CPL3 memory syscall requests; denied operations preserved full-span/capability integrity."
+  echo "PASS: process $side issued 26 CPL3 memory syscall requests; denied operations preserved full-span/capability integrity."
 done
