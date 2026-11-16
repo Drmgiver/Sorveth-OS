@@ -662,12 +662,8 @@ pub unsafe fn dispatch(
             }
             let readback = unsafe { &mut *ptr::addr_of_mut!(FULL_SPAN_READBACK) };
             readback.fill(0);
-            if crate::user_copy::copy_from_process(
-                state.process,
-                mapped.virtual_address,
-                readback,
-            )
-            .is_err()
+            if crate::user_copy::copy_from_process(state.process, mapped.virtual_address, readback)
+                .is_err()
                 || readback != unsafe { &*ptr::addr_of!(FULL_SPAN_PATTERN) }
                 || process_word(foreign.physical_address) != Some(state.foreign_original)
             {
