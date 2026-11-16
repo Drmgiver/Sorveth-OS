@@ -1104,6 +1104,15 @@ pub unsafe fn map_dynamic_user_buffer_page(
     process: Process,
     pool: &sorveth_frames::FramePool<256>,
 ) -> Result<Mapping, Error> {
+    unsafe { map_dynamic_user_buffer_page_inner(process, pool, false) }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn map_dynamic_user_buffer_page_inner(
+    process: Process,
+    pool: &sorveth_frames::FramePool<256>,
+    inject_failure_after_pte: bool,
+) -> Result<Mapping, Error> {
     if !MAPPED.load(Ordering::Acquire) {
         return Err(Error::NotMapped);
     }
@@ -1170,6 +1179,18 @@ pub unsafe fn map_dynamic_user_buffer_page(
         asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
         rollback_dynamic_claim(pool, claim, owner, true)?;
         return Err(Error::PageTableStorageUnavailable);
+    }
+    if inject_failure_after_pte {
+        if write_registered_table_word(table, 2, 0).is_none()
+            || read_registered_table_word(table, 2) != Some(0)
+        {
+            crate::halt_forever();
+        }
+        compiler_fence(Ordering::SeqCst);
+        asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+        rollback_dynamic_claim(pool, claim, owner, true)?;
+        return Err(Error::SetupFailureInjected);
     }
     compiler_fence(Ordering::SeqCst);
     match process {
@@ -1309,6 +1330,40 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FrameP
     use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
 
     for process in [Process::First, Process::Second] {
+        let pages_before = match pool.status() {
+            Ok(status) => status.available_pages,
+            Err(_) => return false,
+        };
+        let claims_before = match pool.claim_count() {
+            Ok(count) => count,
+            Err(_) => return false,
+        };
+        let table_index = match process {
+            Process::First => 2,
+            Process::Second => 5,
+        };
+        let Some(tables) = process_table_frames() else {
+            return false;
+        };
+        let rollback_result = unsafe { map_dynamic_user_buffer_page_inner(process, pool, true) };
+        let dynamic_claim_empty = match process {
+            Process::First => unsafe { FIRST_DYNAMIC_CLAIM }.is_none(),
+            Process::Second => unsafe { SECOND_DYNAMIC_CLAIM }.is_none(),
+        };
+        let pages_unchanged = pool
+            .status()
+            .is_ok_and(|status| status.available_pages == pages_before);
+        let claims_unchanged = pool
+            .claim_count()
+            .is_ok_and(|count| count == claims_before);
+        if rollback_result != Err(Error::SetupFailureInjected)
+            || !pages_unchanged
+            || !claims_unchanged
+            || !dynamic_claim_empty
+            || read_registered_table_word(tables[table_index], 2) != Some(0)
+        {
+            return false;
+        }
         let original = match unsafe { map_dynamic_user_buffer_page(process, pool) } {
             Ok(mapping) => mapping,
             Err(_) => return false,
@@ -1386,6 +1441,15 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FrameP
             Some(claim) => claim,
             None => return false,
         };
+        observed.fill(0xff);
+        if unsafe {
+            crate::user_copy::copy_from_process(process, recycled.virtual_address, &mut observed)
+        }
+        .is_err()
+            || observed.iter().any(|byte| *byte != 0)
+        {
+            return false;
+        }
         if recycled.virtual_address != original.virtual_address
             || (recycled.physical_address == original.physical_address
                 && recycled_claim.handle.generation() != original_claim.handle.generation() + 1)
