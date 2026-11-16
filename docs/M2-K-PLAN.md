@@ -152,10 +152,20 @@ firmware-map edge case. This remains a serialized single-CPU bootstrap proof;
 SMP shootdown and general process teardown remain pending. Evidence: [feature
 run 43793651438](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43793651438).
 
-**Still pending:** general K.3 creation and teardown, K.4–K.5, production process
-scheduling, general physical page reclamation, and safe arbitrary user
-mappings. K.1's independent root is a QEMU-verified bootstrap mapping set,
-not yet a production memory manager.
+**K.4a accepted:** each bounded user copy now pins every resolved process
+data-frame claim for its full operation and releases the generation-bound
+references on every return path. Teardown rejects an outstanding copy pin;
+QEMU verifies the claim count is elevated while pinned, teardown leaves the
+mapping intact, and dropping the pin restores the owner-only reference count.
+This is the lifetime foundation for larger buffers. The active bootstrap
+processes still expose one permanent data page each; multi-page ring-3 buffer
+coverage and recoverable hardware faults remain pending. Evidence: [feature
+run 43817644273](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43817644273).
+
+**Still pending:** general K.3 creation and teardown, remaining K.4 work and
+K.5, production process scheduling, general physical page reclamation, and
+safe arbitrary user mappings. K.1's independent root is a QEMU-verified
+bootstrap mapping set, not yet a production memory manager.
 
 
 ### K.1b intermediate checkpoint: user-copy frame access
