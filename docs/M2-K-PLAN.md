@@ -195,6 +195,18 @@ still a fixed two-page, single-CPU buffer proof; dynamic user mappings and
 recoverable faults remain pending. Evidence: [run
 43923234072](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43923234072).
 
+**K.4e accepted:** each bootstrap process can now allocate and map one
+independent zeroed user-buffer page at the next private leaf, copy through
+that page, and explicitly unmap it. Per-page generation claims participate
+in copy pinning; active pins block unmap, process teardown refuses to discard
+live dynamic mappings, TLB translations are flushed before claim release, and
+the frame is quarantined, zeroed, and recycled. QEMU proves remapping and
+stale-descriptor rejection for both process roots, with the smoke script
+requiring the acceptance marker. This is one dynamic page per bootstrap
+process on one CPU; arbitrary user mappings and recoverable faults remain
+pending. Evidence: [run
+43933454669](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43933454669).
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified
