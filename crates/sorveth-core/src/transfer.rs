@@ -5,9 +5,10 @@
 //! user-supplied process/task ID or page-table root is accepted. Tokens
 //! are opaque, generation-bound memory capabilities.
 //!
-//! This QEMU gateway exercises bounded 8-byte and 256-byte transfers to the
-//! two permanent private bootstrap pages. Not a production ABI: no preemption,
-//! SMP, page reclaim, arbitrary pageable buffers, or fault recovery exists.
+//! This QEMU gateway exercises bounded 8-byte, 256-byte and full-span
+//! transfers to the two permanent private bootstrap pages. Not a production
+//! ABI: no preemption, SMP, page reclaim, arbitrary pageable buffers, or fault
+//! recovery exists.
 
 use core::{
     arch::asm,
@@ -28,6 +29,7 @@ const OBJECT_B: ObjectId = ObjectId(0x5a02);
 const PATTERN: [u8; 8] = [0xd5, 0x31, 0x28, 0x7b, 0x9a, 0xee, 0x40, 0x16];
 pub const BOUNDARY_COPY_BYTES: usize = 256;
 pub const BOUNDARY_COPY_OFFSET: u64 = PAGE_BYTES - (BOUNDARY_COPY_BYTES as u64 / 2);
+pub const FULL_SPAN_COPY_BYTES: usize = (2 * PAGE_BYTES) as usize;
 
 pub const SYS_COPY_IN: u64 = 0x70;
 pub const SYS_COPY_OUT: u64 = 0x71;
@@ -38,7 +40,9 @@ pub const COPY_DENIED: u64 = REPLY_DENIED;
 const WRITE_PHASE: u8 = 16;
 const BOUNDARY_WRITE_PHASE: u8 = 21;
 const BOUNDARY_READ_PHASE: u8 = 22;
-const COMPLETE_PHASE: u8 = 23;
+const FULL_WRITE_PHASE: u8 = 23;
+const FULL_READ_PHASE: u8 = 24;
+const COMPLETE_PHASE: u8 = 25;
 const UNKNOWN_SYSCALL: u64 = 0x7f;
 
 struct State {
@@ -53,14 +57,20 @@ struct State {
     foreign_original: u64,
     original_checksum: u64,
     written_checksum: u64,
-    boundary_original: [u8; BOUNDARY_COPY_BYTES],
     boundary_written_checksum: u64,
+    full_written_checksum: u64,
     foreign_checksum: u64,
     completed: u8,
 }
 
 static mut STATE: Option<State> = None;
 static READY: AtomicBool = AtomicBool::new(false);
+// The 8 KiB QEMU copy scratch areas live in BSS to keep them off the
+// relatively small bootstrap and interrupt stacks. The test gateway is
+// single-CPU, non-reentrant and runs with maskable interrupts disabled.
+static mut ORIGINAL_SPAN: [u8; FULL_SPAN_COPY_BYTES] = [0; FULL_SPAN_COPY_BYTES];
+static mut FULL_SPAN_PATTERN: [u8; FULL_SPAN_COPY_BYTES] = [0; FULL_SPAN_COPY_BYTES];
+static mut FULL_SPAN_READBACK: [u8; FULL_SPAN_COPY_BYTES] = [0; FULL_SPAN_COPY_BYTES];
 
 pub const fn owner() -> Process {
     #[cfg(feature = "qemu-transfer-a")]
@@ -136,6 +146,16 @@ fn boundary_pattern() -> [u8; BOUNDARY_COPY_BYTES] {
         *byte = (index as u8).wrapping_mul(37).wrapping_add(0x5b);
     }
     bytes
+}
+
+fn initialize_full_span_pattern() {
+    unsafe {
+        let pattern = &mut *ptr::addr_of_mut!(FULL_SPAN_PATTERN);
+        for (index, byte) in pattern.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(29).wrapping_add(0x73);
+        }
+        pattern[..PATTERN.len()].copy_from_slice(&PATTERN);
+    }
 }
 
 /// Return the first 64-bit word of a permanently owned process frame through
@@ -240,15 +260,15 @@ pub fn initialize() -> Option<(u64, u64)> {
     let foreign_original = unsafe { process_word(foreign.physical_address) }?;
     let original_checksum = unsafe { frame_checksum(own.physical_address, None) }?;
     let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN)) }?;
-    let mut boundary_original = [0u8; BOUNDARY_COPY_BYTES];
     unsafe {
         crate::user_copy::copy_from_process(
             process,
-            own.virtual_address + BOUNDARY_COPY_OFFSET,
-            &mut boundary_original,
+            own.virtual_address,
+            &mut *ptr::addr_of_mut!(ORIGINAL_SPAN),
         )
         .ok()?;
     }
+    initialize_full_span_pattern();
     let boundary_pattern = boundary_pattern();
     let boundary_written_checksum = unsafe {
         span_checksum(
@@ -257,6 +277,12 @@ pub fn initialize() -> Option<(u64, u64)> {
                 (0, &PATTERN),
                 (BOUNDARY_COPY_OFFSET as usize, &boundary_pattern),
             ],
+        )
+    }?;
+    let full_written_checksum = unsafe {
+        span_checksum(
+            own.physical_address,
+            &[(0, &*ptr::addr_of!(FULL_SPAN_PATTERN))],
         )
     }?;
     let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) }?;
@@ -275,8 +301,8 @@ pub fn initialize() -> Option<(u64, u64)> {
                 foreign_original,
                 original_checksum,
                 written_checksum,
-                boundary_original,
                 boundary_written_checksum,
+                full_written_checksum,
                 foreign_checksum,
                 completed: 0,
             }),
@@ -368,7 +394,9 @@ pub unsafe fn dispatch(
     };
     // In all denied phases, the physical pages and trusted authority
     // must be *identical* before and after entering the syscall.
-    let pre_expected = if state.completed > BOUNDARY_WRITE_PHASE {
+    let pre_expected = if state.completed > FULL_WRITE_PHASE {
+        state.full_written_checksum
+    } else if state.completed > BOUNDARY_WRITE_PHASE {
         state.boundary_written_checksum
     } else if state.completed > WRITE_PHASE {
         state.written_checksum
@@ -464,7 +492,7 @@ pub unsafe fn dispatch(
             SYS_COPY_IN,
             state.read_handle,
             mapped.virtual_address,
-            65537,
+            FULL_SPAN_COPY_BYTES as u64 + 1,
             COPY_DENIED,
         ),
         15 => (
@@ -523,6 +551,20 @@ pub unsafe fn dispatch(
             BOUNDARY_COPY_BYTES as u64,
             COPY_IN_OK,
         ),
+        FULL_WRITE_PHASE => (
+            SYS_COPY_OUT,
+            state.write_handle,
+            mapped.virtual_address,
+            FULL_SPAN_COPY_BYTES as u64,
+            COPY_OUT_OK,
+        ),
+        FULL_READ_PHASE => (
+            SYS_COPY_IN,
+            state.read_handle,
+            mapped.virtual_address,
+            FULL_SPAN_COPY_BYTES as u64,
+            COPY_IN_OK,
+        ),
         COMPLETE_PHASE => (SYS_COMPLETE, 0, mapped.virtual_address, 8, 0),
         _ => fatal(),
     };
@@ -546,24 +588,33 @@ pub unsafe fn dispatch(
                 .is_err()
             {
                 COPY_DENIED
-            } else if length == 0 || length > BOUNDARY_COPY_BYTES as u64 {
+            } else if length == 0 || length > FULL_SPAN_COPY_BYTES as u64 {
                 COPY_DENIED
             } else if number == SYS_COPY_IN {
                 let mut output = [0u8; BOUNDARY_COPY_BYTES];
-                let copied = crate::user_copy::copy_from_process(
-                    state.process,
-                    user_address,
-                    &mut output[..length as usize],
-                )
-                .is_ok();
-                let content_matches = match state.completed {
-                    0 => {
-                        copied
-                            && length == 8
-                            && u64::from_le_bytes(output[..8].try_into().unwrap()) == state.original
+                let content_matches = if state.completed == FULL_READ_PHASE {
+                    let readback = unsafe { &mut *ptr::addr_of_mut!(FULL_SPAN_READBACK) };
+                    readback.fill(0);
+                    crate::user_copy::copy_from_process(state.process, user_address, readback)
+                        .is_ok()
+                        && readback == unsafe { &*ptr::addr_of!(FULL_SPAN_PATTERN) }
+                } else {
+                    let copied = crate::user_copy::copy_from_process(
+                        state.process,
+                        user_address,
+                        &mut output[..length as usize],
+                    )
+                    .is_ok();
+                    match state.completed {
+                        0 => {
+                            copied
+                                && length == 8
+                                && u64::from_le_bytes(output[..8].try_into().unwrap())
+                                    == state.original
+                        }
+                        BOUNDARY_READ_PHASE => copied && output == boundary_pattern(),
+                        _ => false,
                     }
-                    BOUNDARY_READ_PHASE => copied && output == boundary_pattern(),
-                    _ => false,
                 };
                 if content_matches {
                     COPY_IN_OK
@@ -591,6 +642,16 @@ pub unsafe fn dispatch(
                             COPY_DENIED
                         }
                     }
+                    FULL_WRITE_PHASE if length == FULL_SPAN_COPY_BYTES as u64 => {
+                        let pattern = unsafe { &*ptr::addr_of!(FULL_SPAN_PATTERN) };
+                        if crate::user_copy::copy_to_process(state.process, user_address, pattern)
+                            .is_ok()
+                        {
+                            COPY_OUT_OK
+                        } else {
+                            COPY_DENIED
+                        }
+                    }
                     _ => COPY_DENIED,
                 }
             }
@@ -599,46 +660,28 @@ pub unsafe fn dispatch(
             if state.completed != COMPLETE_PHASE {
                 fatal();
             }
-            let mut read_back = [0u8; 8];
+            let readback = unsafe { &mut *ptr::addr_of_mut!(FULL_SPAN_READBACK) };
+            readback.fill(0);
             if crate::user_copy::copy_from_process(
                 state.process,
                 mapped.virtual_address,
-                &mut read_back,
+                readback,
             )
             .is_err()
-                || read_back != PATTERN
+                || readback != unsafe { &*ptr::addr_of!(FULL_SPAN_PATTERN) }
                 || process_word(foreign.physical_address) != Some(state.foreign_original)
             {
                 fatal();
             }
-            let mut boundary_readback = [0u8; BOUNDARY_COPY_BYTES];
-            if crate::user_copy::copy_from_process(
-                state.process,
-                mapped.virtual_address + BOUNDARY_COPY_OFFSET,
-                &mut boundary_readback,
-            )
-            .is_err()
-                || boundary_readback != boundary_pattern()
-            {
-                fatal();
-            }
-            // Restore the original data for future bootstrap invariants.
+            // Restore every byte captured before the ring-3 test sequence.
+            let original_span = unsafe { &*ptr::addr_of!(ORIGINAL_SPAN) };
             if crate::user_copy::copy_to_process(
                 state.process,
                 mapped.virtual_address,
-                &state.original.to_le_bytes(),
+                original_span,
             )
             .is_err()
                 || process_word(mapped.physical_address) != Some(state.original)
-            {
-                fatal();
-            }
-            if crate::user_copy::copy_to_process(
-                state.process,
-                mapped.virtual_address + BOUNDARY_COPY_OFFSET,
-                &state.boundary_original,
-            )
-            .is_err()
                 || frame_checksum(mapped.physical_address, None) != Some(state.original_checksum)
             {
                 fatal();
@@ -653,7 +696,9 @@ pub unsafe fn dispatch(
     }
     let post_expected = if number == SYS_COMPLETE {
         state.original_checksum
-    } else if state.completed >= BOUNDARY_WRITE_PHASE && state.completed < COMPLETE_PHASE {
+    } else if state.completed >= FULL_WRITE_PHASE && state.completed < COMPLETE_PHASE {
+        state.full_written_checksum
+    } else if state.completed >= BOUNDARY_WRITE_PHASE && state.completed < FULL_WRITE_PHASE {
         state.boundary_written_checksum
     } else if state.completed >= WRITE_PHASE && state.completed < COMPLETE_PHASE {
         state.written_checksum
@@ -677,8 +722,11 @@ pub unsafe fn dispatch(
         crate::serial::write_line(
             "SORVETH M2-K.4c: ring-3 256-byte copy-in/out crossed the user-page boundary",
         );
-        // Only after both copy operations, all denial paths, and original
-        // frame restoration are verified does QEMU exit successfully.
+        crate::serial::write_line(
+            "SORVETH M2-K.4d: ring-3 copied the complete bounded two-page span",
+        );
+        // Only after all copy operations, denial paths, and complete original
+        // span restoration are verified does QEMU exit successfully.
         asm!(
             "out dx, al",
             in("dx") 0xf4u16,

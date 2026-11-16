@@ -1074,7 +1074,7 @@ fn build_probe(allowed: u64, foreign: u64, protected: u64) -> Result<ProbeProgra
 fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> {
     use crate::transfer::{
         BOUNDARY_COPY_BYTES, BOUNDARY_COPY_OFFSET, COPY_DENIED, COPY_IN_OK, COPY_OUT_OK,
-        SYS_COMPLETE, SYS_COPY_IN, SYS_COPY_OUT,
+        FULL_SPAN_COPY_BYTES, SYS_COMPLETE, SYS_COPY_IN, SYS_COPY_OUT,
     };
     use sorveth_paging::PAGE_BYTES;
 
@@ -1116,7 +1116,13 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
     call(SYS_COPY_IN, read, u64::MAX, 8, COPY_DENIED)?;
     call(SYS_COPY_OUT, write, 0xffff_8000_0000_0000, 8, COPY_DENIED)?;
     call(SYS_COPY_IN, read, 0x0000_7fff_ffff_fffc, 8, COPY_DENIED)?;
-    call(SYS_COPY_IN, read, own.virtual_address, 65537, COPY_DENIED)?;
+    call(
+        SYS_COPY_IN,
+        read,
+        own.virtual_address,
+        FULL_SPAN_COPY_BYTES as u64 + 1,
+        COPY_DENIED,
+    )?;
     call(SYS_COPY_OUT, write, own.virtual_address, 0, COPY_DENIED)?;
 
     // Authorized write, followed by *additional* unauthorized writes.
@@ -1140,6 +1146,20 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
         read,
         boundary,
         BOUNDARY_COPY_BYTES as u64,
+        COPY_IN_OK,
+    )?;
+    call(
+        SYS_COPY_OUT,
+        write,
+        own.virtual_address,
+        FULL_SPAN_COPY_BYTES as u64,
+        COPY_OUT_OK,
+    )?;
+    call(
+        SYS_COPY_IN,
+        read,
+        own.virtual_address,
+        FULL_SPAN_COPY_BYTES as u64,
         COPY_IN_OK,
     )?;
 
