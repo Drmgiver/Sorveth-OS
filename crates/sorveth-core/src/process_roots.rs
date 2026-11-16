@@ -989,6 +989,63 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
     })
 }
 
+/// Prove that a live copy pin prevents process teardown from retiring its
+/// backing frame, then verify dropping the pin restores the owner-only count.
+///
+/// # Safety
+/// Single bootstrap CPU, kernel CR3 active, IRQs masked, and no concurrent
+/// process mapping or frame-ledger changes.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_copy_pin_blocks_teardown(
+    pool: &sorveth_frames::FramePool<256>,
+) -> bool {
+    use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
+
+    let process = Process::First;
+    let mapping = match mapped_page(process) {
+        Some(mapping) => mapping,
+        None => return false,
+    };
+    let range = match validate_user_range(mapping.virtual_address, 1) {
+        Ok(range) => range,
+        Err(_) => return false,
+    };
+    let pages = match unsafe { walk_process_user_range(process, range, UserAccess::Read) } {
+        Ok(pages) => pages,
+        Err(_) => return false,
+    };
+    let pins = match pin_user_pages(process, &pages) {
+        Ok(pins) => pins,
+        Err(_) => return false,
+    };
+    let claim = match unsafe { FIRST_CLAIM } {
+        Some(claim) => claim,
+        None => return false,
+    };
+    let record = match pool
+        .claim_record_at(claim.handle.slot() as usize)
+        .ok()
+        .flatten()
+    {
+        Some(record) => record,
+        None => return false,
+    };
+    if record.references() != 2 || record.mappings() != 1 {
+        return false;
+    }
+    if unsafe { teardown_private_pages(pool) } != Err(Error::VerificationFailed)
+        || !MAPPED.load(Ordering::Acquire)
+        || mapped_page(process) != Some(mapping)
+    {
+        return false;
+    }
+    drop(pins);
+    pool.claim_record_at(claim.handle.slot() as usize)
+        .ok()
+        .flatten()
+        .is_some_and(|after| after.references() == 1 && after.mappings() == 1)
+}
+
 #[cfg(target_arch = "x86_64")]
 fn user_base(slot: u16) -> Option<u64> {
     if (1..256).contains(&slot) {

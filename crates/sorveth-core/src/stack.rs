@@ -494,6 +494,11 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     );
     crate::serial::write_line("SORVETH M2-K.1d: owned read-only mapping denial verified");
     crate::serial::write_line("SORVETH M2-K.1b: user copy via owned frame window verified");
+    if !unsafe { crate::process_roots::verify_copy_pin_blocks_teardown(&crate::FRAME_POOL) } {
+        crate::serial::write_line("FATAL: user-copy frame pin did not block teardown");
+        crate::halt_forever();
+    }
+    crate::serial::write_line("SORVETH M2-K.4a: copy frame pins block teardown until release");
     if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process address-space teardown failed");
         crate::halt_forever();
