@@ -497,9 +497,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     );
     crate::serial::write_line("SORVETH M2-K.1d: owned read-only mapping denial verified");
     crate::serial::write_line("SORVETH M2-K.1b: user copy via owned frame window verified");
-    if !unsafe {
-        crate::process_roots::verify_dynamic_user_buffer_lifecycle(&crate::FRAME_POOL)
-    } {
+    if !unsafe { crate::process_roots::verify_dynamic_user_buffer_lifecycle(&crate::FRAME_POOL) } {
         crate::serial::write_line("FATAL: dynamic user-buffer lifetime validation failed");
         crate::halt_forever();
     }
