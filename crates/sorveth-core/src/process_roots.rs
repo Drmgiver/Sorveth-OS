@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 21309)
-Total output lines: 2084
-
 //! M2-I.1/I.2: separate top-level PML4 roots and owned user-data pages.
 //!
 //! Both roots still share Sorveth's lower-level *kernel* paging trees,
@@ -1005,7 +1002,143 @@ fn registered_table_frames() -> Option<[u64; 9]> {
         root_claims[1]?.span.start,
         table_claims[0].map_or(0, |claim| claim.span.start),
         table_claims[1].map_or(0, |claim| claim.span.start),
-        table_claims[2]…1309 tokens truncated…ering::Acquire) {
+        table_claims[2].map_or(0, |claim| claim.span.start),
+        table_claims[3].map_or(0, |claim| claim.span.start),
+        table_claims[4].map_or(0, |claim| claim.span.start),
+        table_claims[5].map_or(0, |claim| claim.span.start),
+    ])
+}
+
+#[cfg(target_arch = "x86_64")]
+fn process_table_frames() -> Option<[u64; 6]> {
+    let claims = unsafe { PROCESS_TABLE_CLAIMS };
+    Some([
+        claims[0]?.span.start,
+        claims[1]?.span.start,
+        claims[2]?.span.start,
+        claims[3]?.span.start,
+        claims[4]?.span.start,
+        claims[5]?.span.start,
+    ])
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn read_registered_table_word(frame: u64, index: usize) -> Option<u64> {
+    if !registered_table_word_allowed(frame, index, &registered_table_frames()?) {
+        return None;
+    }
+    crate::root::with_physical_window(frame, |window| {
+        ptr::read_volatile((window as *const u64).add(index))
+    })
+    .ok()
+}
+
+/// Read a known process PML4 slot through the owned supervisor window.
+/// A caller cannot supply a raw root-frame address or expand the whitelist.
+///
+/// # Safety
+/// The single QEMU bootstrap CPU has kernel CR3 active and IRQs masked.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_root_slot(process: Process, slot: u16) -> Option<u64> {
+    let (root, _) = process_root(process)?;
+    read_registered_table_word(root, slot as usize)
+}
+
+/// Read the first word of a permanently owned process test data frame.
+/// Never expose the frame as an identity-mapped pointer.
+///
+/// # Safety
+/// Only during the single-core, kernel-CR3, interrupts-off QEMU tests.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_frame_word(process: Process) -> Option<u64> {
+    let mapping = mapped_page(process)?;
+    crate::root::with_physical_window(mapping.physical_address, |window| {
+        ptr::read_volatile(window as *const u64)
+    })
+    .ok()
+}
+
+/// Read one byte from the *registered* process data frame at a bounded
+/// offset through Sorveth's owned supervisor frame window. The address
+/// cannot be chosen outside the currently pinned one-page test mapping.
+///
+/// # Safety
+/// Kernel CR3, one CPU, IRQs masked, process frame not reclaimed.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn read_process_frame_byte(process: Process, offset: usize) -> Option<u8> {
+    if offset >= 4096 {
+        return None;
+    }
+    let mapping = mapped_page(process)?;
+    crate::root::with_physical_window(mapping.physical_address, |window| {
+        ptr::read_volatile(window.add(offset) as *const u8)
+    })
+    .ok()
+}
+
+/// Temporarily corrupt the chosen known root's USER bit for a negative
+/// authorization test, restoring the PML4 entry before returning.
+/// The caller never receives a physical PML4 pointer.
+///
+/// # Safety
+/// Kernel CR3, one CPU, IRQs masked, no concurrent root switches.
+/// The predicate must neither switch CR3 nor retain physical mappings.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn verify_temporary_root_user_denial(
+    process: Process,
+    denied_while_corrupt: impl FnOnce() -> bool,
+) -> bool {
+    let (root, slot) = match process_root(process) {
+        Some(value) => value,
+        None => return false,
+    };
+    let saved = match read_registered_table_word(root, slot as usize) {
+        Some(value) if value & (PRESENT | USER) == PRESENT | USER => value,
+        _ => return false,
+    };
+    if checked_process_root(process).is_none() {
+        return false;
+    }
+    if write_registered_table_word(root, slot as usize, saved & !USER).is_none() {
+        return false;
+    }
+    let denied = denied_while_corrupt();
+    // Restore unconditionally before attempting a potentially failing audit.
+    let restored = write_registered_table_word(root, slot as usize, saved).is_some();
+    restored
+        && denied
+        && read_registered_table_word(root, slot as usize) == Some(saved)
+        && checked_process_root(process) == Some(root)
+}
+
+/// Store a PML4/PDPT/PD/PT word only in trusted bootstrap paging frames,
+/// via the same owned temporary supervisor window as the audit reader.
+/// Mapping mutations must be serialized and validated by their caller.
+///
+/// # Safety
+/// Kernel CR3 active, IRQs masked, one CPU; the caller performs a full
+/// address-space audit and CR3 transition only after tables are complete.
+#[cfg(target_arch = "x86_64")]
+unsafe fn write_registered_table_word(frame: u64, index: usize, value: u64) -> Option<()> {
+    if !registered_table_word_allowed(frame, index, &registered_table_frames()?) {
+        return None;
+    }
+    crate::root::with_physical_window(frame, |window| {
+        ptr::write_volatile((window as *mut u64).add(index), value);
+    })
+    .ok()
+}
+
+/// M2-I.5: audit both private page-table paths immediately before a
+/// kernel-controlled CR3 transition. Reject missing, aliased, malformed or
+/// shared user data mappings before untrusted code could run.
+///
+/// # Safety
+/// Restricted to the single QEMU bootstrap CPU, with IRQs disabled,
+/// registered table frames and no concurrent page-table edits.
+/// Reads use the Sorveth-owned window, not raw physical-pointer casts.
+pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
+    if !MAPPED.load(Ordering::Acquire) {
         return None;
     }
     let (root_a, slot_a) = process_root(Process::First)?;
