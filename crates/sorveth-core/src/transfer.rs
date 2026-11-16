@@ -99,17 +99,18 @@ fn object(process: Process) -> ObjectId {
 /// # Safety
 /// Kernel CR3 active, CPL0 on the only CPU, maskable IRQs off, and the
 /// ledger-owned frame is never unmapped or reclaimed during this operation.
-unsafe fn span_checksum(physical: u64, replacement: Option<(usize, &[u8])>) -> Option<u64> {
+unsafe fn span_checksum(physical: u64, replacements: &[(usize, &[u8])]) -> Option<u64> {
     let mut checksum = 0xcbf2_9ce4_8422_2325u64;
     for page_index in 0..2usize {
         let page = physical + page_index as u64 * PAGE_BYTES;
         crate::root::with_physical_window(page, |window| {
             for page_offset in 0..PAGE_BYTES as usize {
                 let span_offset = page_index * PAGE_BYTES as usize + page_offset;
-                let value = replacement
-                    .and_then(|(start, bytes)| {
+                let value = replacements
+                    .iter()
+                    .find_map(|(start, bytes)| {
                         span_offset
-                            .checked_sub(start)
+                            .checked_sub(*start)
                             .filter(|offset| *offset < bytes.len())
                             .map(|offset| bytes[offset])
                     })
@@ -123,7 +124,10 @@ unsafe fn span_checksum(physical: u64, replacement: Option<(usize, &[u8])>) -> O
 }
 
 unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> Option<u64> {
-    span_checksum(physical, override_word.as_ref().map(|word| (0, &word[..])))
+    match override_word.as_ref() {
+        Some(word) => span_checksum(physical, &[(0, &word[..])]),
+        None => span_checksum(physical, &[]),
+    }
 }
 
 fn boundary_pattern() -> [u8; BOUNDARY_COPY_BYTES] {
@@ -249,7 +253,10 @@ pub fn initialize() -> Option<(u64, u64)> {
     let boundary_written_checksum = unsafe {
         span_checksum(
             own.physical_address,
-            Some((BOUNDARY_COPY_OFFSET as usize, &boundary_pattern)),
+            &[
+                (0, &PATTERN),
+                (BOUNDARY_COPY_OFFSET as usize, &boundary_pattern),
+            ],
         )
     }?;
     let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) }?;
