@@ -988,9 +988,8 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
     if !MAPPED.load(Ordering::Acquire) || frame == 0 || frame & 4095 != 0 {
         return false;
     }
-    claim_for_data_frame(process, frame).is_some_and(|claim| {
-        crate::FRAME_POOL.owns_frame(frame).unwrap_or(false)
-    })
+    claim_for_data_frame(process, frame)
+        .is_some_and(|claim| crate::FRAME_POOL.owns_frame(frame).unwrap_or(false))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -999,9 +998,10 @@ fn claim_for_data_frame(process: Process, frame: u64) -> Option<sorveth_frames::
         Process::First => (unsafe { FIRST_CLAIM }, unsafe { FIRST_DYNAMIC_CLAIM }),
         Process::Second => (unsafe { SECOND_CLAIM }, unsafe { SECOND_DYNAMIC_CLAIM }),
     };
-    [primary, dynamic].into_iter().flatten().find(|claim| {
-        frame >= claim.span.start && frame < claim.span.end_exclusive()
-    })
+    [primary, dynamic]
+        .into_iter()
+        .flatten()
+        .find(|claim| frame >= claim.span.start && frame < claim.span.end_exclusive())
 }
 
 /// Prove that a live copy pin prevents process teardown from retiring its
@@ -1134,7 +1134,9 @@ pub unsafe fn map_dynamic_user_buffer_page(
         Process::First => sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
         Process::Second => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
     };
-    let claim = pool.claim_unmapped_for(1, owner).map_err(|_| Error::FrameUnavailable)?;
+    let claim = pool
+        .claim_unmapped_for(1, owner)
+        .map_err(|_| Error::FrameUnavailable)?;
     let frame = claim.span.start;
     if frame == 0 || frame & (PAGE - 1) != 0 {
         rollback_dynamic_claim(pool, claim, owner, false)?;
@@ -1246,8 +1248,7 @@ pub unsafe fn unmap_dynamic_user_buffer_page(
     // root. This flushes any non-global cached translation for its user page.
     asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
     asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-    if unsafe { pool.release_mapping(claim.handle, owner) }
-        .map_err(|_| Error::FrameUnavailable)?
+    if unsafe { pool.release_mapping(claim.handle, owner) }.map_err(|_| Error::FrameUnavailable)?
         != 0
         || pool
             .release_claim_reference(claim.handle, owner)
@@ -1304,9 +1305,7 @@ unsafe fn rollback_dynamic_claim(
 /// Kernel root active, interrupts disabled, and only the bootstrap CPU can
 /// mutate these process roots or the frame ledger.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn verify_dynamic_user_buffer_lifecycle(
-    pool: &sorveth_frames::FramePool<256>,
-) -> bool {
+pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FramePool<256>) -> bool {
     use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
 
     for process in [Process::First, Process::Second] {
@@ -1333,19 +1332,17 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(
         let payload: [u8; 31] = core::array::from_fn(|index| (index as u8).wrapping_mul(37) ^ 0xa6);
         let mut observed = [0u8; 31];
         if unsafe {
-            crate::user_copy::copy_from_process(
-                process,
-                original.virtual_address,
-                &mut observed,
-            )
+            crate::user_copy::copy_from_process(process, original.virtual_address, &mut observed)
         }
         .is_err()
             || observed.iter().any(|byte| *byte != 0)
         {
             return false;
         }
-        if unsafe { crate::user_copy::copy_to_process(process, original.virtual_address + 19, &payload) }
-            .is_err()
+        if unsafe {
+            crate::user_copy::copy_to_process(process, original.virtual_address + 19, &payload)
+        }
+        .is_err()
             || unsafe {
                 crate::user_copy::copy_from_process(
                     process,
