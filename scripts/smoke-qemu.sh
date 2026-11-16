@@ -429,6 +429,7 @@ for side in a b; do
   for marker in \
     'SORVETH M2-J.3: bounded copy-in and denied buffers verified' \
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
+    'SORVETH M2-K.4c: ring-3 256-byte copy-in/out crossed the user-page boundary' \
     'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
@@ -457,7 +458,7 @@ for side in a b; do
     'Sorveth ring-3 probe: user mappings and trap ready' \
   'SORVETH M2-K.1d: owned ring-3 code stack and paging verified' \
     'SORVETH M2-J.5: ring-3 memory syscalls authorized and denied' \
-    'SORVETH M2-J.6: full-frame and capability integrity verified after every syscall' \
+    'SORVETH M2-J.6: full-span and capability integrity verified after every syscall' \
     'SORVETH M2-K.1b: owned-window integrity validation verified'; do
     if ! grep -Fq "$marker" "$TMP/transfer-$side-serial.log"; then
       echo "QEMU process $side syscall test failed: missing marker: $marker" >&2
@@ -465,5 +466,5 @@ for side in a b; do
     fi
   done
   require_independent_root_marker "$TMP/transfer-$side-serial.log"
-  echo "PASS: process $side issued 22 CPL3 memory syscall requests; denied operations preserved full-frame/capability integrity."
+  echo "PASS: process $side issued 24 CPL3 memory syscall requests; denied operations preserved full-span/capability integrity."
 done
