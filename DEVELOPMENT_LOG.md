@@ -716,7 +716,7 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - This confirms planned bootstrap dependencies remain reachable through the process roots, which still inherit firmware page-table ancestry. It does not prove complete dynamic mapping coverage.
 
 
-## 2026-11-16 — M2-K.4b two-page bounded copy checkpoint (validation pending)
+## 2026-11-16 — M2-K.4b two-page bounded copy accepted
 
 - Expanded each bootstrap process data allocation to a contiguous two-page span
   and installed a second supervisor-audited USER RW/NX leaf mapping.
@@ -730,5 +730,8 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
   copying page fragments.
 - Added live QEMU acceptance for resolving and copying across the adjacent
   user-page boundary, plus checking that the two pages' contents are restored.
-- Host, UEFI, and QEMU CI have not yet run for this checkpoint. No K.4b
-  acceptance claim is made until those gates pass.
+- Host tests, UEFI build, native ABI layout, formatting, normal-root and
+  independent-root QEMU matrices, and both interactive monitor checks passed:
+  https://github.com/Drmgiver/Sorveth-OS/actions/runs/43911207398
+- This remains a fixed two-page single-CPU proof. Dynamic user mappings,
+  SMP-safe teardown, and recoverable hardware faults remain future work.
