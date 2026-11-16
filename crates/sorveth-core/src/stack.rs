@@ -598,7 +598,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
             crate::halt_forever();
         }
         if unsafe { crate::process_roots::retire_process_roots(&crate::FRAME_POOL) }.is_err() {
-            crate::serial::write_line("FATAL: process roots still referenced or could not be reclaimed");
+            crate::serial::write_line(
+                "FATAL: process roots still referenced or could not be reclaimed",
+            );
             crate::halt_forever();
         }
         crate::serial::write_line(
