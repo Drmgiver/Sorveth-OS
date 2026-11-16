@@ -1,4 +1,4 @@
-//! M2-J.3: bounded kernel-controlled copy from the private data page of
+//! M2-J.3/K.4b: bounded kernel-controlled copy from private process pages of
 //! one experimental process. Not a public syscall.
 //!
 //! Security contract: an approved process identity is passed by privileged
@@ -45,8 +45,9 @@ pub enum CopyInError {
 /// disabled and Sorveth's kernel CR3 active; no concurrent page-table
 /// changes, frame reclamation or user scheduling may occur. Destination
 /// must be kernel-owned memory with a valid exclusive mutable borrow.
-/// The source mapping is limited to the permanently owned single 4-KiB
-/// data page installed by M2-I.2; arbitrary process pages are NOT allowed.
+/// The source mapping is limited to the two adjacent permanently owned
+/// data pages installed by the QEMU bootstrap; arbitrary process pages are
+/// NOT allowed.
 /// These assumptions are checked where possible but not generally enforced.
 pub unsafe fn copy_from_process(
     process: Process,
@@ -66,28 +67,38 @@ pub unsafe fn copy_from_process(
         return Err(CopyInError::WrongCpuContext);
     }
 
-    let owner = process_roots::mapped_page(process).ok_or(CopyInError::UnmappedPhysicalSource)?;
+    let _owner = process_roots::mapped_page(process).ok_or(CopyInError::UnmappedPhysicalSource)?;
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Read)
         .map_err(CopyInError::InvalidMapping)?;
     let _pins = process_roots::pin_user_pages(process, &pages)
         .map_err(|_| CopyInError::MappingPinUnavailable)?;
+    for index in 0..pages.page_count() {
+        let frame = pages
+            .physical_page(index)
+            .ok_or(CopyInError::UnmappedPhysicalSource)?;
+        crate::root::with_physical_window(frame, |_| ())
+            .map_err(|_| CopyInError::UnmappedPhysicalSource)?;
+    }
 
-    // All physical spans are checked against this permanently owned frame
-    // before any destination byte changes. The frame's physical address is
-    // never cast to a pointer: it is accessed through the scoped owned alias.
-    let result = crate::root::with_physical_window(owner.physical_address, |window| {
-        copy_from_resolved(
-            range,
-            &pages,
-            destination,
-            |page| process_roots::owns_data_frame(process, page),
-            |physical_address, out| unsafe {
-                let offset = (physical_address - owner.physical_address) as usize;
+    // Every physical page is checked against this process's owned span
+    // before any destination byte changes. Each chunk uses its own scoped
+    // alias; no adjacent physical pointer is assumed.
+    let result = copy_from_resolved(
+        range,
+        &pages,
+        destination,
+        |page| process_roots::owns_data_frame(process, page),
+        |physical_address, out| unsafe {
+            let frame = physical_address & !(PAGE_BYTES - 1);
+            match crate::root::with_physical_window(frame, |window| {
+                let offset = (physical_address - frame) as usize;
                 ptr::copy(window.add(offset), out.as_mut_ptr(), out.len());
-            },
-        )
-    })
-    .map_err(|_| CopyInError::UnmappedPhysicalSource)?;
+            }) {
+                Ok(()) => {}
+                Err(_) => crate::halt_forever(),
+            }
+        },
+    );
     result.map_err(CopyInError::PhysicalSource)
 }
 
@@ -102,7 +113,7 @@ pub enum CopyOutError {
     MappingPinUnavailable,
 }
 
-/// Copy trusted kernel bytes to the chosen process's writable data page.
+/// Copy trusted kernel bytes to the chosen process's writable data pages.
 ///
 /// Every virtual destination page must pass M2-J.1 range validation and
 /// M2-J.2 UserAccess::Write walking. Every resolved physical frame must
@@ -133,27 +144,37 @@ pub unsafe fn copy_to_process(
         return Err(CopyOutError::WrongCpuContext);
     }
 
-    let owner =
+    let _owner =
         process_roots::mapped_page(process).ok_or(CopyOutError::UnmappedPhysicalDestination)?;
     // This explicitly requests write permission at *every* page-table level.
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Write)
         .map_err(CopyOutError::InvalidMapping)?;
     let _pins = process_roots::pin_user_pages(process, &pages)
         .map_err(|_| CopyOutError::MappingPinUnavailable)?;
+    for index in 0..pages.page_count() {
+        let frame = pages
+            .physical_page(index)
+            .ok_or(CopyOutError::UnmappedPhysicalDestination)?;
+        crate::root::with_physical_window(frame, |_| ())
+            .map_err(|_| CopyOutError::UnmappedPhysicalDestination)?;
+    }
 
-    let result = crate::root::with_physical_window(owner.physical_address, |window| {
-        copy_to_resolved(
-            range,
-            &pages,
-            source,
-            |page| process_roots::owns_data_frame(process, page),
-            |physical_address, bytes| unsafe {
-                let offset = (physical_address - owner.physical_address) as usize;
+    let result = copy_to_resolved(
+        range,
+        &pages,
+        source,
+        |page| process_roots::owns_data_frame(process, page),
+        |physical_address, bytes| unsafe {
+            let frame = physical_address & !(PAGE_BYTES - 1);
+            match crate::root::with_physical_window(frame, |window| {
+                let offset = (physical_address - frame) as usize;
                 ptr::copy_nonoverlapping(bytes.as_ptr(), window.add(offset), bytes.len());
-            },
-        )
-    })
-    .map_err(|_| CopyOutError::UnmappedPhysicalDestination)?;
+            }) {
+                Ok(()) => {}
+                Err(_) => crate::halt_forever(),
+            }
+        },
+    );
     result.map_err(CopyOutError::PhysicalDestination)
 }
 
@@ -207,6 +228,36 @@ pub unsafe fn verify_copy_to_user() -> bool {
             return false;
         }
 
+        // A bounded copy may straddle the two adjacent private user pages.
+        // Verify both directions, then restore the complete original bytes.
+        let crossing_address = own.virtual_address + PAGE_BYTES - 4;
+        let mut crossing_before = [0u8; 8];
+        if copy_from_process(process, crossing_address, &mut crossing_before).is_err() {
+            return false;
+        }
+        let crossing_pattern = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        if copy_to_process(process, crossing_address, &crossing_pattern).is_err() {
+            return false;
+        }
+        let mut crossing_observed = [0u8; 8];
+        let crossing_matched = copy_from_process(process, crossing_address, &mut crossing_observed)
+            .is_ok()
+            && crossing_observed == crossing_pattern
+            && process_roots::read_process_frame_byte(process, (PAGE_BYTES - 4) as usize)
+                == Some(crossing_pattern[0])
+            && process_roots::read_process_frame_byte(process, PAGE_BYTES as usize)
+                == Some(crossing_pattern[4]);
+        if copy_to_process(process, crossing_address, &crossing_before).is_err() {
+            return false;
+        }
+        let mut crossing_restored = [0u8; 8];
+        if !crossing_matched
+            || copy_from_process(process, crossing_address, &mut crossing_restored).is_err()
+            || crossing_restored != crossing_before
+        {
+            return false;
+        }
+
         // Write a single byte at the final mapped offset, then restore it.
         let last_address = own.virtual_address + PAGE_BYTES - 1;
         let Some(last_before) =
@@ -239,7 +290,8 @@ pub unsafe fn verify_copy_to_user() -> bool {
         {
             return false;
         }
-        if copy_to_process(process, last_address, &source)
+        let missing_address = own.virtual_address + 2 * PAGE_BYTES - 1;
+        if copy_to_process(process, missing_address, &source)
             != Err(CopyOutError::InvalidMapping(WalkError::MissingMapping))
         {
             return false;
@@ -343,11 +395,14 @@ pub unsafe fn verify_copy_from_user() -> bool {
             return false;
         }
 
-        // Preflight the entire buffer. The first byte is present, but the
-        // second lands in an unmapped page: neither output byte may change.
+        // Preflight the entire buffer. The first byte is at the end of the
+        // second mapped page, but the next lands in an absent third page.
         let mut crossing = [0xb6u8; 2];
-        if copy_from_process(process, own.virtual_address + PAGE_BYTES - 1, &mut crossing)
-            != Err(CopyInError::InvalidMapping(WalkError::MissingMapping))
+        if copy_from_process(
+            process,
+            own.virtual_address + 2 * PAGE_BYTES - 1,
+            &mut crossing,
+        ) != Err(CopyInError::InvalidMapping(WalkError::MissingMapping))
             || crossing != [0xb6; 2]
         {
             return false;

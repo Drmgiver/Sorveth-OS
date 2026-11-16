@@ -888,7 +888,7 @@ pub(crate) unsafe fn audit_inherited_page_tables(
     })
 }
 
-/// One intentionally small physical user data page mapped at offset zero
+/// Two adjacent physical user data pages mapped at offset zero
 /// of a process-owned lower-canonical PML4 slot. Not executable.
 #[cfg(target_arch = "x86_64")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -950,7 +950,7 @@ pub(crate) fn pin_user_pages(
     };
     for index in 0..pages.page_count() {
         let frame = pages.physical_page(index).ok_or(())?;
-        if frame != claim.span.start {
+        if frame < claim.span.start || frame >= claim.span.end_exclusive() {
             return Err(());
         }
         let record = crate::FRAME_POOL
@@ -961,7 +961,7 @@ pub(crate) fn pin_user_pages(
             || record.owner() != owner
             || record.span() != claim.span
             || record.references() == 0
-            || record.mappings() != 1
+            || record.mappings() != 2
             || record.is_quarantined()
         {
             return Err(());
@@ -985,7 +985,9 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
         Process::Second => unsafe { SECOND_CLAIM },
     };
     claim.is_some_and(|claim| {
-        claim.span.start == frame && crate::FRAME_POOL.owns_frame(frame).unwrap_or(false)
+        frame >= claim.span.start
+            && frame < claim.span.end_exclusive()
+            && crate::FRAME_POOL.owns_frame(frame).unwrap_or(false)
     })
 }
 
@@ -1004,7 +1006,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
         Some(mapping) => mapping,
         None => return false,
     };
-    let range = match validate_user_range(mapping.virtual_address, 1) {
+    let range = match validate_user_range(mapping.virtual_address + PAGE - 4, 8) {
         Ok(range) => range,
         Err(_) => return false,
     };
@@ -1028,7 +1030,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
         Some(record) => record,
         None => return false,
     };
-    if record.references() != 2 || record.mappings() != 1 {
+    if record.references() != 3 || record.mappings() != 2 {
         return false;
     }
     if unsafe { teardown_private_pages(pool) } != Err(Error::VerificationFailed)
@@ -1041,7 +1043,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
     pool.claim_record_at(claim.handle.slot() as usize)
         .ok()
         .flatten()
-        .is_some_and(|after| after.references() == 1 && after.mappings() == 1)
+        .is_some_and(|after| after.references() == 1 && after.mappings() == 2)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1213,12 +1215,14 @@ pub(crate) unsafe fn read_process_frame_word(process: Process) -> Option<u64> {
 /// Kernel CR3, one CPU, IRQs masked, process frame not reclaimed.
 #[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn read_process_frame_byte(process: Process, offset: usize) -> Option<u8> {
-    if offset >= 4096 {
+    if offset >= 2 * PAGE as usize {
         return None;
     }
     let mapping = mapped_page(process)?;
-    crate::root::with_physical_window(mapping.physical_address, |window| {
-        ptr::read_volatile(window.add(offset) as *const u8)
+    let frame = mapping.physical_address + (offset as u64 & !(PAGE - 1));
+    let page_offset = offset & (PAGE as usize - 1);
+    crate::root::with_physical_window(frame, |window| {
+        ptr::read_volatile(window.add(page_offset) as *const u8)
     })
     .ok()
 }
@@ -1465,9 +1469,9 @@ fn approved_table_entry(owned: &[u64; 4], entry_address: u64) -> bool {
         && owned.contains(&page)
 }
 
-/// Live QEMU acceptance: validate both real process-private USER pages,
-/// reject the other process's unmapped slot, and reject an otherwise valid
-/// two-byte numeric range which crosses into an absent second leaf page.
+/// Live QEMU acceptance: validate both two-page process-private USER spans,
+/// reject the other process's unmapped slot, and resolve a range which
+/// crosses the real adjacent leaf boundary.
 /// The kernel stays on its root; no user data is dereferenced in this test.
 ///
 /// # Safety
@@ -1518,16 +1522,18 @@ pub unsafe fn verify_user_page_walk() -> bool {
             return false;
         }
 
-        // First page is present, second is not. A complete walk must
-        // reject the entire request rather than return partial success.
+        // The two-page span is contiguous virtually and physically, and
+        // the walker must return both leaves for this boundary crossing.
         let crossing = match validate_user_range(own.virtual_address + PAGE_BYTES - 1, 2) {
             Ok(range) => range,
             Err(_) => return false,
         };
-        if walk_process_user_range(owner, crossing, UserAccess::Read)
-            != Err(WalkError::MissingMapping)
-        {
-            return false;
+        match walk_process_user_range(owner, crossing, UserAccess::Read) {
+            Ok(pages)
+                if pages.page_count() == 2
+                    && pages.physical_page(0) == Some(own.physical_address)
+                    && pages.physical_page(1) == Some(own.physical_address + PAGE_BYTES) => {}
+            _ => return false,
         }
     }
     true
@@ -1550,11 +1556,13 @@ unsafe fn validate_user_path(root: u64, slot: u16, pdpt: u64, pd: u64, pt: u64, 
         && entry_matches(pdpt_entry, pd | USER_TABLE_FLAGS, false)
         && entry_matches(pd_entry, pt | USER_TABLE_FLAGS, false)
         && entry_matches(leaf_entry, data | USER_DATA_FLAGS, true)
+        && read_registered_table_word(pt, 1)
+            .is_some_and(|second| entry_matches(second, data + PAGE | USER_DATA_FLAGS, true))
 }
 
-/// Claim two distinct conventional physical frames from the permanent ledger,
-/// zero them, and install private USER RW/NX leaf mappings in each process
-/// root's reserved slot. Test real CPU reads/writes after CR3 transitions.
+/// Claim two adjacent page spans from the permanent ledger, zero them, and
+/// install private two-page USER RW/NX mappings in each process root's
+/// reserved slot. Test real CPU reads/writes after CR3 transitions.
 ///
 /// # Safety
 /// Single QEMU bootstrap CPU only, kernel CPL0, interrupts masked; M2-I.1
@@ -1649,7 +1657,7 @@ unsafe fn map_private_pages_inner(
             match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES) {
                 Ok(claim) => claims[index + 2] = Some(claim),
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, [0; 6])? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, [0; 6])? };
                     return Err(Error::FrameUnavailable);
                 }
             }
@@ -1657,7 +1665,7 @@ unsafe fn map_private_pages_inner(
         let tables = core::array::from_fn(|index| claims[index + 2].unwrap().span.start);
         for (index, table) in tables.iter().enumerate() {
             if *table == 0 || *table & 4095 != 0 || tables[..index].contains(table) {
-                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                 return Err(Error::PageTableStorageUnavailable);
             }
         }
@@ -1673,35 +1681,35 @@ unsafe fn map_private_pages_inner(
             match initialized {
                 Ok(true) => {}
                 Ok(false) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::VerificationFailed);
                 }
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::PageTableStorageUnavailable);
                 }
             }
         }
 
-        claims[0] = match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
+        claims[0] = match pool.claim_unmapped_for(2, sorveth_frames::FrameOwner::PROCESS_FIRST_DATA)
         {
             Ok(claim) => Some(claim),
             Err(_) => {
-                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                 return Err(Error::FrameUnavailable);
             }
         };
         claims[1] =
-            match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
+            match pool.claim_unmapped_for(2, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
                 Ok(claim) => Some(claim),
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::FrameUnavailable);
                 }
             };
         let claim_a = claims[0].unwrap();
         let claim_b = claims[1].unwrap();
-        let mut mapping_refs = [false; 8];
+        let mut mapping_refs = [0u8; 8];
         let result = (|| -> Result<(), Error> {
             let frame_a = claim_a.span.start;
             let frame_b = claim_b.span.start;
@@ -1726,7 +1734,7 @@ unsafe fn map_private_pages_inner(
             // Both ledger-claimed data frames are initialized through Sorveth's
             // temporary supervisor alias. Their physical addresses are not
             // directly dereferenced and need no firmware identity mapping.
-            for frame in [frame_a, frame_b] {
+            for frame in [frame_a, frame_a + PAGE, frame_b, frame_b + PAGE] {
                 let zeroed = crate::root::with_physical_window(frame, |window| {
                     ptr::write_bytes(window, 0, 4096);
                     ptr::read_volatile(window as *const u64) == 0
@@ -1753,36 +1761,42 @@ unsafe fn map_private_pages_inner(
                 {
                     return Err(Error::VerificationFailed);
                 }
-                mapping_refs[index + 2] = true;
+                mapping_refs[index + 2] = 1;
             }
-            if pool
-                .retain_mapping(
-                    claim_a.handle,
-                    sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
-                )
-                .map_err(|_| Error::FrameUnavailable)?
-                != 1
-            {
-                return Err(Error::VerificationFailed);
+            for expected in 1..=2 {
+                if pool
+                    .retain_mapping(
+                        claim_a.handle,
+                        sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+                    )
+                    .map_err(|_| Error::FrameUnavailable)?
+                    != expected
+                {
+                    return Err(Error::VerificationFailed);
+                }
+                mapping_refs[0] += 1;
             }
-            mapping_refs[0] = true;
-            if pool
-                .retain_mapping(
-                    claim_b.handle,
-                    sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
-                )
-                .map_err(|_| Error::FrameUnavailable)?
-                != 1
-            {
-                return Err(Error::VerificationFailed);
+            for expected in 1..=2 {
+                if pool
+                    .retain_mapping(
+                        claim_b.handle,
+                        sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+                    )
+                    .map_err(|_| Error::FrameUnavailable)?
+                    != expected
+                {
+                    return Err(Error::VerificationFailed);
+                }
+                mapping_refs[1] += 1;
             }
-            mapping_refs[1] = true;
             if inject_failure_after_staging {
                 return Err(Error::SetupFailureInjected);
             }
             for (table, index, value) in [
                 (a_pt, 0, frame_a | USER_DATA_FLAGS),
+                (a_pt, 1, (frame_a + PAGE) | USER_DATA_FLAGS),
                 (b_pt, 0, frame_b | USER_DATA_FLAGS),
+                (b_pt, 1, (frame_b + PAGE) | USER_DATA_FLAGS),
                 (a_pd, 0, a_pt | USER_TABLE_FLAGS),
                 (b_pd, 0, b_pt | USER_TABLE_FLAGS),
                 (a_pdpt, 0, a_pd | USER_TABLE_FLAGS),
@@ -1795,6 +1809,8 @@ unsafe fn map_private_pages_inner(
             }
             if !validate_user_path(first_root, first_slot, a_pdpt, a_pd, a_pt, frame_a)
                 || !validate_user_path(second_root, second_slot, b_pdpt, b_pd, b_pt, frame_b)
+                || read_registered_table_word(a_pt, 1) != Some((frame_a + PAGE) | USER_DATA_FLAGS)
+                || read_registered_table_word(b_pt, 1) != Some((frame_b + PAGE) | USER_DATA_FLAGS)
                 || read_registered_table_word(first_root, second_slot as usize) != Some(0)
                 || read_registered_table_word(second_root, first_slot as usize) != Some(0)
             {
@@ -1878,7 +1894,7 @@ unsafe fn map_private_pages_inner(
 unsafe fn rollback_private_claims(
     pool: &sorveth_frames::FramePool<256>,
     claims: [Option<sorveth_frames::OwnedSpan>; 8],
-    mapping_refs: [bool; 8],
+    mapping_refs: [u8; 8],
     roots: [(u64, u16); 2],
     tables: [u64; 6],
 ) -> Result<(), Error> {
@@ -1899,7 +1915,9 @@ unsafe fn rollback_private_claims(
     }
     compiler_fence(Ordering::SeqCst);
     for address in addresses {
+        let second = address + PAGE;
         asm!("invlpg [{}]", in(reg) address, options(nostack, preserves_flags));
+        asm!("invlpg [{}]", in(reg) second, options(nostack, preserves_flags));
     }
     asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
     for table in tables.into_iter().filter(|table| *table != 0) {
@@ -1918,12 +1936,13 @@ unsafe fn rollback_private_claims(
             1 => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
             _ => sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
         };
-        if mapping_refs[index]
-            && unsafe { pool.release_mapping(claim.handle, owner) }
+        for expected_remaining in (0..mapping_refs[index]).rev() {
+            if unsafe { pool.release_mapping(claim.handle, owner) }
                 .map_err(|_| Error::FrameUnavailable)?
-                != 0
-        {
-            return Err(Error::VerificationFailed);
+                != expected_remaining as u32
+            {
+                return Err(Error::VerificationFailed);
+            }
         }
         if pool
             .release_claim_reference(claim.handle, owner)
@@ -1995,8 +2014,8 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             || record_b.span() != claim_b.span
             || record_a.references() != 1
             || record_b.references() != 1
-            || record_a.mappings() != 1
-            || record_b.mappings() != 1
+            || record_a.mappings() != 2
+            || record_b.mappings() != 2
             || record_a.is_quarantined()
             || record_b.is_quarantined()
             || checked_process_root(Process::First).is_none()
@@ -2036,6 +2055,8 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             if write_registered_table_word(root_a, slot_a as usize, saved_a).is_some() {
                 compiler_fence(Ordering::SeqCst);
                 asm!("invlpg [{}]", in(reg) address_a, options(nostack, preserves_flags));
+                let second = address_a + PAGE;
+                asm!("invlpg [{}]", in(reg) second, options(nostack, preserves_flags));
                 asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
             }
             return Err(Error::PageTableStorageUnavailable);
@@ -2043,6 +2064,10 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         compiler_fence(Ordering::SeqCst);
         asm!("invlpg [{}]", in(reg) address_a, options(nostack, preserves_flags));
         asm!("invlpg [{}]", in(reg) address_b, options(nostack, preserves_flags));
+        let second_a = address_a + PAGE;
+        let second_b = address_b + PAGE;
+        asm!("invlpg [{}]", in(reg) second_a, options(nostack, preserves_flags));
+        asm!("invlpg [{}]", in(reg) second_b, options(nostack, preserves_flags));
         // CR3 reload flushes the remaining non-global translations for this
         // single CPU before the mapping ledger references are dropped.
         asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
@@ -2061,7 +2086,13 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
 
         if unsafe { pool.release_mapping(claim_a.handle, owner_a) }
             .map_err(|_| Error::FrameUnavailable)?
-            != 0
+            != 1
+            || unsafe { pool.release_mapping(claim_a.handle, owner_a) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+            || unsafe { pool.release_mapping(claim_b.handle, owner_b) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 1
             || unsafe { pool.release_mapping(claim_b.handle, owner_b) }
                 .map_err(|_| Error::FrameUnavailable)?
                 != 0
@@ -2116,7 +2147,7 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             .map_err(|_| Error::FrameUnavailable)?
             .available_pages
             != pages_before
-                .checked_add(8)
+                .checked_add(10)
                 .ok_or(Error::VerificationFailed)?
             || pool.claim_count().map_err(|_| Error::FrameUnavailable)?
                 != claims_before

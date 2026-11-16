@@ -162,6 +162,17 @@ processes still expose one permanent data page each; multi-page ring-3 buffer
 coverage and recoverable hardware faults remain pending. Evidence: [feature
 run 43817644273](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43817644273).
 
+**K.4b accepted:** the QEMU bootstrap process mappings now cover two adjacent
+user data pages. Copy-in and copy-out resolve and pin every page, then map
+each physical frame through its own scoped supervisor window. The ledger
+counts a mapping reference for each leaf. Live QEMU checks exercise copies
+that straddle the leaf boundary and verify the second PTE, its data, and
+pin-protected teardown. This remains a fixed two-page single-CPU proof;
+dynamic user mappings and recoverable faults are not implemented. Host,
+UEFI, ABI, formatting, normal-root QEMU, independent-root QEMU, and interactive
+monitor gates passed on the accepted branch. Evidence: [run
+43911207398](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43911207398).
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified

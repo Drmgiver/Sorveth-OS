@@ -490,6 +490,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     crate::serial::write_line("SORVETH M2-J.4: bounded writable copy-out and denial verified");
     crate::serial::write_line(
+        "SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary",
+    );
+    crate::serial::write_line(
         "SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases",
     );
     crate::serial::write_line("SORVETH M2-K.1d: owned read-only mapping denial verified");
@@ -499,6 +502,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line("SORVETH M2-K.4a: copy frame pins block teardown until release");
+    crate::serial::write_line(
+        "SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime",
+    );
     if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process address-space teardown failed");
         crate::halt_forever();
