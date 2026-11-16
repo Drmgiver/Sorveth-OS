@@ -192,17 +192,24 @@ impl<const N: usize> FrameAllocator<N> {
                 continue;
             }
             let end = entry.physical_end().map_err(Error::InvalidMap)?;
+            // Keep the null page permanently unavailable even if firmware
+            // reports it as conventional memory. A present translation of
+            // physical address zero is not a safe allocator result.
+            let start = entry.physical_start.max(PAGE_BYTES);
+            if start >= end {
+                continue;
+            }
             if result.used == N {
                 return Err(Error::TooManyRegions);
             }
             result.regions[result.used] = Region {
-                start: entry.physical_start,
+                start,
                 end,
             };
             result.used += 1;
             result.available_pages = result
                 .available_pages
-                .checked_add(entry.number_of_pages)
+                .checked_add((end - start) / PAGE_BYTES)
                 .ok_or(Error::InvalidRange)?;
         }
 
@@ -921,6 +928,14 @@ mod tests {
         assert_eq!(a.allocate(1).unwrap().start, 0x4000);
         assert_eq!(a.available_pages(), 0);
         assert_eq!(a.allocate(1), Err(Error::OutOfMemory));
+    }
+
+    #[test]
+    fn never_allocates_the_null_page_even_if_firmware_marks_it_conventional() {
+        let data = desc(7, 0, 4);
+        let mut allocator = FrameAllocator::<2>::from_map(&map(&data)).unwrap();
+        assert_eq!(allocator.available_pages(), 3);
+        assert_eq!(allocator.allocate(3).unwrap().start, PAGE_BYTES);
     }
 
     #[test]
