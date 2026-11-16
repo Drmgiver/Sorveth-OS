@@ -1076,6 +1076,7 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
         BOUNDARY_COPY_BYTES, BOUNDARY_COPY_OFFSET, COPY_DENIED, COPY_IN_OK, COPY_OUT_OK,
         SYS_COMPLETE, SYS_COPY_IN, SYS_COPY_OUT,
     };
+    use sorveth_paging::PAGE_BYTES;
 
     let own = crate::process_roots::mapped_page(crate::transfer::owner())
         .ok_or(Error::VerificationFailed)?;
@@ -1104,7 +1105,7 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
     call(
         SYS_COPY_OUT,
         write,
-        own.virtual_address + 4095,
+        own.virtual_address + 2 * PAGE_BYTES - 1,
         2,
         COPY_DENIED,
     )?;
