@@ -2147,7 +2147,7 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             .map_err(|_| Error::FrameUnavailable)?
             .available_pages
             != pages_before
-                .checked_add(8)
+                .checked_add(10)
                 .ok_or(Error::VerificationFailed)?
             || pool.claim_count().map_err(|_| Error::FrameUnavailable)?
                 != claims_before
