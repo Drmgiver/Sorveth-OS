@@ -369,6 +369,7 @@ pub unsafe fn dispatch(
         state.original_checksum
     };
     if !integrity_holds(state, pre_expected) {
+        crate::serial::write_line("FATAL: transfer pre-integrity check");
         fatal();
     }
     let expected = match state.completed {
@@ -521,6 +522,7 @@ pub unsafe fn dispatch(
     if (number, raw_handle, user_address, length)
         != (expected.0, expected.1, expected.2, expected.3)
     {
+        crate::serial::write_line("FATAL: transfer arguments differ from phase table");
         fatal();
     }
 
@@ -639,6 +641,7 @@ pub unsafe fn dispatch(
         _ => COPY_DENIED,
     };
     if result != expected.4 {
+        crate::serial::write_line("FATAL: transfer reply differs from phase table");
         fatal();
     }
     let post_expected = if number == SYS_COMPLETE {
@@ -651,6 +654,7 @@ pub unsafe fn dispatch(
         state.original_checksum
     };
     if !integrity_holds(state, post_expected) {
+        crate::serial::write_line("FATAL: transfer post-integrity check");
         fatal();
     }
     state.completed += 1;
