@@ -677,6 +677,7 @@ M2-K.1 remains partial. The candidate still lacks the complete non-image supervi
 M2-K.1 remains partial; the inactive candidate still needs generalized non-image mapping coverage and a complete supervisor survival audit before any persistent CR3 transition.
 
 
+
 ## 2026-10-30 — M2-K.1j generalized inactive supervisor mappings
 
 - Generalized the candidate hierarchy to accept all verified planner mappings, including mappings that require additional PML4/PDPT/PD branches. New tables come from a bounded pool in writable, identity-mapped PE pages.
@@ -713,3 +714,19 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - After constructing both scheduler roots, the kernel now walks every external mapping in the verified supervisor plan through each root, checking physical backing, supervisor-only access, and the write/execute rights the plan requires. The framebuffer endpoints are checked in both roots as well.
 - Every QEMU boot variant requires the new marker before process user pages and task scheduling proceed.
 - This confirms planned bootstrap dependencies remain reachable through the process roots, which still inherit firmware page-table ancestry. It does not prove complete dynamic mapping coverage.
+
+
+## 2026-11-16 — M2-K.4b two-page bounded copy checkpoint (validation pending)
+
+- Expanded each bootstrap process data allocation to a contiguous two-page span
+  and installed a second supervisor-audited USER RW/NX leaf mapping.
+- Updated process ownership checks and copy pins to admit only frames inside
+  the process's generation-bound data span. Teardown remains blocked while
+  either page of an in-flight bounded copy is pinned.
+- Copy-in and copy-out now map each resolved physical page through a separate
+  scoped frame-window alias. This avoids relying on physical contiguity while
+  copying page fragments.
+- Added live QEMU acceptance for resolving and copying across the adjacent
+  user-page boundary, plus checking that the two pages' contents are restored.
+- Host, UEFI, and QEMU CI have not yet run for this checkpoint. No K.4b
+  acceptance claim is made until those gates pass.
