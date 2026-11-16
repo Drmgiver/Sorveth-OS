@@ -193,6 +193,13 @@ unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
 }
 
 fn fatal() -> ! {
+    unsafe {
+        if let Some(state) = (*ptr::addr_of_mut!(STATE)).as_ref() {
+            crate::serial::write("FATAL: transfer phase ");
+            crate::serial::write_u64(state.completed as u64);
+            crate::serial::write_line("");
+        }
+    }
     crate::serial::write_line("FATAL: ring-3 memory syscall test invalid");
     crate::halt_forever()
 }
