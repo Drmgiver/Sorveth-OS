@@ -544,8 +544,7 @@ pub unsafe fn dispatch(
                     0 => {
                         copied
                             && length == 8
-                            && u64::from_le_bytes(output[..8].try_into().unwrap())
-                                == state.original
+                            && u64::from_le_bytes(output[..8].try_into().unwrap()) == state.original
                     }
                     BOUNDARY_READ_PHASE => copied && output == boundary_pattern(),
                     _ => false,
