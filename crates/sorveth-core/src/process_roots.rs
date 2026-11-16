@@ -70,6 +70,14 @@ static RECLAIMED_ONCE: AtomicBool = AtomicBool::new(false);
 static mut FIRST_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 #[cfg(target_arch = "x86_64")]
 static mut SECOND_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
+// K.4e acceptance uses one independently allocated page per process as a
+// dynamically mapped user buffer. The bootstrap's original two-page span is
+// retained at offsets 0..2; these pages occupy leaf index 2 and have their
+// own generation-bound claims and pin counts.
+#[cfg(target_arch = "x86_64")]
+static mut FIRST_DYNAMIC_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
+#[cfg(target_arch = "x86_64")]
+static mut SECOND_DYNAMIC_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
@@ -895,6 +903,7 @@ pub(crate) unsafe fn audit_inherited_page_tables(
 pub struct Mapping {
     pub virtual_address: u64,
     pub physical_address: u64,
+    generation: u32,
 }
 
 /// Temporary generation-bound references held while a kernel copy consumes
@@ -933,15 +942,15 @@ pub(crate) fn pin_user_pages(
     if !MAPPED.load(Ordering::Acquire) || pages.page_count() == 0 {
         return Err(());
     }
-    let (claim, owner) = match process {
-        Process::First => (
-            unsafe { FIRST_CLAIM }.ok_or(())?,
-            sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
-        ),
-        Process::Second => (
-            unsafe { SECOND_CLAIM }.ok_or(())?,
-            sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
-        ),
+    let owner = match process {
+        Process::First => {
+            unsafe { FIRST_CLAIM }.ok_or(())?;
+            sorveth_frames::FrameOwner::PROCESS_FIRST_DATA
+        }
+        Process::Second => {
+            unsafe { SECOND_CLAIM }.ok_or(())?;
+            sorveth_frames::FrameOwner::PROCESS_SECOND_DATA
+        }
     };
     let mut pins = UserPagePins {
         process,
@@ -950,26 +959,25 @@ pub(crate) fn pin_user_pages(
     };
     for index in 0..pages.page_count() {
         let frame = pages.physical_page(index).ok_or(())?;
-        if frame < claim.span.start || frame >= claim.span.end_exclusive() {
-            return Err(());
-        }
+        let page_claim = claim_for_data_frame(process, frame).ok_or(())?;
         let record = crate::FRAME_POOL
-            .claim_record_at(claim.handle.slot() as usize)
+            .claim_record_at(page_claim.handle.slot() as usize)
             .map_err(|_| ())?
             .ok_or(())?;
-        if record.generation() != claim.handle.generation()
+        let expected_mappings = (page_claim.span.end_exclusive() - page_claim.span.start) / PAGE;
+        if record.generation() != page_claim.handle.generation()
             || record.owner() != owner
-            || record.span() != claim.span
+            || record.span() != page_claim.span
             || record.references() == 0
-            || record.mappings() != 2
+            || record.mappings() != expected_mappings as u32
             || record.is_quarantined()
         {
             return Err(());
         }
         crate::FRAME_POOL
-            .retain_claim(claim.handle, owner)
+            .retain_claim(page_claim.handle, owner)
             .map_err(|_| ())?;
-        pins.claims[pins.count] = Some(claim.handle);
+        pins.claims[pins.count] = Some(page_claim.handle);
         pins.count += 1;
     }
     Ok(pins)
@@ -980,15 +988,20 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
     if !MAPPED.load(Ordering::Acquire) || frame == 0 || frame & 4095 != 0 {
         return false;
     }
-    let claim = match process {
-        Process::First => unsafe { FIRST_CLAIM },
-        Process::Second => unsafe { SECOND_CLAIM },
+    claim_for_data_frame(process, frame)
+        .is_some_and(|claim| crate::FRAME_POOL.owns_frame(frame).unwrap_or(false))
+}
+
+#[cfg(target_arch = "x86_64")]
+fn claim_for_data_frame(process: Process, frame: u64) -> Option<sorveth_frames::OwnedSpan> {
+    let (primary, dynamic) = match process {
+        Process::First => (unsafe { FIRST_CLAIM }, unsafe { FIRST_DYNAMIC_CLAIM }),
+        Process::Second => (unsafe { SECOND_CLAIM }, unsafe { SECOND_DYNAMIC_CLAIM }),
     };
-    claim.is_some_and(|claim| {
-        frame >= claim.span.start
-            && frame < claim.span.end_exclusive()
-            && crate::FRAME_POOL.owns_frame(frame).unwrap_or(false)
-    })
+    [primary, dynamic]
+        .into_iter()
+        .flatten()
+        .find(|claim| frame >= claim.span.start && frame < claim.span.end_exclusive())
 }
 
 /// Prove that a live copy pin prevents process teardown from retiring its
@@ -1072,7 +1085,384 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
     Some(Mapping {
         virtual_address: user_base(slot)?,
         physical_address,
+        generation: match process {
+            Process::First => unsafe { FIRST_CLAIM }?.handle.generation(),
+            Process::Second => unsafe { SECOND_CLAIM }?.handle.generation(),
+        },
     })
+}
+
+/// Allocate, zero, and install one independently owned user buffer page at
+/// leaf index 2 in the process's private page table. The original two-page
+/// bootstrap mapping remains intact at indices 0 and 1.
+///
+/// This bounded K.4e operation supports one dynamic page per bootstrap
+/// process. It requires the kernel root, IRQs off, one CPU, and no running
+/// process. It is a kernel acceptance API, not a user mapping syscall.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn map_dynamic_user_buffer_page(
+    process: Process,
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<Mapping, Error> {
+    unsafe { map_dynamic_user_buffer_page_inner(process, pool, false) }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn map_dynamic_user_buffer_page_inner(
+    process: Process,
+    pool: &sorveth_frames::FramePool<256>,
+    inject_failure_after_pte: bool,
+) -> Result<Mapping, Error> {
+    if !MAPPED.load(Ordering::Acquire) {
+        return Err(Error::NotMapped);
+    }
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+        return Err(Error::KernelUnavailable);
+    }
+    let (root, slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
+    let (table_index, dynamic_claim) = match process {
+        Process::First => (2, unsafe { FIRST_DYNAMIC_CLAIM }),
+        Process::Second => (5, unsafe { SECOND_DYNAMIC_CLAIM }),
+    };
+    if dynamic_claim.is_some() {
+        return Err(Error::AlreadyMapped);
+    }
+    let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
+    let table = tables[table_index];
+    if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
+        || read_registered_table_word(table, 2) != Some(0)
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let owner = match process {
+        Process::First => sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+        Process::Second => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+    };
+    let claim = pool
+        .claim_unmapped_for(1, owner)
+        .map_err(|_| Error::FrameUnavailable)?;
+    let frame = claim.span.start;
+    if frame == 0 || frame & (PAGE - 1) != 0 {
+        rollback_dynamic_claim(pool, claim, owner, false)?;
+        return Err(Error::FrameUnavailable);
+    }
+    let initialized = crate::root::with_physical_window(frame, |window| {
+        ptr::write_bytes(window, 0, PAGE as usize);
+        ptr::read_volatile(window as *const u64) == 0
+    });
+    let initialized = match initialized {
+        Ok(initialized) => initialized,
+        Err(_) => {
+            rollback_dynamic_claim(pool, claim, owner, false)?;
+            return Err(Error::FrameUnavailable);
+        }
+    };
+    if !initialized {
+        rollback_dynamic_claim(pool, claim, owner, false)?;
+        return Err(Error::VerificationFailed);
+    }
+    let retained = pool.retain_mapping(claim.handle, owner);
+    if !matches!(retained, Ok(1)) {
+        rollback_dynamic_claim(pool, claim, owner, false)?;
+        return Err(Error::VerificationFailed);
+    }
+    if write_registered_table_word(table, 2, frame | USER_DATA_FLAGS).is_none()
+        || read_registered_table_word(table, 2) != Some(frame | USER_DATA_FLAGS)
+    {
+        let _ = write_registered_table_word(table, 2, 0);
+        asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+        rollback_dynamic_claim(pool, claim, owner, true)?;
+        return Err(Error::PageTableStorageUnavailable);
+    }
+    if inject_failure_after_pte {
+        if write_registered_table_word(table, 2, 0).is_none()
+            || read_registered_table_word(table, 2) != Some(0)
+        {
+            crate::halt_forever();
+        }
+        compiler_fence(Ordering::SeqCst);
+        asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+        rollback_dynamic_claim(pool, claim, owner, true)?;
+        return Err(Error::SetupFailureInjected);
+    }
+    compiler_fence(Ordering::SeqCst);
+    match process {
+        Process::First => unsafe { FIRST_DYNAMIC_CLAIM = Some(claim) },
+        Process::Second => unsafe { SECOND_DYNAMIC_CLAIM = Some(claim) },
+    }
+    Ok(Mapping {
+        virtual_address: user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE,
+        physical_address: frame,
+        generation: claim.handle.generation(),
+    })
+}
+
+/// Unmap and recycle the dynamic page identified by its exact descriptor.
+/// An active copy pin (or stale descriptor) makes this fail before the PTE is
+/// changed. TLB translations are flushed on this CPU before releasing the
+/// mapping reference and zeroing the page.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn unmap_dynamic_user_buffer_page(
+    process: Process,
+    mapping: Mapping,
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    if !MAPPED.load(Ordering::Acquire) {
+        return Err(Error::NotMapped);
+    }
+    let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+    let active: u64;
+    let flags: u64;
+    asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+    asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+    if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+        return Err(Error::KernelUnavailable);
+    }
+    let (root, slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
+    let (table_index, claim) = match process {
+        Process::First => (2, unsafe { FIRST_DYNAMIC_CLAIM }),
+        Process::Second => (5, unsafe { SECOND_DYNAMIC_CLAIM }),
+    };
+    let claim = claim.ok_or(Error::NotMapped)?;
+    let expected_virtual = user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE;
+    if mapping.virtual_address != expected_virtual
+        || mapping.physical_address != claim.span.start
+        || mapping.generation != claim.handle.generation()
+        || mapping.physical_address & (PAGE - 1) != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let owner = match process {
+        Process::First => sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+        Process::Second => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+    };
+    let record = pool
+        .claim_record_at(claim.handle.slot() as usize)
+        .map_err(|_| Error::FrameUnavailable)?
+        .ok_or(Error::FrameUnavailable)?;
+    if record.generation() != claim.handle.generation()
+        || record.owner() != owner
+        || record.span() != claim.span
+        || record.references() != 1
+        || record.mappings() != 1
+        || record.is_quarantined()
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
+    let table = tables[table_index];
+    if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
+        || read_registered_table_word(table, 2) != Some(claim.span.start | USER_DATA_FLAGS)
+    {
+        return Err(Error::VerificationFailed);
+    }
+    write_registered_table_word(table, 2, 0).ok_or(Error::PageTableStorageUnavailable)?;
+    compiler_fence(Ordering::SeqCst);
+    // Load the selected root while still in CPL0, then return to the kernel
+    // root. This flushes any non-global cached translation for its user page.
+    asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+    asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+    if unsafe { pool.release_mapping(claim.handle, owner) }.map_err(|_| Error::FrameUnavailable)?
+        != 0
+        || pool
+            .release_claim_reference(claim.handle, owner)
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let ticket = pool
+        .begin_quarantine(claim.handle, owner)
+        .map_err(|_| Error::FrameUnavailable)?;
+    unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+        .map_err(|_| Error::FrameUnavailable)?;
+    match process {
+        Process::First => unsafe { FIRST_DYNAMIC_CLAIM = None },
+        Process::Second => unsafe { SECOND_DYNAMIC_CLAIM = None },
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn rollback_dynamic_claim(
+    pool: &sorveth_frames::FramePool<256>,
+    claim: sorveth_frames::OwnedSpan,
+    owner: sorveth_frames::FrameOwner,
+    mapped: bool,
+) -> Result<(), Error> {
+    if mapped
+        && unsafe { pool.release_mapping(claim.handle, owner) }
+            .map_err(|_| Error::FrameUnavailable)?
+            != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+    if pool
+        .release_claim_reference(claim.handle, owner)
+        .map_err(|_| Error::FrameUnavailable)?
+        != 0
+    {
+        return Err(Error::VerificationFailed);
+    }
+    let ticket = pool
+        .begin_quarantine(claim.handle, owner)
+        .map_err(|_| Error::FrameUnavailable)?;
+    unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+        .map_err(|_| Error::FrameUnavailable)
+}
+
+/// QEMU proof for a bounded dynamic buffer lifetime: allocate and zero a page,
+/// copy through its user VA, prove a live copy pin blocks unmapping, remove
+/// and recycle it, then reject a stale descriptor after the same VA is reused.
+///
+/// # Safety
+/// Kernel root active, interrupts disabled, and only the bootstrap CPU can
+/// mutate these process roots or the frame ledger.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FramePool<256>) -> bool {
+    use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
+
+    for process in [Process::First, Process::Second] {
+        let pages_before = match pool.status() {
+            Ok(status) => status.available_pages,
+            Err(_) => return false,
+        };
+        let claims_before = match pool.claim_count() {
+            Ok(count) => count,
+            Err(_) => return false,
+        };
+        let table_index = match process {
+            Process::First => 2,
+            Process::Second => 5,
+        };
+        let Some(tables) = process_table_frames() else {
+            return false;
+        };
+        let rollback_result = unsafe { map_dynamic_user_buffer_page_inner(process, pool, true) };
+        let dynamic_claim_empty = match process {
+            Process::First => unsafe { FIRST_DYNAMIC_CLAIM }.is_none(),
+            Process::Second => unsafe { SECOND_DYNAMIC_CLAIM }.is_none(),
+        };
+        let pages_unchanged = pool
+            .status()
+            .is_ok_and(|status| status.available_pages == pages_before);
+        let claims_unchanged = pool.claim_count().is_ok_and(|count| count == claims_before);
+        if rollback_result != Err(Error::SetupFailureInjected)
+            || !pages_unchanged
+            || !claims_unchanged
+            || !dynamic_claim_empty
+            || read_registered_table_word(tables[table_index], 2) != Some(0)
+        {
+            return false;
+        }
+        let original = match unsafe { map_dynamic_user_buffer_page(process, pool) } {
+            Ok(mapping) => mapping,
+            Err(_) => return false,
+        };
+        if unsafe { teardown_private_pages(pool) } != Err(Error::ProcessMappingsStillActive) {
+            return false;
+        }
+        let original_claim = claim_for_data_frame(process, original.physical_address);
+        let (Some(original_claim), Some(primary)) = (
+            original_claim,
+            match process {
+                Process::First => unsafe { FIRST_CLAIM },
+                Process::Second => unsafe { SECOND_CLAIM },
+            },
+        ) else {
+            return false;
+        };
+        if original_claim.span.start != original.physical_address {
+            return false;
+        }
+        let payload: [u8; 31] = core::array::from_fn(|index| (index as u8).wrapping_mul(37) ^ 0xa6);
+        let mut observed = [0u8; 31];
+        if unsafe {
+            crate::user_copy::copy_from_process(process, original.virtual_address, &mut observed)
+        }
+        .is_err()
+            || observed.iter().any(|byte| *byte != 0)
+        {
+            return false;
+        }
+        if unsafe {
+            crate::user_copy::copy_to_process(process, original.virtual_address + 19, &payload)
+        }
+        .is_err()
+            || unsafe {
+                crate::user_copy::copy_from_process(
+                    process,
+                    original.virtual_address + 19,
+                    &mut observed,
+                )
+            }
+            .is_err()
+            || observed != payload
+        {
+            return false;
+        }
+        let range = match validate_user_range(original.virtual_address, 1) {
+            Ok(range) => range,
+            Err(_) => return false,
+        };
+        let pages = match unsafe { walk_process_user_range(process, range, UserAccess::Read) } {
+            Ok(pages) => pages,
+            Err(_) => return false,
+        };
+        let pin = match pin_user_pages(process, &pages) {
+            Ok(pin) => pin,
+            Err(_) => return false,
+        };
+        if unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }
+            != Err(Error::VerificationFailed)
+        {
+            return false;
+        }
+        drop(pin);
+        if unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }.is_err()
+            || claim_for_data_frame(process, original.physical_address).is_some()
+        {
+            return false;
+        }
+        let recycled = match unsafe { map_dynamic_user_buffer_page(process, pool) } {
+            Ok(mapping) => mapping,
+            Err(_) => return false,
+        };
+        let recycled_claim = match claim_for_data_frame(process, recycled.physical_address) {
+            Some(claim) => claim,
+            None => return false,
+        };
+        observed.fill(0xff);
+        if unsafe {
+            crate::user_copy::copy_from_process(process, recycled.virtual_address, &mut observed)
+        }
+        .is_err()
+            || observed.iter().any(|byte| *byte != 0)
+        {
+            return false;
+        }
+        if recycled.virtual_address != original.virtual_address
+            || (recycled.physical_address == original.physical_address
+                && recycled_claim.handle.generation() != original_claim.handle.generation() + 1)
+            || unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }
+                != Err(Error::VerificationFailed)
+        {
+            return false;
+        }
+        if unsafe { unmap_dynamic_user_buffer_page(process, recycled, pool) }.is_err()
+            || primary.span.start == recycled.physical_address
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Test-only: make the QEMU harness code/stack subtree visible in *only*
@@ -1621,6 +2011,9 @@ unsafe fn map_private_pages_inner(
         if MAPPED.load(Ordering::Acquire) {
             return Err(Error::AlreadyMapped);
         }
+        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
+            return Err(Error::ProcessMappingsStillActive);
+        }
         let (first_root, first_slot) =
             process_root(Process::First).ok_or(Error::KernelUnavailable)?;
         let (second_root, second_slot) =
@@ -1960,6 +2353,8 @@ unsafe fn rollback_private_claims(
     unsafe {
         FIRST_CLAIM = None;
         SECOND_CLAIM = None;
+        FIRST_DYNAMIC_CLAIM = None;
+        SECOND_DYNAMIC_CLAIM = None;
         PROCESS_TABLE_CLAIMS = [None; 6];
     }
     MAPPED.store(false, Ordering::Release);
@@ -1985,6 +2380,9 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
+        }
+        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
+            return Err(Error::ProcessMappingsStillActive);
         }
         let pages_before = pool
             .status()
@@ -2160,6 +2558,8 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         unsafe {
             FIRST_CLAIM = None;
             SECOND_CLAIM = None;
+            FIRST_DYNAMIC_CLAIM = None;
+            SECOND_DYNAMIC_CLAIM = None;
             PROCESS_TABLE_CLAIMS = [None; 6];
         }
         MAPPED.store(false, Ordering::Release);
