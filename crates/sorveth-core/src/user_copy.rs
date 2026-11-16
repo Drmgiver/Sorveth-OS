@@ -35,6 +35,7 @@ pub enum CopyInError {
     KernelRootUnavailable,
     WrongCpuContext,
     UnmappedPhysicalSource,
+    MappingPinUnavailable,
 }
 
 /// Copy into an already valid, kernel-owned destination slice.
@@ -68,6 +69,8 @@ pub unsafe fn copy_from_process(
     let owner = process_roots::mapped_page(process).ok_or(CopyInError::UnmappedPhysicalSource)?;
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Read)
         .map_err(CopyInError::InvalidMapping)?;
+    let _pins = process_roots::pin_user_pages(process, &pages)
+        .map_err(|_| CopyInError::MappingPinUnavailable)?;
 
     // All physical spans are checked against this permanently owned frame
     // before any destination byte changes. The frame's physical address is
@@ -77,7 +80,7 @@ pub unsafe fn copy_from_process(
             range,
             &pages,
             destination,
-            |page| page == owner.physical_address,
+            |page| process_roots::owns_data_frame(process, page),
             |physical_address, out| unsafe {
                 let offset = (physical_address - owner.physical_address) as usize;
                 ptr::copy(window.add(offset), out.as_mut_ptr(), out.len());
@@ -96,6 +99,7 @@ pub enum CopyOutError {
     KernelRootUnavailable,
     WrongCpuContext,
     UnmappedPhysicalDestination,
+    MappingPinUnavailable,
 }
 
 /// Copy trusted kernel bytes to the chosen process's writable data page.
@@ -134,13 +138,15 @@ pub unsafe fn copy_to_process(
     // This explicitly requests write permission at *every* page-table level.
     let pages = process_roots::walk_process_user_range(process, range, UserAccess::Write)
         .map_err(CopyOutError::InvalidMapping)?;
+    let _pins = process_roots::pin_user_pages(process, &pages)
+        .map_err(|_| CopyOutError::MappingPinUnavailable)?;
 
     let result = crate::root::with_physical_window(owner.physical_address, |window| {
         copy_to_resolved(
             range,
             &pages,
             source,
-            |page| page == owner.physical_address,
+            |page| process_roots::owns_data_frame(process, page),
             |physical_address, bytes| unsafe {
                 let offset = (physical_address - owner.physical_address) as usize;
                 ptr::copy_nonoverlapping(bytes.as_ptr(), window.add(offset), bytes.len());

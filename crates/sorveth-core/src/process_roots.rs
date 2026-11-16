@@ -897,6 +897,99 @@ pub struct Mapping {
     pub physical_address: u64,
 }
 
+/// Temporary generation-bound references held while a kernel copy consumes
+/// a page-table snapshot. Teardown requires each process data claim to have
+/// only its persistent owner reference, so an outstanding copy pin blocks it.
+pub(crate) struct UserPagePins {
+    process: Process,
+    claims: [Option<sorveth_frames::ClaimHandle>;
+        sorveth_paging::user_walk::MAX_RESOLVED_PAGES],
+    count: usize,
+}
+
+impl Drop for UserPagePins {
+    fn drop(&mut self) {
+        let owner = match self.process {
+            Process::First => sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+            Process::Second => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+        };
+        for claim in self.claims[..self.count].iter().flatten() {
+            if crate::FRAME_POOL
+                .release_claim_reference(*claim, owner)
+                .is_err()
+            {
+                crate::halt_forever();
+            }
+        }
+    }
+}
+
+/// Pin every frame resolved for one process before a copy accesses any of
+/// them. The returned guard releases all references on every exit path.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn pin_user_pages(
+    process: Process,
+    pages: &sorveth_paging::user_walk::ResolvedPages,
+) -> Result<UserPagePins, ()> {
+    if !MAPPED.load(Ordering::Acquire) || pages.page_count() == 0 {
+        return Err(());
+    }
+    let (claim, owner) = match process {
+        Process::First => (
+            unsafe { FIRST_CLAIM }.ok_or(())?,
+            sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+        ),
+        Process::Second => (
+            unsafe { SECOND_CLAIM }.ok_or(())?,
+            sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+        ),
+    };
+    let mut pins = UserPagePins {
+        process,
+        claims: [None; sorveth_paging::user_walk::MAX_RESOLVED_PAGES],
+        count: 0,
+    };
+    for index in 0..pages.page_count() {
+        let frame = pages.physical_page(index).ok_or(())?;
+        if frame != claim.span.start {
+            return Err(());
+        }
+        let record = crate::FRAME_POOL
+            .claim_record_at(claim.handle.slot() as usize)
+            .map_err(|_| ())?
+            .ok_or(())?;
+        if record.generation() != claim.handle.generation()
+            || record.owner() != owner
+            || record.span() != claim.span
+            || record.references() == 0
+            || record.mappings() != 1
+            || record.is_quarantined()
+        {
+            return Err(());
+        }
+        crate::FRAME_POOL
+            .retain_claim(claim.handle, owner)
+            .map_err(|_| ())?;
+        pins.claims[pins.count] = Some(claim.handle);
+        pins.count += 1;
+    }
+    Ok(pins)
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
+    if !MAPPED.load(Ordering::Acquire) || frame == 0 || frame & 4095 != 0 {
+        return false;
+    }
+    let claim = match process {
+        Process::First => unsafe { FIRST_CLAIM },
+        Process::Second => unsafe { SECOND_CLAIM },
+    };
+    claim.is_some_and(|claim| {
+        claim.span.start == frame && crate::FRAME_POOL.owns_frame(frame).unwrap_or(false)
+    })
+}
+
 #[cfg(target_arch = "x86_64")]
 fn user_base(slot: u16) -> Option<u64> {
     if (1..256).contains(&slot) {
