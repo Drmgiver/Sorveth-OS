@@ -197,7 +197,9 @@ recoverable faults remain pending. Evidence: [run
 
 **K.4e accepted:** each bootstrap process can now allocate and map one
 independent zeroed user-buffer page at the next private leaf, copy through
-that page, and explicitly unmap it. Per-page generation claims participate
+that page, and explicitly unmap it. A forced failure after PTE publication
+proves setup rollback restores the free-page and claim counts. Per-page
+generation claims participate
 in copy pinning; active pins block unmap, process teardown refuses to discard
 live dynamic mappings, TLB translations are flushed before claim release, and
 the frame is quarantined, zeroed, and recycled. QEMU proves remapping and
