@@ -502,7 +502,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
         crate::halt_forever();
     }
     crate::serial::write_line(
-        "SORVETH M2-K.4e: dynamic user buffer copied, pinned, unmapped, and recycled",
+        "SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified",
     );
     if !unsafe { crate::process_roots::verify_copy_pin_blocks_teardown(&crate::FRAME_POOL) } {
         crate::serial::write_line("FATAL: user-copy frame pin did not block teardown");
