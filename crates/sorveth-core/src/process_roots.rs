@@ -902,8 +902,7 @@ pub struct Mapping {
 /// only its persistent owner reference, so an outstanding copy pin blocks it.
 pub(crate) struct UserPagePins {
     process: Process,
-    claims: [Option<sorveth_frames::ClaimHandle>;
-        sorveth_paging::user_walk::MAX_RESOLVED_PAGES],
+    claims: [Option<sorveth_frames::ClaimHandle>; sorveth_paging::user_walk::MAX_RESOLVED_PAGES],
     count: usize,
 }
 
