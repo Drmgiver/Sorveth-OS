@@ -240,12 +240,8 @@ pub unsafe fn verify_copy_to_user() -> bool {
             return false;
         }
         let mut crossing_observed = [0u8; 8];
-        let crossing_matched = copy_from_process(
-            process,
-            crossing_address,
-            &mut crossing_observed,
-        )
-        .is_ok()
+        let crossing_matched = copy_from_process(process, crossing_address, &mut crossing_observed)
+            .is_ok()
             && crossing_observed == crossing_pattern
             && process_roots::read_process_frame_byte(process, (PAGE_BYTES - 4) as usize)
                 == Some(crossing_pattern[0])
@@ -402,8 +398,11 @@ pub unsafe fn verify_copy_from_user() -> bool {
         // Preflight the entire buffer. The first byte is at the end of the
         // second mapped page, but the next lands in an absent third page.
         let mut crossing = [0xb6u8; 2];
-        if copy_from_process(process, own.virtual_address + 2 * PAGE_BYTES - 1, &mut crossing)
-            != Err(CopyInError::InvalidMapping(WalkError::MissingMapping))
+        if copy_from_process(
+            process,
+            own.virtual_address + 2 * PAGE_BYTES - 1,
+            &mut crossing,
+        ) != Err(CopyInError::InvalidMapping(WalkError::MissingMapping))
             || crossing != [0xb6; 2]
         {
             return false;

@@ -961,7 +961,7 @@ pub(crate) fn pin_user_pages(
             || record.owner() != owner
             || record.span() != claim.span
             || record.references() == 0
-            || record.mappings() != 1
+            || record.mappings() != 2
             || record.is_quarantined()
         {
             return Err(());
@@ -1030,7 +1030,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
         Some(record) => record,
         None => return false,
     };
-    if record.references() != 3 || record.mappings() != 1 {
+    if record.references() != 3 || record.mappings() != 2 {
         return false;
     }
     if unsafe { teardown_private_pages(pool) } != Err(Error::VerificationFailed)
@@ -1657,7 +1657,7 @@ unsafe fn map_private_pages_inner(
             match pool.claim_unmapped_for(1, sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES) {
                 Ok(claim) => claims[index + 2] = Some(claim),
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, [0; 6])? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, [0; 6])? };
                     return Err(Error::FrameUnavailable);
                 }
             }
@@ -1665,7 +1665,7 @@ unsafe fn map_private_pages_inner(
         let tables = core::array::from_fn(|index| claims[index + 2].unwrap().span.start);
         for (index, table) in tables.iter().enumerate() {
             if *table == 0 || *table & 4095 != 0 || tables[..index].contains(table) {
-                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                 return Err(Error::PageTableStorageUnavailable);
             }
         }
@@ -1681,11 +1681,11 @@ unsafe fn map_private_pages_inner(
             match initialized {
                 Ok(true) => {}
                 Ok(false) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::VerificationFailed);
                 }
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::PageTableStorageUnavailable);
                 }
             }
@@ -1695,7 +1695,7 @@ unsafe fn map_private_pages_inner(
         {
             Ok(claim) => Some(claim),
             Err(_) => {
-                unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                 return Err(Error::FrameUnavailable);
             }
         };
@@ -1703,13 +1703,13 @@ unsafe fn map_private_pages_inner(
             match pool.claim_unmapped_for(2, sorveth_frames::FrameOwner::PROCESS_SECOND_DATA) {
                 Ok(claim) => Some(claim),
                 Err(_) => {
-                    unsafe { rollback_private_claims(pool, claims, [false; 8], roots, tables)? };
+                    unsafe { rollback_private_claims(pool, claims, [0; 8], roots, tables)? };
                     return Err(Error::FrameUnavailable);
                 }
             };
         let claim_a = claims[0].unwrap();
         let claim_b = claims[1].unwrap();
-        let mut mapping_refs = [false; 8];
+        let mut mapping_refs = [0u8; 8];
         let result = (|| -> Result<(), Error> {
             let frame_a = claim_a.span.start;
             let frame_b = claim_b.span.start;
@@ -1761,30 +1761,34 @@ unsafe fn map_private_pages_inner(
                 {
                     return Err(Error::VerificationFailed);
                 }
-                mapping_refs[index + 2] = true;
+                mapping_refs[index + 2] = 1;
             }
-            if pool
-                .retain_mapping(
-                    claim_a.handle,
-                    sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
-                )
-                .map_err(|_| Error::FrameUnavailable)?
-                != 1
-            {
-                return Err(Error::VerificationFailed);
+            for expected in 1..=2 {
+                if pool
+                    .retain_mapping(
+                        claim_a.handle,
+                        sorveth_frames::FrameOwner::PROCESS_FIRST_DATA,
+                    )
+                    .map_err(|_| Error::FrameUnavailable)?
+                    != expected
+                {
+                    return Err(Error::VerificationFailed);
+                }
+                mapping_refs[0] += 1;
             }
-            mapping_refs[0] = true;
-            if pool
-                .retain_mapping(
-                    claim_b.handle,
-                    sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
-                )
-                .map_err(|_| Error::FrameUnavailable)?
-                != 1
-            {
-                return Err(Error::VerificationFailed);
+            for expected in 1..=2 {
+                if pool
+                    .retain_mapping(
+                        claim_b.handle,
+                        sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
+                    )
+                    .map_err(|_| Error::FrameUnavailable)?
+                    != expected
+                {
+                    return Err(Error::VerificationFailed);
+                }
+                mapping_refs[1] += 1;
             }
-            mapping_refs[1] = true;
             if inject_failure_after_staging {
                 return Err(Error::SetupFailureInjected);
             }
@@ -1890,7 +1894,7 @@ unsafe fn map_private_pages_inner(
 unsafe fn rollback_private_claims(
     pool: &sorveth_frames::FramePool<256>,
     claims: [Option<sorveth_frames::OwnedSpan>; 8],
-    mapping_refs: [bool; 8],
+    mapping_refs: [u8; 8],
     roots: [(u64, u16); 2],
     tables: [u64; 6],
 ) -> Result<(), Error> {
@@ -1932,12 +1936,13 @@ unsafe fn rollback_private_claims(
             1 => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
             _ => sorveth_frames::FrameOwner::PROCESS_PAGE_TABLES,
         };
-        if mapping_refs[index]
-            && unsafe { pool.release_mapping(claim.handle, owner) }
+        for expected_remaining in (0..mapping_refs[index]).rev() {
+            if unsafe { pool.release_mapping(claim.handle, owner) }
                 .map_err(|_| Error::FrameUnavailable)?
-                != 0
-        {
-            return Err(Error::VerificationFailed);
+                != expected_remaining as u32
+            {
+                return Err(Error::VerificationFailed);
+            }
         }
         if pool
             .release_claim_reference(claim.handle, owner)
@@ -2009,8 +2014,8 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             || record_b.span() != claim_b.span
             || record_a.references() != 1
             || record_b.references() != 1
-            || record_a.mappings() != 1
-            || record_b.mappings() != 1
+            || record_a.mappings() != 2
+            || record_b.mappings() != 2
             || record_a.is_quarantined()
             || record_b.is_quarantined()
             || checked_process_root(Process::First).is_none()
@@ -2081,7 +2086,13 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
 
         if unsafe { pool.release_mapping(claim_a.handle, owner_a) }
             .map_err(|_| Error::FrameUnavailable)?
-            != 0
+            != 1
+            || unsafe { pool.release_mapping(claim_a.handle, owner_a) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+            || unsafe { pool.release_mapping(claim_b.handle, owner_b) }
+                .map_err(|_| Error::FrameUnavailable)?
+                != 1
             || unsafe { pool.release_mapping(claim_b.handle, owner_b) }
                 .map_err(|_| Error::FrameUnavailable)?
                 != 0

@@ -723,6 +723,8 @@ M2-K.1 remains partial; the inactive candidate still needs generalized non-image
 - Updated process ownership checks and copy pins to admit only frames inside
   the process's generation-bound data span. Teardown remains blocked while
   either page of an in-flight bounded copy is pinned.
+- The frame ledger records and releases one mapping reference for each of the
+  two installed user leaves per process.
 - Copy-in and copy-out now map each resolved physical page through a separate
   scoped frame-window alias. This avoids relying on physical contiguity while
   copying page fragments.

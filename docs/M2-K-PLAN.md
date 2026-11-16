@@ -165,8 +165,9 @@ run 43817644273](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43817644273
 **K.4b in progress:** the QEMU bootstrap process mappings now cover two
 adjacent user data pages. Copy-in and copy-out resolve and pin every page,
 then map each physical frame through its own scoped supervisor window. The
-live QEMU checks exercise copies that straddle the leaf boundary and verify
-the second PTE, its data, and pin-protected teardown. This remains a fixed
+ledger counts a mapping reference for each leaf. The live QEMU checks
+exercise copies that straddle the leaf boundary and verify the second PTE,
+its data, and pin-protected teardown. This remains a fixed
 two-page single-CPU proof; dynamic user mappings and recoverable faults are
 not implemented. Host, UEFI, and QEMU acceptance are still required.
 
