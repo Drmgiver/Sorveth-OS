@@ -148,7 +148,7 @@ unsafe fn process_word(physical: u64) -> Option<u64> {
         .ok()
 }
 
-/// Verify *all* 4096 bytes of both physical process data pages and
+/// Verify all 8192 bytes of both physical process data pages and
 /// revalidate the live capability grants and page-table ownership. This
 /// is run before AND after every real CPL3 syscall, including failures.
 ///

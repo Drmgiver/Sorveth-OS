@@ -173,6 +173,18 @@ UEFI, ABI, formatting, normal-root QEMU, independent-root QEMU, and interactive
 monitor gates passed on the accepted branch. Evidence: [run
 43911207398](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43911207398).
 
+**K.4c accepted:** the ring-3 INT80 probe now performs authorized 256-byte
+copy-out and copy-in operations starting 128 bytes before the user-page
+boundary. Both operations cross into the second mapped page. The integrity
+oracle hashes the full 8 KiB span after every syscall, includes both the
+initial eight-byte write and boundary buffer in its expected image, then
+verifies and restores the original span at completion. The matrix passed for
+both A/B process directions on normal and independent Sorveth roots, along
+with host, UEFI, ABI, formatting, and monitor checks. This remains a fixed
+two-page single-CPU proof; dynamic user mappings and recoverable faults remain
+pending. Evidence: [run
+43920506854](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43920506854).
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified
