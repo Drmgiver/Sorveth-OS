@@ -123,7 +123,7 @@ unsafe fn span_checksum(physical: u64, replacement: Option<(usize, &[u8])>) -> O
 }
 
 unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> Option<u64> {
-    span_checksum(physical, override_word.map(|word| (0, &word[..])))
+    span_checksum(physical, override_word.as_ref().map(|word| (0, &word[..])))
 }
 
 fn boundary_pattern() -> [u8; BOUNDARY_COPY_BYTES] {
