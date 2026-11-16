@@ -207,7 +207,7 @@ stale-descriptor rejection for both process roots, with the smoke script
 requiring the acceptance marker. This is one dynamic page per bootstrap
 process on one CPU; arbitrary user mappings and recoverable faults remain
 pending. Evidence: [run
-43933454669](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43933454669).
+43934708955](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43934708955).
 
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
