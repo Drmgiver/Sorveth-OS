@@ -996,9 +996,7 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
 /// Single bootstrap CPU, kernel CR3 active, IRQs masked, and no concurrent
 /// process mapping or frame-ledger changes.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn verify_copy_pin_blocks_teardown(
-    pool: &sorveth_frames::FramePool<256>,
-) -> bool {
+pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<256>) -> bool {
     use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
 
     let process = Process::First;
