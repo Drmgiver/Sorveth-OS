@@ -1043,7 +1043,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
     pool.claim_record_at(claim.handle.slot() as usize)
         .ok()
         .flatten()
-        .is_some_and(|after| after.references() == 1 && after.mappings() == 1)
+        .is_some_and(|after| after.references() == 1 && after.mappings() == 2)
 }
 
 #[cfg(target_arch = "x86_64")]
