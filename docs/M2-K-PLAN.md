@@ -140,6 +140,14 @@ still select either address space; retiring those roots safely requires
 scheduler-reference retirement and remains future work. Evidence: [feature run
 41545934932](https://github.com/Drmgiver/Sorveth-OS/actions/runs/41545934932).
 
+**K.3e in progress:** scheduler bindings now retain their process-root claim,
+and each scoped CR3 activation holds a second temporary reference until the
+kernel root is restored. The QEMU scheduler checks the ledger counts as tasks
+spawn, switch, and exit. On non-ring-3 boots, the final process mappings are
+removed before both unreferenced PML4 roots are quarantined, zeroed, and
+returned to the allocator. This remains a serialized single-CPU bootstrap
+proof; SMP shootdown and general process teardown remain pending.
+
 **Still pending:** general K.3 creation and teardown, K.4–K.5, production process
 scheduling, general physical page reclamation, and safe arbitrary user
 mappings. K.1's independent root is a QEMU-verified bootstrap mapping set,

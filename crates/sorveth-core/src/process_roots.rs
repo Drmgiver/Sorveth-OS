@@ -125,6 +125,8 @@ pub enum Error {
     InheritedTableInventoryFailed,
     InheritedTableInventoryFull,
     InheritedRootAncestryMismatch,
+    RootReferenceUnavailable,
+    ProcessMappingsStillActive,
 }
 
 /// Bounded facts about the inherited page-table ancestry reachable from
@@ -343,6 +345,187 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
         None
     } else {
         Some((root, slot as u16))
+    }
+}
+
+/// Retain one scheduler binding or active CR3 use of a process root.
+///
+/// The original claim reference belongs to the address-space record itself;
+/// these additional references prevent its ledger claim from being retired
+/// while a task can select it or the CPU is using it.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn retain_root_reference(process: Process) -> Result<(), Error> {
+    if process_root(process).is_none() {
+        return Err(Error::KernelUnavailable);
+    }
+    let index = match process {
+        Process::First => 0,
+        Process::Second => 1,
+    };
+    let claims = unsafe { PROCESS_ROOT_CLAIMS };
+    let claim = claims[index].ok_or(Error::RootReferenceUnavailable)?;
+    crate::FRAME_POOL
+        .retain_claim(claim.handle, sorveth_frames::FrameOwner::PROCESS_ROOTS)
+        .map(|_| ())
+        .map_err(|_| Error::RootReferenceUnavailable)
+}
+
+/// Drop one scheduler binding or active CR3 reference while preserving the
+/// address-space record's original owner reference.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn release_root_reference(process: Process) -> Result<(), Error> {
+    let index = match process {
+        Process::First => 0,
+        Process::Second => 1,
+    };
+    let claims = unsafe { PROCESS_ROOT_CLAIMS };
+    let claim = claims[index].ok_or(Error::RootReferenceUnavailable)?;
+    let record = crate::FRAME_POOL
+        .claim_record_at(claim.handle.slot() as usize)
+        .map_err(|_| Error::RootReferenceUnavailable)?
+        .ok_or(Error::RootReferenceUnavailable)?;
+    if record.generation() != claim.handle.generation()
+        || record.owner() != sorveth_frames::FrameOwner::PROCESS_ROOTS
+        || record.span() != claim.span
+        || record.references() <= 1
+        || record.mappings() != 0
+        || record.is_quarantined()
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
+    crate::FRAME_POOL
+        .release_claim_reference(claim.handle, sorveth_frames::FrameOwner::PROCESS_ROOTS)
+        .map_err(|_| Error::RootReferenceUnavailable)?;
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn root_reference_count(process: Process) -> Option<u32> {
+    let index = match process {
+        Process::First => 0,
+        Process::Second => 1,
+    };
+    let claims = unsafe { PROCESS_ROOT_CLAIMS };
+    let claim = claims[index]?;
+    crate::FRAME_POOL
+        .claim_record_at(claim.handle.slot() as usize)
+        .ok()?
+        .filter(|record| {
+            record.generation() == claim.handle.generation()
+                && record.owner() == sorveth_frames::FrameOwner::PROCESS_ROOTS
+                && record.span() == claim.span
+                && !record.is_quarantined()
+        })
+        .map(|record| record.references())
+}
+
+/// Retire both bootstrap roots after all address-space mappings have been
+/// removed, all scheduler bindings have exited, and kernel CR3 is active.
+/// The two root frames are then quarantined, zeroed, and returned to the
+/// allocator through the same generation-checked ledger used for data pages.
+///
+/// # Safety
+/// One bootstrap CPU, IRQs masked, kernel CR3 active, no scheduler binding or
+/// active CR3 reference can select either root again.
+pub unsafe fn retire_process_roots(
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if !READY.load(Ordering::Acquire) {
+            return Err(Error::AlreadyPrepared);
+        }
+        let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+        let active: u64;
+        let flags: u64;
+        asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+        asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+        if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+            return Err(Error::KernelUnavailable);
+        }
+        let claims = unsafe { PROCESS_ROOT_CLAIMS };
+        let roots = [
+            FIRST_ROOT.load(Ordering::Acquire),
+            SECOND_ROOT.load(Ordering::Acquire),
+        ];
+        if claims.iter().any(Option::is_none)
+            || roots[0] == 0
+            || roots[1] == 0
+            || roots[0] == roots[1]
+        {
+            return Err(Error::VerificationFailed);
+        }
+        let pages_before = pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages;
+        let claims_before = pool.claim_count().map_err(|_| Error::FrameUnavailable)?;
+        for (index, claim) in claims.iter().flatten().enumerate() {
+            let record = pool
+                .claim_record_at(claim.handle.slot() as usize)
+                .map_err(|_| Error::FrameUnavailable)?
+                .ok_or(Error::FrameUnavailable)?;
+            if claim.span.start != roots[index]
+                || record.generation() != claim.handle.generation()
+                || record.owner() != sorveth_frames::FrameOwner::PROCESS_ROOTS
+                || record.span() != claim.span
+                || record.references() != 1
+                || record.mappings() != 0
+                || record.is_quarantined()
+            {
+                return Err(Error::RootReferenceUnavailable);
+            }
+        }
+        if MAPPED.load(Ordering::Acquire) {
+            return Err(Error::ProcessMappingsStillActive);
+        }
+
+        // Disable future task resolution before dropping the address-space
+        // owner's claim references. The kernel root is already active.
+        READY.store(false, Ordering::Release);
+        FIRST_ROOT.store(0, Ordering::Release);
+        SECOND_ROOT.store(0, Ordering::Release);
+        FIRST_SLOT.store(0, Ordering::Release);
+        SECOND_SLOT.store(0, Ordering::Release);
+        unsafe { PROCESS_ROOT_CLAIMS = [None; 2] };
+
+        for claim in claims.into_iter().flatten() {
+            let owner = sorveth_frames::FrameOwner::PROCESS_ROOTS;
+            if pool
+                .release_claim_reference(claim.handle, owner)
+                .map_err(|_| Error::FrameUnavailable)?
+                != 0
+            {
+                return Err(Error::RootReferenceUnavailable);
+            }
+            let ticket = pool
+                .begin_quarantine(claim.handle, owner)
+                .map_err(|_| Error::FrameUnavailable)?;
+            unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
+                .map_err(|_| Error::FrameUnavailable)?;
+        }
+        if pool
+            .status()
+            .map_err(|_| Error::FrameUnavailable)?
+            .available_pages
+            != pages_before
+                .checked_add(2)
+                .ok_or(Error::VerificationFailed)?
+            || pool.claim_count().map_err(|_| Error::FrameUnavailable)?
+                != claims_before
+                    .checked_sub(2)
+                    .ok_or(Error::VerificationFailed)?
+            || process_root(Process::First).is_some()
+            || process_root(Process::Second).is_some()
+        {
+            return Err(Error::VerificationFailed);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::Unsupported)
     }
 }
 

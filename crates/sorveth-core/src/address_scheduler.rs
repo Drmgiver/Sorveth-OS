@@ -28,6 +28,7 @@ pub enum Error {
     HardwareMismatch,
     BlockedTask,
     InvalidRoot,
+    RootReferenceUnavailable,
 }
 
 impl From<TaskError> for Error {
@@ -51,10 +52,11 @@ struct AuthorizedSpace {
 /// kernel/stack mappings; one CPU, interrupts disabled, no user preemption.
 struct KernelRootGuard {
     kernel: u64,
+    process: Process,
 }
 
 impl KernelRootGuard {
-    unsafe fn enter(kernel: u64, target: u64) -> Result<Self, Error> {
+    unsafe fn enter(kernel: u64, target: u64, process: Process) -> Result<Self, Error> {
         if kernel == 0
             || target == 0
             || target == kernel
@@ -68,8 +70,13 @@ impl KernelRootGuard {
         if active & CR3_ADDRESS_MASK != kernel {
             return Err(Error::HardwareMismatch);
         }
+        if process_roots::process_root(process).map(|(root, _)| root) != Some(target) {
+            return Err(Error::InvalidRoot);
+        }
+        process_roots::retain_root_reference(process)
+            .map_err(|_| Error::RootReferenceUnavailable)?;
         asm!("mov cr3, {}", in(reg) target, options(nostack, preserves_flags));
-        Ok(Self { kernel })
+        Ok(Self { kernel, process })
     }
 }
 
@@ -80,6 +87,7 @@ impl Drop for KernelRootGuard {
         unsafe {
             asm!("mov cr3, {}", in(reg) self.kernel, options(nostack, preserves_flags));
         }
+        let _ = process_roots::release_root_reference(self.process);
     }
 }
 
@@ -88,6 +96,7 @@ impl Drop for KernelRootGuard {
 struct AddressScheduler<const N: usize> {
     tasks: Scheduler<N>,
     bindings: [Option<(TaskId, Process)>; N],
+    owns_root_references: bool,
 }
 
 impl<const N: usize> AddressScheduler<N> {
@@ -95,6 +104,16 @@ impl<const N: usize> AddressScheduler<N> {
         Self {
             tasks: Scheduler::new(),
             bindings: [None; N],
+            owns_root_references: true,
+        }
+    }
+
+    #[cfg(test)]
+    const fn new_without_root_references() -> Self {
+        Self {
+            tasks: Scheduler::new(),
+            bindings: [None; N],
+            owns_root_references: false,
         }
     }
 
@@ -102,12 +121,38 @@ impl<const N: usize> AddressScheduler<N> {
         if self.bindings.iter().flatten().any(|(_, p)| *p == process) {
             return Err(Error::DuplicateProcess);
         }
-        let id = self.tasks.spawn(object)?;
+        if self.owns_root_references {
+            process_roots::retain_root_reference(process)
+                .map_err(|_| Error::RootReferenceUnavailable)?;
+        }
+        let id = match self.tasks.spawn(object) {
+            Ok(id) => id,
+            Err(error) => {
+                if self.owns_root_references {
+                    let _ = process_roots::release_root_reference(process);
+                }
+                return Err(error.into());
+            }
+        };
         let slot = self
             .bindings
             .get_mut(id.slot() as usize)
-            .ok_or(Error::MissingBinding)?;
+            .ok_or(Error::MissingBinding);
+        let slot = match slot {
+            Ok(slot) => slot,
+            Err(error) => {
+                let _ = self.tasks.exit(id);
+                if self.owns_root_references {
+                    let _ = process_roots::release_root_reference(process);
+                }
+                return Err(error);
+            }
+        };
         if slot.is_some() {
+            let _ = self.tasks.exit(id);
+            if self.owns_root_references {
+                let _ = process_roots::release_root_reference(process);
+            }
             return Err(Error::MissingBinding);
         }
         *slot = Some((id, process));
@@ -165,9 +210,13 @@ impl<const N: usize> AddressScheduler<N> {
     }
 
     fn exit(&mut self, id: TaskId) -> Result<(), Error> {
-        self.lookup(id)?;
+        let process = self.lookup(id)?;
         self.tasks.exit(id)?;
         self.bindings[id.slot() as usize] = None;
+        if self.owns_root_references {
+            process_roots::release_root_reference(process)
+                .map_err(|_| Error::RootReferenceUnavailable)?;
+        }
         Ok(())
     }
 }
@@ -213,6 +262,16 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     let mut scheduler = AddressScheduler::<2>::new();
     let a = scheduler.spawn(ObjectId(0x1_301), Process::First)?;
     let b = scheduler.spawn(ObjectId(0x1_302), Process::Second)?;
+    if process_roots::root_reference_count(Process::First) != Some(2)
+        || process_roots::root_reference_count(Process::Second) != Some(2)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
+    if unsafe { process_roots::retire_process_roots(&crate::FRAME_POOL) }
+        != Err(process_roots::Error::RootReferenceUnavailable)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
     let mut expected_a =
         process_roots::read_process_frame_word(Process::First).ok_or(Error::HardwareMismatch)?;
     let mut expected_b =
@@ -272,7 +331,10 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
             process_roots::read_process_frame_word(other_process).ok_or(Error::HardwareMismatch)?;
         let next_value = expected_value ^ SENTINEL_SALT ^ ((round as u64) + 1);
 
-        let process_guard = KernelRootGuard::enter(kernel, authorized.root)?;
+        let process_guard = KernelRootGuard::enter(kernel, authorized.root, authorized.process)?;
+        if process_roots::root_reference_count(selected_process) != Some(3) {
+            return Err(Error::RootReferenceUnavailable);
+        }
         asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         // These addresses were verified present by M2-I.2. Each access
         // takes place under the scheduler-selected process root.
@@ -291,6 +353,7 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         asm!("mov {}, cr3", out(reg) observed, options(nomem, nostack, preserves_flags));
         if !stored_correct
             || observed & CR3_ADDRESS_MASK != kernel
+            || process_roots::root_reference_count(selected_process) != Some(2)
             || process_roots::read_process_frame_word(selected_process) != Some(next_value)
             || process_roots::read_process_frame_word(other_process) != Some(other_before)
         {
@@ -317,6 +380,16 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
     if scheduler.select_next()?.is_some() || scheduler.lookup(a).is_ok() {
         return Err(Error::IncorrectSelection);
     }
+    if process_roots::root_reference_count(Process::First) != Some(1)
+        || process_roots::root_reference_count(Process::Second) != Some(1)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
+    if unsafe { process_roots::retire_process_roots(&crate::FRAME_POOL) }
+        != Err(process_roots::Error::ProcessMappingsStillActive)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
     Ok(())
 }
 
@@ -342,6 +415,11 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     let mut scheduler = AddressScheduler::<2>::new();
     let old = scheduler.spawn(ObjectId(0x1_401), Process::First)?;
     let other = scheduler.spawn(ObjectId(0x1_402), Process::Second)?;
+    if process_roots::root_reference_count(Process::First) != Some(2)
+        || process_roots::root_reference_count(Process::Second) != Some(2)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
     if scheduler.authorize(old, resolve)?.root != root_a {
         return Err(Error::HardwareMismatch);
     }
@@ -375,7 +453,10 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
 
     let decision = scheduler.authorize(replacement, resolve)?;
     {
-        let _guard = KernelRootGuard::enter(kernel, decision.root)?;
+        let _guard = KernelRootGuard::enter(kernel, decision.root, decision.process)?;
+        if process_roots::root_reference_count(Process::First) != Some(3) {
+            return Err(Error::RootReferenceUnavailable);
+        }
         let current: u64;
         asm!("mov {}, cr3", out(reg) current, options(nomem, nostack, preserves_flags));
         if current & CR3_ADDRESS_MASK != root_a {
@@ -395,6 +476,11 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     {
         return Err(Error::IncorrectSelection);
     }
+    if process_roots::root_reference_count(Process::First) != Some(1)
+        || process_roots::root_reference_count(Process::Second) != Some(1)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
     Ok(())
 }
 
@@ -404,7 +490,7 @@ mod tests {
 
     #[test]
     fn scheduler_binding_tracks_ready_and_blocked_tasks() {
-        let mut s = AddressScheduler::<2>::new();
+        let mut s = AddressScheduler::<2>::new_without_root_references();
         let a = s.spawn(ObjectId(101), Process::First).unwrap();
         let b = s.spawn(ObjectId(102), Process::Second).unwrap();
         assert_eq!(s.select_next(), Ok(Some((a, Process::First))));
@@ -417,7 +503,7 @@ mod tests {
 
     #[test]
     fn duplicates_stale_generation_and_capacity_fail_closed() {
-        let mut s = AddressScheduler::<2>::new();
+        let mut s = AddressScheduler::<2>::new_without_root_references();
         let old = s.spawn(ObjectId(17), Process::First).unwrap();
         assert_eq!(
             s.spawn(ObjectId(18), Process::First),
@@ -440,7 +526,7 @@ mod tests {
 
     #[test]
     fn a_blocked_or_stale_task_cannot_authorize_a_valid_root() {
-        let mut s = AddressScheduler::<2>::new();
+        let mut s = AddressScheduler::<2>::new_without_root_references();
         let old = s.spawn(ObjectId(3), Process::First).unwrap();
         assert_eq!(s.authorize(old, |_| Some(0x1000)).unwrap().root, 0x1000);
         s.block(old).unwrap();
@@ -458,7 +544,7 @@ mod tests {
 
     #[test]
     fn resolver_cannot_authorize_missing_or_misaligned_process_root() {
-        let mut s = AddressScheduler::<2>::new();
+        let mut s = AddressScheduler::<2>::new_without_root_references();
         let id = s.spawn(ObjectId(11), Process::Second).unwrap();
         assert_eq!(s.authorize(id, |_| None), Err(Error::MissingAddressSpace));
         assert_eq!(s.authorize(id, |_| Some(0)), Err(Error::InvalidRoot));
@@ -479,13 +565,13 @@ mod tests {
 
     #[test]
     fn empty_and_exhausted_schedulers_behave_predictably() {
-        let mut none = AddressScheduler::<0>::new();
+        let mut none = AddressScheduler::<0>::new_without_root_references();
         assert_eq!(none.select_next(), Ok(None));
         assert_eq!(
             none.spawn(ObjectId(1), Process::First),
             Err(Error::Task(TaskError::NoCapacity))
         );
-        let mut s = AddressScheduler::<1>::new();
+        let mut s = AddressScheduler::<1>::new_without_root_references();
         let a = s.spawn(ObjectId(1), Process::First).unwrap();
         assert_eq!(
             s.spawn(ObjectId(2), Process::Second),

@@ -588,6 +588,24 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     let summary = unsafe { ptr::read_volatile(ptr::addr_of!(SAVED_MEMORY)) };
 
+    // Ordinary boot has no remaining process-root consumer after the QEMU
+    // scheduler, copy and teardown proofs. Ring-3 feature images diverge above
+    // and keep their roots alive for the duration of the user probe.
+    #[cfg(not(feature = "qemu-user"))]
+    {
+        if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
+            crate::serial::write_line("FATAL: final process mapping teardown failed");
+            crate::halt_forever();
+        }
+        if unsafe { crate::process_roots::retire_process_roots(&crate::FRAME_POOL) }.is_err() {
+            crate::serial::write_line("FATAL: process roots still referenced or could not be reclaimed");
+            crate::halt_forever();
+        }
+        crate::serial::write_line(
+            "SORVETH M2-K.3e: scheduler references drained and process roots reclaimed",
+        );
+    }
+
     // The controlled #PF must now be serviced on Sorveth's own stack too.
     #[cfg(feature = "qemu-fault")]
     {

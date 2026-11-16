@@ -148,6 +148,7 @@ for marker in \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
+  'SORVETH M2-K.3e: scheduler references drained and process roots reclaimed' \
   'Capability table: initialized' \
   'Sorveth IPC: capability-checked mailbox and revocation validated' \
   'Sorveth task registry: fair selection and stale IDs validated' \
@@ -227,6 +228,7 @@ for marker in \
   'SORVETH M2-K.1c: owned process paging-table construction verified' \
   'SORVETH M2-K.1c: self-mapped kernel paging table verified' \
   'SORVETH M2-K.1b: user copy via owned frame window verified' \
+  'SORVETH M2-K.3e: scheduler references drained and process roots reclaimed' \
   'SORVETH EXCEPTION: PAGE FAULT' \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
