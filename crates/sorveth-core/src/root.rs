@@ -900,6 +900,10 @@ pub(crate) unsafe fn audit_private_window(
             crate::serial::write_u64(slot as u64);
             crate::serial::write(" frame ");
             crate::serial::write_u64(physical);
+            crate::serial::write(" entry ");
+            crate::serial::write_u64(entry);
+            crate::serial::write(" table ");
+            crate::serial::write_u64(table_frame);
             crate::serial::write(" claims ");
             crate::serial::write_u64(pool.claim_count().unwrap_or(usize::MAX) as u64);
             crate::serial::write_line("");
@@ -910,6 +914,10 @@ pub(crate) unsafe fn audit_private_window(
                         if physical >= span.start && physical < span.end_exclusive() {
                             crate::serial::write("overlap claim ");
                             crate::serial::write_u64(index as u64);
+                            crate::serial::write(" start ");
+                            crate::serial::write_u64(span.start);
+                            crate::serial::write(" end ");
+                            crate::serial::write_u64(span.end_exclusive());
                             crate::serial::write(" refs ");
                             crate::serial::write_u64(record.references() as u64);
                             crate::serial::write(" mappings ");
