@@ -541,9 +541,12 @@ pub unsafe fn dispatch(
                 )
                 .is_ok();
                 let content_matches = match state.completed {
-                    0 => copied
-                        && length == 8
-                        && u64::from_le_bytes(output[..8].try_into().unwrap()) == state.original,
+                    0 => {
+                        copied
+                            && length == 8
+                            && u64::from_le_bytes(output[..8].try_into().unwrap())
+                                == state.original
+                    }
                     BOUNDARY_READ_PHASE => copied && output == boundary_pattern(),
                     _ => false,
                 };
@@ -555,12 +558,8 @@ pub unsafe fn dispatch(
             } else {
                 match state.completed {
                     WRITE_PHASE if length == PATTERN.len() as u64 => {
-                        if crate::user_copy::copy_to_process(
-                            state.process,
-                            user_address,
-                            &PATTERN,
-                        )
-                        .is_ok()
+                        if crate::user_copy::copy_to_process(state.process, user_address, &PATTERN)
+                            .is_ok()
                         {
                             COPY_OUT_OK
                         } else {
