@@ -497,6 +497,15 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     );
     crate::serial::write_line("SORVETH M2-K.1d: owned read-only mapping denial verified");
     crate::serial::write_line("SORVETH M2-K.1b: user copy via owned frame window verified");
+    if !unsafe {
+        crate::process_roots::verify_dynamic_user_buffer_lifecycle(&crate::FRAME_POOL)
+    } {
+        crate::serial::write_line("FATAL: dynamic user-buffer lifetime validation failed");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.4e: dynamic user buffer copied, pinned, unmapped, and recycled",
+    );
     if !unsafe { crate::process_roots::verify_copy_pin_blocks_teardown(&crate::FRAME_POOL) } {
         crate::serial::write_line("FATAL: user-copy frame pin did not block teardown");
         crate::halt_forever();
