@@ -896,6 +896,31 @@ pub(crate) unsafe fn audit_private_window(
         }
         let physical = entry & ADDRESS_MASK;
         if physical == 0 || !pool.owns_frame(physical).unwrap_or(false) {
+            crate::serial::write("private-window unowned slot ");
+            crate::serial::write_u64(slot as u64);
+            crate::serial::write(" frame ");
+            crate::serial::write_u64(physical);
+            crate::serial::write(" claims ");
+            crate::serial::write_u64(pool.claim_count().unwrap_or(usize::MAX) as u64);
+            crate::serial::write_line("");
+            if let Ok(count) = pool.claim_count() {
+                for index in 0..count {
+                    if let Ok(Some(record)) = pool.claim_record_at(index) {
+                        let span = record.span();
+                        if physical >= span.start && physical < span.end_exclusive() {
+                            crate::serial::write("overlap claim ");
+                            crate::serial::write_u64(index as u64);
+                            crate::serial::write(" refs ");
+                            crate::serial::write_u64(record.references() as u64);
+                            crate::serial::write(" mappings ");
+                            crate::serial::write_u64(record.mappings() as u64);
+                            crate::serial::write(" quarantined ");
+                            crate::serial::write_u64(record.is_quarantined() as u64);
+                            crate::serial::write_line("");
+                        }
+                    }
+                }
+            }
             return Err(Failure::UnownedFrame);
         }
         for prior in 0..slot {
