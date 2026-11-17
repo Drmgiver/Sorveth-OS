@@ -512,17 +512,16 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line(
         "SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime",
     );
-    if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
-        crate::serial::write_line("FATAL: process address-space teardown failed");
+    if unsafe { crate::process_roots::teardown_address_spaces(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: ordered process address-space teardown failed");
         crate::halt_forever();
     }
     crate::serial::write_line(
+        "SORVETH M2-K.3g: scheduler references preflighted before mappings and roots were retired",
+    );
+    crate::serial::write_line(
         "SORVETH M2-K.3a: process mappings removed before frames entered quarantine",
     );
-    if unsafe { crate::process_roots::retire_process_roots(&crate::FRAME_POOL) }.is_err() {
-        crate::serial::write_line("FATAL: process roots could not be retired for reuse");
-        crate::halt_forever();
-    }
     if unsafe { crate::process_roots::prepare_and_verify(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process roots were not recreated with fresh generations");
         crate::halt_forever();
@@ -622,16 +621,13 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     // and keep their roots alive for the duration of the user probe.
     #[cfg(not(feature = "qemu-user"))]
     {
-        if unsafe { crate::process_roots::teardown_private_pages(&crate::FRAME_POOL) }.is_err() {
-            crate::serial::write_line("FATAL: final process mapping teardown failed");
+        if unsafe { crate::process_roots::teardown_address_spaces(&crate::FRAME_POOL) }.is_err() {
+            crate::serial::write_line("FATAL: final ordered process address-space teardown failed");
             crate::halt_forever();
         }
-        if unsafe { crate::process_roots::retire_process_roots(&crate::FRAME_POOL) }.is_err() {
-            crate::serial::write_line(
-                "FATAL: process roots still referenced or could not be reclaimed",
-            );
-            crate::halt_forever();
-        }
+        crate::serial::write_line(
+            "SORVETH M2-K.3g: final teardown preflighted task references before root reclamation",
+        );
         crate::serial::write_line(
             "SORVETH M2-K.3e: scheduler references drained and process roots reclaimed",
         );

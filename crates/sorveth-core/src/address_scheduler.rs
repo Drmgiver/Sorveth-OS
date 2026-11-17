@@ -420,6 +420,15 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     {
         return Err(Error::RootReferenceUnavailable);
     }
+    let live_mapping =
+        process_roots::mapped_page(Process::First).ok_or(Error::MissingAddressSpace)?;
+    if unsafe { process_roots::teardown_address_spaces(&crate::FRAME_POOL) }
+        != Err(process_roots::Error::RootReferenceUnavailable)
+        || process_roots::mapped_page(Process::First) != Some(live_mapping)
+        || process_roots::process_root(Process::First).map(|(root, _)| root) != Some(root_a)
+    {
+        return Err(Error::RootReferenceUnavailable);
+    }
     if scheduler.authorize(old, resolve)?.root != root_a {
         return Err(Error::HardwareMismatch);
     }
