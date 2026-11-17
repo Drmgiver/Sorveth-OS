@@ -711,12 +711,27 @@ pub unsafe fn dispatch(
         fatal();
     }
     if number == SYS_COMPLETE {
-        if unsafe {
+        if let Err(error) = unsafe {
             process_roots::unmap_dynamic_user_buffer(state.process, mapped, &crate::FRAME_POOL)
-        }
-        .is_err()
-        {
-            crate::serial::write_line("FATAL: ring-3 dynamic buffer unmap failed");
+        } {
+            match error {
+                process_roots::Error::KernelUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap CPU/root context rejected");
+                }
+                process_roots::Error::NotMapped => {
+                    crate::serial::write_line("FATAL: dynamic unmap claim missing");
+                }
+                process_roots::Error::VerificationFailed => {
+                    crate::serial::write_line("FATAL: dynamic unmap descriptor or ledger mismatch");
+                }
+                process_roots::Error::FrameUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap frame ledger failure");
+                }
+                process_roots::Error::PageTableStorageUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap page-table access failed");
+                }
+                _ => crate::serial::write_line("FATAL: dynamic unmap failed"),
+            }
             fatal();
         }
     }
