@@ -1296,18 +1296,24 @@ pub unsafe fn unmap_dynamic_user_buffer(
     if record.generation() != claim.handle.generation()
         || record.owner() != owner
         || record.span() != claim.span
-        || record.references() != 1
         || record.mappings() != mapping.page_count as u32
         || record.is_quarantined()
     {
+        return Err(Error::VerificationFailed);
+    }
+    if record.references() != 1 {
         return Err(Error::VerificationFailed);
     }
     let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
     let table = tables[table_index];
     if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
         || (0..mapping.page_count).any(|index| {
-            read_registered_table_word(table, 2 + index as usize)
-                != Some(claim.span.start + index as u64 * PAGE | USER_DATA_FLAGS)
+            !matches!(
+                read_registered_table_word(table, 2 + index as usize),
+                Some(entry)
+                    if entry & !(ACCESSED | DIRTY)
+                        == ((claim.span.start + index as u64 * PAGE) | USER_DATA_FLAGS)
+            )
         })
     {
         return Err(Error::VerificationFailed);

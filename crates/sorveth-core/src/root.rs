@@ -1078,8 +1078,7 @@ fn build_transfer_probe(read: u64, foreign: u64) -> Result<ProbeProgram, Error> 
     };
     use sorveth_paging::PAGE_BYTES;
 
-    let own = crate::process_roots::mapped_page(crate::transfer::owner())
-        .ok_or(Error::VerificationFailed)?;
+    let own = crate::transfer::buffer_mapping().ok_or(Error::VerificationFailed)?;
     let other = crate::process_roots::mapped_page(crate::transfer::other())
         .ok_or(Error::VerificationFailed)?;
     let write = crate::transfer::write_handle().ok_or(Error::VerificationFailed)?;

@@ -50,6 +50,7 @@ struct State {
     task: TaskId,
     process: Process,
     root: u64,
+    buffer: process_roots::Mapping,
     read_handle: u64,
     write_handle: u64,
     foreign_handle: u64,
@@ -175,10 +176,7 @@ unsafe fn process_word(physical: u64) -> Option<u64> {
 /// # Safety
 /// Single core, IF=0, active Sorveth kernel root, stable page tables.
 unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
-    let own = match process_roots::mapped_page(state.process) {
-        Some(page) => page,
-        None => return false,
-    };
+    let own = state.buffer;
     let foreign = match process_roots::mapped_page(other()) {
         Some(page) => page,
         None => return false,
@@ -236,7 +234,8 @@ pub fn initialize() -> Option<(u64, u64)> {
     }
     let process = owner();
     let root = unsafe { process_roots::checked_process_root(process) }?;
-    let own = process_roots::mapped_page(process)?;
+    let own =
+        unsafe { process_roots::map_dynamic_user_buffer(process, 2, &crate::FRAME_POOL).ok()? };
     let foreign = process_roots::mapped_page(other())?;
     if own.physical_address == foreign.physical_address {
         return None;
@@ -294,6 +293,7 @@ pub fn initialize() -> Option<(u64, u64)> {
                 task,
                 process,
                 root,
+                buffer: own,
                 read_handle,
                 write_handle,
                 foreign_handle,
@@ -310,6 +310,14 @@ pub fn initialize() -> Option<(u64, u64)> {
     }
     READY.store(true, Ordering::Release);
     Some((read_handle, foreign_handle))
+}
+
+/// Address of the dynamically mapped buffer used by the transfer probe.
+pub fn buffer_mapping() -> Option<process_roots::Mapping> {
+    if !READY.load(Ordering::Acquire) {
+        return None;
+    }
+    unsafe { (*ptr::addr_of!(STATE)).as_ref().map(|state| state.buffer) }
 }
 
 /// Only test-machine-code generation uses this kernel-initialized token.
@@ -384,10 +392,7 @@ pub unsafe fn dispatch(
         Some(guard) => guard,
         None => fatal(),
     };
-    let mapped = match process_roots::mapped_page(state.process) {
-        Some(m) => m,
-        None => fatal(),
-    };
+    let mapped = state.buffer;
     let foreign = match process_roots::mapped_page(other()) {
         Some(m) => m,
         None => fatal(),
@@ -705,11 +710,39 @@ pub unsafe fn dispatch(
         crate::serial::write_line("FATAL: transfer post-integrity check");
         fatal();
     }
+    if number == SYS_COMPLETE {
+        if let Err(error) = unsafe {
+            process_roots::unmap_dynamic_user_buffer(state.process, mapped, &crate::FRAME_POOL)
+        } {
+            match error {
+                process_roots::Error::KernelUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap CPU/root context rejected");
+                }
+                process_roots::Error::NotMapped => {
+                    crate::serial::write_line("FATAL: dynamic unmap claim missing");
+                }
+                process_roots::Error::VerificationFailed => {
+                    crate::serial::write_line("FATAL: dynamic unmap descriptor or ledger mismatch");
+                }
+                process_roots::Error::FrameUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap frame ledger failure");
+                }
+                process_roots::Error::PageTableStorageUnavailable => {
+                    crate::serial::write_line("FATAL: dynamic unmap page-table access failed");
+                }
+                _ => crate::serial::write_line("FATAL: dynamic unmap failed"),
+            }
+            fatal();
+        }
+    }
     state.completed += 1;
     if number == SYS_COMPLETE {
         if state.completed != COMPLETE_PHASE + 1 {
             fatal();
         }
+        crate::serial::write_line(
+            "SORVETH M2-K.4g: ring-3 copy gateway verified on a dynamic two-page buffer span",
+        );
         crate::serial::write_line("SORVETH M2-J.5: ring-3 memory syscalls authorized and denied");
         crate::serial::write_line(
             "SORVETH M2-J.6: full-span and capability integrity verified after every syscall",

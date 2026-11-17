@@ -435,6 +435,7 @@ for side in a b; do
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
     'SORVETH M2-K.4c: ring-3 256-byte copy-in/out crossed the user-page boundary' \
     'SORVETH M2-K.4d: ring-3 copied the complete bounded two-page span' \
+    'SORVETH M2-K.4g: ring-3 copy gateway verified on a dynamic two-page buffer span' \
     'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
     'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
