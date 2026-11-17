@@ -2730,9 +2730,7 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
 /// # Safety
 /// One CPU, kernel CR3 active, interrupts masked, and no concurrent mapping
 /// or frame-ledger operations.
-pub unsafe fn teardown_address_spaces(
-    pool: &sorveth_frames::FramePool<256>,
-) -> Result<(), Error> {
+pub unsafe fn teardown_address_spaces(pool: &sorveth_frames::FramePool<256>) -> Result<(), Error> {
     #[cfg(target_arch = "x86_64")]
     {
         if !READY.load(Ordering::Acquire) {
@@ -2751,9 +2749,7 @@ pub unsafe fn teardown_address_spaces(
         {
             return Err(Error::RootReferenceUnavailable);
         }
-        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some()
-            || unsafe { SECOND_DYNAMIC_CLAIM }.is_some()
-        {
+        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
             return Err(Error::ProcessMappingsStillActive);
         }
         if MAPPED.load(Ordering::Acquire) {
