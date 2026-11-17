@@ -1158,7 +1158,7 @@ unsafe fn map_dynamic_user_buffer_inner(
         || (2..2 + page_count as usize)
             .any(|index| read_registered_table_word(table, index) != Some(0))
     {
-        crate::serial::write_line("DEBUG: dynamic unmap descriptor mismatch");
+        crate::serial::write_line("DEBUG: dynamic map leaf preflight mismatch");
         return Err(Error::VerificationFailed);
     }
     let owner = match process {
@@ -1284,6 +1284,7 @@ pub unsafe fn unmap_dynamic_user_buffer(
         || mapping.generation != claim.handle.generation()
         || mapping.physical_address & (PAGE - 1) != 0
     {
+        crate::serial::write_line("DEBUG: dynamic unmap descriptor mismatch");
         return Err(Error::VerificationFailed);
     }
     let owner = match process {
