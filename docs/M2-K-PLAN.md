@@ -250,6 +250,13 @@ demand paging or general user-fault recovery. Host, UEFI, ABI, formatting,
 normal-root QEMU, and independent-root QEMU gates passed. Evidence: [run
 43998903998](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43998903998).
 
+**K.4j in progress:** the A/B isolation probe will recover from one exact
+ring-3 nonpresent read fault at the foreign process page. The handler validates
+the saved user RIP and address-space state, resumes at a loader-registered
+continuation, and requires the resumed probe to confirm recovery through
+INT80. Other page faults remain fatal. This verifies controlled user-fault
+recovery, not demand paging or general process fault policy.
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified
