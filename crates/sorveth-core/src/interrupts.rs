@@ -344,7 +344,9 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(
             {
                 if let Some(recovery_rip) = crate::isolation::recovery_rip() {
                     frame.rip = recovery_rip;
-                    crate::serial::write_line("SORVETH USER PAGE FAULT: resumed at trusted recovery continuation");
+                    crate::serial::write_line(
+                        "SORVETH USER PAGE FAULT: resumed at trusted recovery continuation",
+                    );
                     return;
                 }
             }
