@@ -2722,6 +2722,52 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
     }
 }
 
+/// Retire a quiescent bootstrap address-space pair in dependency order.
+/// Scheduler and CR3 references are checked before any user mapping is
+/// removed, so a live task cannot leave a half-torn-down address space.
+/// Dynamic buffers must be unmapped by their owner first.
+///
+/// # Safety
+/// One CPU, kernel CR3 active, interrupts masked, and no concurrent mapping
+/// or frame-ledger operations.
+pub unsafe fn teardown_address_spaces(
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if !READY.load(Ordering::Acquire) {
+            return Err(Error::KernelUnavailable);
+        }
+        let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
+        let active: u64;
+        let flags: u64;
+        asm!("mov {}, cr3", out(reg) active, options(nomem, nostack, preserves_flags));
+        asm!("pushfq", "pop {}", out(reg) flags, options(preserves_flags));
+        if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
+            return Err(Error::KernelUnavailable);
+        }
+        if root_reference_count(Process::First) != Some(1)
+            || root_reference_count(Process::Second) != Some(1)
+        {
+            return Err(Error::RootReferenceUnavailable);
+        }
+        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some()
+            || unsafe { SECOND_DYNAMIC_CLAIM }.is_some()
+        {
+            return Err(Error::ProcessMappingsStillActive);
+        }
+        if MAPPED.load(Ordering::Acquire) {
+            unsafe { teardown_private_pages(pool)? };
+        }
+        unsafe { retire_process_roots(pool) }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = pool;
+        Err(Error::Unsupported)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(target_arch = "x86_64")]
