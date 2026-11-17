@@ -234,9 +234,8 @@ pub fn initialize() -> Option<(u64, u64)> {
     }
     let process = owner();
     let root = unsafe { process_roots::checked_process_root(process) }?;
-    let own = unsafe {
-        process_roots::map_dynamic_user_buffer(process, 2, &crate::FRAME_POOL).ok()?
-    };
+    let own =
+        unsafe { process_roots::map_dynamic_user_buffer(process, 2, &crate::FRAME_POOL).ok()? };
     let foreign = process_roots::mapped_page(other())?;
     if own.physical_address == foreign.physical_address {
         return None;
@@ -718,7 +717,9 @@ pub unsafe fn dispatch(
         if state.completed != COMPLETE_PHASE + 1 {
             fatal();
         }
-        crate::serial::write_line("SORVETH M2-K.4g: ring-3 copy gateway verified on a dynamic two-page buffer span");
+        crate::serial::write_line(
+            "SORVETH M2-K.4g: ring-3 copy gateway verified on a dynamic two-page buffer span",
+        );
         crate::serial::write_line("SORVETH M2-J.5: ring-3 memory syscalls authorized and denied");
         crate::serial::write_line(
             "SORVETH M2-J.6: full-span and capability integrity verified after every syscall",
