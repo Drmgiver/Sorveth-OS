@@ -129,7 +129,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
-  'SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified' \
+  'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -212,7 +212,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
-  'SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified' \
+  'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -288,7 +288,7 @@ for marker in \
   'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
   'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
-  'SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified' \
+  'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -367,7 +367,7 @@ for side in a b; do
     'SORVETH M2-J.4: bounded writable copy-out and denial verified' \
     'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
-    'SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified' \
+    'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -437,7 +437,7 @@ for side in a b; do
     'SORVETH M2-K.4d: ring-3 copied the complete bounded two-page span' \
     'SORVETH M2-K.4b: pinned two-page copy-in and copy-out verified across a page boundary' \
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
-    'SORVETH M2-K.4e: dynamic buffer rollback, copy, pin, unmap, and recycle verified' \
+    'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
