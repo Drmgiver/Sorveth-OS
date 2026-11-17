@@ -265,8 +265,10 @@ pub fn initialize() -> Option<(u64, u64)> {
         .raw();
     let original = unsafe { process_word(own.physical_address) }?;
     let foreign_original = unsafe { process_word(foreign.physical_address) }?;
-    let original_checksum = unsafe { frame_checksum(own.physical_address, None, own.page_count as usize) }?;
-    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN), own.page_count as usize) }?;
+    let original_checksum =
+        unsafe { frame_checksum(own.physical_address, None, own.page_count as usize) }?;
+    let written_checksum =
+        unsafe { frame_checksum(own.physical_address, Some(PATTERN), own.page_count as usize) }?;
     unsafe {
         crate::user_copy::copy_from_process(
             process,
