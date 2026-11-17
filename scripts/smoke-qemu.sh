@@ -166,8 +166,8 @@ require_independent_root_marker "$TMP/serial.log"
 echo 'PASS: kernel executed after ExitBootServices, validated memory map, and exited QEMU cleanly.'
 
 # M1-C acceptance: use a separate EFI image to deliberately fault on the
-# absent second page of Sorveth's own high-half mapping. The serial fault
-# handler must report the #PF and issue QEMU's debug exit (status 33).
+# absent second page of Sorveth's own high-half mapping. The serial handler must recover from the expected #PF, resume its caller,
+# and issue QEMU's debug exit (status 33).
 # Normal kernel and production builds never trigger this test.
 build_qemu_image qemu-fault
 cp target/x86_64-unknown-uefi/release/sorveth-boot.efi "$TMP/esp/EFI/BOOT/BOOTX64.EFI"
@@ -239,7 +239,8 @@ for marker in \
   'Sorveth page fault IST1: active' \
   'Fault address (CR2): 0x' \
   'Page fault error code: 0x' \
-  'SORVETH CONTROLLED PAGE FAULT: verified'; do
+  'SORVETH CONTROLLED PAGE FAULT: recovered' \
+  'SORVETH CONTROLLED PAGE FAULT RECOVERY: resumed in kernel'; do
   if ! grep -Fq "$marker" "$TMP/fault-serial.log"; then
     echo "QEMU fault test failed: missing marker: $marker" >&2
     exit 1
