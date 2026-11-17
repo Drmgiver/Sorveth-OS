@@ -1158,6 +1158,7 @@ unsafe fn map_dynamic_user_buffer_inner(
         || (2..2 + page_count as usize)
             .any(|index| read_registered_table_word(table, index) != Some(0))
     {
+        crate::serial::write_line("DEBUG: dynamic unmap descriptor mismatch");
         return Err(Error::VerificationFailed);
     }
     let owner = match process {
@@ -1296,10 +1297,13 @@ pub unsafe fn unmap_dynamic_user_buffer(
     if record.generation() != claim.handle.generation()
         || record.owner() != owner
         || record.span() != claim.span
-        || record.references() != 1
         || record.mappings() != mapping.page_count as u32
         || record.is_quarantined()
     {
+        crate::serial::write_line("DEBUG: dynamic unmap ledger identity mismatch");
+        return Err(Error::VerificationFailed);
+    }
+    if record.references() != 1 {
         return Err(Error::VerificationFailed);
     }
     let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
@@ -1310,6 +1314,7 @@ pub unsafe fn unmap_dynamic_user_buffer(
                 != Some(claim.span.start + index as u64 * PAGE | USER_DATA_FLAGS)
         })
     {
+        crate::serial::write_line("DEBUG: dynamic unmap PTE mismatch");
         return Err(Error::VerificationFailed);
     }
     for index in 0..mapping.page_count {
