@@ -152,6 +152,8 @@ firmware-map edge case. This remains a serialized single-CPU bootstrap proof;
 SMP shootdown and general process teardown remain pending. Evidence: [feature
 run 43793651438](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43793651438).
 
+**K.3f accepted:** the serialized QEMU lifecycle now retires both allocator-backed process PML4 roots after all mapping and scheduler references are gone, then prepares the address spaces again before rebuilding user mappings. Recreated roots must occupy the reclaimed physical frames with exactly the next claim generation; any mismatch rolls the new claims back. The normal and independent-root QEMU matrices pass this root-reuse check before their ring-3 setup paths. This remains a fixed two-root, single-CPU acceptance path; general multi-process lifecycle and SMP teardown remain pending. Evidence: [feature run 44018503323](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44018503323).
+
 **K.4a accepted:** each bounded user copy now pins every resolved process
 data-frame claim for its full operation and releases the generation-bound
 references on every return path. Teardown rejects an outstanding copy pin;
@@ -260,9 +262,9 @@ process fault policy. Host, UEFI, ABI, formatting, normal-root QEMU, and
 independent-root QEMU gates passed. Evidence: [run
 44008219923](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44008219923).
 
-**Still pending:** general K.3 creation and teardown, remaining K.4 work and
-K.5, production process scheduling, general physical page reclamation, and
-safe arbitrary user mappings. K.1's independent root is a QEMU-verified
+**Still pending:** general multi-process K.3 creation and teardown, remaining
+K.4 work and K.5, production process scheduling, general physical page
+reclamation, and safe arbitrary user mappings. K.1's independent root is a QEMU-verified
 bootstrap mapping set, not yet a production memory manager.
 
 

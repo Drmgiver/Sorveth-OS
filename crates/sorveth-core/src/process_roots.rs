@@ -48,6 +48,11 @@ const INHERITED_TABLE_CAPACITY: usize = 8192;
 // scheduler slots can still select these address spaces.
 #[cfg(target_arch = "x86_64")]
 static mut PROCESS_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
+// Retain the last retired root handles long enough to verify safe frame reuse.
+#[cfg(target_arch = "x86_64")]
+static mut RETIRED_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
+#[cfg(target_arch = "x86_64")]
+static ROOTS_RETIRED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
 static mut PROCESS_TABLE_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 6] = [None; 6];
 #[cfg(target_arch = "x86_64")]
@@ -220,6 +225,20 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
             unsafe { rollback_process_root_claims(pool, claims)? };
             return Err(Error::VerificationFailed);
         }
+        if ROOTS_RETIRED.load(Ordering::Acquire) {
+            let retired = unsafe { RETIRED_ROOT_CLAIMS };
+            let reused = claims.iter().flatten().all(|current| {
+                retired.iter().flatten().any(|previous| {
+                    previous.span.start == current.span.start
+                        && previous.handle.generation().checked_add(1)
+                            == Some(current.handle.generation())
+                })
+            }) && retired.iter().flatten().count() == 2;
+            if !reused {
+                unsafe { rollback_process_root_claims(pool, claims)? };
+                return Err(Error::VerificationFailed);
+            }
+        }
         let result = (|| -> Result<(u16, u16), Error> {
             // Snapshot Sorveth's known kernel PML4 while its own CR3 is active.
             // Only the existing owned window may dereference physical table RAM.
@@ -293,6 +312,7 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
             }
         };
         unsafe { PROCESS_ROOT_CLAIMS = claims };
+        ROOTS_RETIRED.store(false, Ordering::Release);
         FIRST_ROOT.store(a, Ordering::Release);
         SECOND_ROOT.store(b, Ordering::Release);
         FIRST_SLOT.store(slot_a as u64, Ordering::Release);
@@ -497,6 +517,7 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         SECOND_SLOT.store(0, Ordering::Release);
         unsafe { PROCESS_ROOT_CLAIMS = [None; 2] };
 
+        let retired_claims = claims;
         for claim in claims.into_iter().flatten() {
             let owner = sorveth_frames::FrameOwner::PROCESS_ROOTS;
             if pool
@@ -528,6 +549,8 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         {
             return Err(Error::VerificationFailed);
         }
+        unsafe { RETIRED_ROOT_CLAIMS = retired_claims };
+        ROOTS_RETIRED.store(true, Ordering::Release);
         Ok(())
     }
     #[cfg(not(target_arch = "x86_64"))]

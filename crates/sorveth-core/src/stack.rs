@@ -519,6 +519,17 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line(
         "SORVETH M2-K.3a: process mappings removed before frames entered quarantine",
     );
+    if unsafe { crate::process_roots::retire_process_roots(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: process roots could not be retired for reuse");
+        crate::halt_forever();
+    }
+    if unsafe { crate::process_roots::prepare_and_verify(&crate::FRAME_POOL) }.is_err() {
+        crate::serial::write_line("FATAL: process roots were not recreated with fresh generations");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.3f: retired PML4 frames reused only with next-generation claims",
+    );
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process address-space recreation failed");
         crate::halt_forever();
