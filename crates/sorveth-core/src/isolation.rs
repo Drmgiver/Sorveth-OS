@@ -5,14 +5,19 @@
 
 use core::{
     arch::asm,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use crate::process_roots::{self, Process};
 
 pub const SIGNAL: u64 = 0x61;
 pub const REPLY: u64 = 0x5349_534f;
+pub const RECOVERY_SIGNAL: u64 = 0x62;
+pub const RECOVERY_REPLY: u64 = 0x5352_4543;
 static CONFIRMED_OWN: AtomicBool = AtomicBool::new(false);
+static EXPECTED_FAULT_RIP: AtomicU64 = AtomicU64::new(0);
+static RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
+static RECOVERED_FAULT: AtomicBool = AtomicBool::new(false);
 const CR3_MASK: u64 = 0x000f_ffff_ffff_f000;
 
 pub const fn owner() -> Process {
@@ -64,11 +69,27 @@ pub fn confirm_own_page(number: u64, caller_cs: u64) -> Option<u64> {
     Some(REPLY)
 }
 
+/// Register the only user RIP that may be resumed after the expected
+/// foreign-page fault. Set by the trusted probe loader before entering CPL3.
+pub fn configure_fault_recovery(fault_rip: u64, recovery_rip: u64) -> bool {
+    if fault_rip == 0 || recovery_rip == 0 || fault_rip == recovery_rip {
+        return false;
+    }
+    EXPECTED_FAULT_RIP.store(fault_rip, Ordering::Release);
+    RECOVERY_RIP.store(recovery_rip, Ordering::Release);
+    RECOVERED_FAULT.store(false, Ordering::Release);
+    true
+}
+
 /// Only an exact ring-3, nonpresent read #PF at the foreign process's
 /// address is accepted. All expected values originate in kernel-owned
 /// mapping descriptors, not user-provided registers.
-pub fn expected_foreign_fault(address: u64, error: u64) -> bool {
-    if !CONFIRMED_OWN.load(Ordering::Acquire) || (error & 0x1f) != 0x4 {
+pub fn expected_foreign_fault(address: u64, error: u64, instruction_pointer: u64) -> bool {
+    if !CONFIRMED_OWN.load(Ordering::Acquire)
+        || (error & 0x1f) != 0x4
+        || instruction_pointer != EXPECTED_FAULT_RIP.load(Ordering::Acquire)
+        || RECOVERY_RIP.load(Ordering::Acquire) == 0
+    {
         return false;
     }
     let (root, own_slot) = match process_roots::process_root(owner()) {
@@ -107,7 +128,38 @@ pub fn expected_foreign_fault(address: u64, error: u64) -> bool {
     unsafe {
         asm!("mov cr3, {}", in(reg) current, options(nostack, preserves_flags));
     }
-    own_entry.map_or(false, |entry| entry & 0x5 == 0x5) && foreign_entry == Some(0)
+    let valid = own_entry.map_or(false, |entry| entry & 0x5 == 0x5) && foreign_entry == Some(0);
+    if valid {
+        RECOVERED_FAULT.store(true, Ordering::Release);
+    }
+    valid
+}
+
+/// The resumed ring-3 probe must explicitly confirm that it reached the
+/// registered recovery continuation after the exact expected page fault.
+pub fn confirm_fault_recovery(number: u64, caller_cs: u64) -> Option<u64> {
+    if number != RECOVERY_SIGNAL
+        || caller_cs & 3 != 3
+        || !RECOVERED_FAULT.swap(false, Ordering::AcqRel)
+    {
+        return None;
+    }
+    let (expected_root, _) = process_roots::process_root(owner())?;
+    let current: u64;
+    unsafe {
+        asm!("mov {}, cr3", out(reg) current, options(nomem, nostack, preserves_flags));
+    }
+    if current & CR3_MASK != expected_root {
+        return None;
+    }
+    crate::serial::write_line("SORVETH USER PAGE FAULT RECOVERY: resumed in ring 3");
+    crate::serial::write_line(success_marker());
+    Some(RECOVERY_REPLY)
+}
+
+pub fn recovery_rip() -> Option<u64> {
+    let value = RECOVERY_RIP.load(Ordering::Acquire);
+    (value != 0).then_some(value)
 }
 
 pub fn success_marker() -> &'static str {
