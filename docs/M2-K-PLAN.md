@@ -222,6 +222,13 @@ mapping syscalls and recoverable faults remain pending. Host, UEFI, ABI,
 formatting, normal-root QEMU, and independent-root QEMU gates passed. Evidence:
 [run 43987490437](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43987490437).
 
+**K.4g in progress:** the A/B ring-3 syscall regression now runs its
+capability-authorized bounded copies against a dynamically allocated two-page
+user span. It verifies the existing 256-byte boundary transfer and full 8 KiB
+copy through those dynamic leaves, then unmaps the span from the kernel side
+after the final syscall. The syscall limit remains 8 KiB; four-page spans
+remain covered by the K.4f kernel copy/lifetime proof.
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified
