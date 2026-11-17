@@ -209,7 +209,7 @@ process on one CPU; arbitrary user mappings and recoverable faults remain
 pending. Evidence: [run
 43934708955](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43934708955).
 
-**K.4f implemented:** dynamic buffers now accept one to four contiguous user
+**K.4f accepted:** dynamic buffers now accept one to four contiguous user
 pages per bootstrap process. Mapping descriptors include the span length;
 every leaf has a matching generation-bound mapping reference. Setup rollback
 clears the whole published span and releases all staged references, while
@@ -218,8 +218,9 @@ quarantines and zeroes the full span. QEMU exercises 1-, 2-, and 4-page spans
 in both roots, cross-leaf copies, copy-pin denial, forced partial-setup
 rollback, stale descriptors, teardown denial, and zero-on-reuse. The dynamic
 span API remains a privileged bootstrap acceptance API; arbitrary user
-mapping syscalls and recoverable faults remain pending. CI/QEMU evidence will
-be recorded after the branch gates pass.
+mapping syscalls and recoverable faults remain pending. Host, UEFI, ABI,
+formatting, normal-root QEMU, and independent-root QEMU gates passed. Evidence:
+[run 43987490437](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43987490437).
 
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
