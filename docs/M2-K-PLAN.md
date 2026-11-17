@@ -240,13 +240,15 @@ transfers remain in the same regression matrix. Host, UEFI, ABI, formatting,
 normal-root QEMU, and independent-root QEMU gates passed. Evidence: [run
 43992336832](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43992336832).
 
-**K.4i in progress:** the controlled QEMU page-fault probe is being changed
-from a halt-only check to a narrowly recognized recoverable fault. The IST1
-handler will validate the faulting address, error code, saved instruction
-pointer, and kernel privilege before redirecting the saved RIP to an explicit
-recovery label. The probe must resume and exit cleanly; unexpected faults
-continue to halt. This is controlled kernel-fault recovery only, not demand
-paging or general user-fault recovery.
+**K.4i accepted:** the QEMU controlled page-fault probe now resumes from
+the IST1 handler after validating the expected unmapped address, non-present
+read error code, saved probe instruction pointer, and kernel privilege. The
+handler redirects only that exact fault to an explicit recovery label;
+unexpected faults still halt. QEMU verifies the probe resumed in the kernel
+and exited normally. This is controlled kernel-fault recovery only, not
+demand paging or general user-fault recovery. Host, UEFI, ABI, formatting,
+normal-root QEMU, and independent-root QEMU gates passed. Evidence: [run
+43998903998](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43998903998).
 
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
