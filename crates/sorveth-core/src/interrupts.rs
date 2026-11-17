@@ -107,13 +107,31 @@ sorveth_exception_page_fault_entry:
     mov rbx, rsp
     mov rcx, cr2
     mov rdx, [rbx + 64]
+    mov r8, rbx
     and rsp, -16
     sub rsp, 32
     call sorveth_exception_page_fault_rust
-    cli
-1:
-    hlt
-    jmp 1b
+    mov rsp, rbx
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rax
+    pop rbx
+    add rsp, 8
+    iretq
+
+.global sorveth_controlled_fault_probe
+sorveth_controlled_fault_probe:
+    mov rax, [rcx]
+    xor eax, eax
+    ret
+.global sorveth_controlled_fault_resume
+sorveth_controlled_fault_resume:
+    mov eax, 1
+    ret
 
 .global sorveth_exception_general_protection_entry
 sorveth_exception_general_protection_entry:
@@ -163,6 +181,29 @@ extern "C" {
     fn sorveth_exception_page_fault_entry();
     fn sorveth_exception_general_protection_entry();
     fn sorveth_exception_double_fault_entry();
+}
+
+#[cfg(feature = "qemu-fault")]
+extern "efiapi" {
+    fn sorveth_controlled_fault_probe(address: u64) -> u64;
+    fn sorveth_controlled_fault_resume();
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+struct PageFaultFrame {
+    r11: u64,
+    r10: u64,
+    r9: u64,
+    r8: u64,
+    rdx: u64,
+    rcx: u64,
+    rax: u64,
+    rbx: u64,
+    error: u64,
+    rip: u64,
+    cs: u64,
+    rflags: u64,
 }
 
 /// Current synchronous exception entry points that must survive any
@@ -261,7 +302,11 @@ pub extern "efiapi" fn sorveth_exception_breakpoint_rust() {
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u64) -> ! {
+pub extern "efiapi" fn sorveth_exception_page_fault_rust(
+    address: u64,
+    error: u64,
+    frame: *mut PageFaultFrame,
+) {
     crate::serial::write_line("SORVETH EXCEPTION: PAGE FAULT");
     if crate::tss::running_on_page_fault_ist() {
         crate::serial::write_line("Sorveth page fault IST1: active");
@@ -277,15 +322,16 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
     crate::serial::write_line("");
     #[cfg(feature = "qemu-fault")]
     {
-        if crate::root::deliberate_fault_address() == Some(address) {
-            crate::serial::write_line("SORVETH CONTROLLED PAGE FAULT: verified");
-            unsafe {
-                core::arch::asm!(
-                    "out dx, al",
-                    in("dx") 0xf4u16,
-                    in("al") 0x10u8,
-                    options(nomem, nostack, preserves_flags),
-                );
+        if crate::root::deliberate_fault_address() == Some(address)
+            && error == 0
+            && !frame.is_null()
+        {
+            let frame = unsafe { &mut *frame };
+            let probe = sorveth_controlled_fault_probe as usize as u64;
+            if frame.rip == probe && frame.cs & 3 == 0 {
+                frame.rip = sorveth_controlled_fault_resume as usize as u64;
+                crate::serial::write_line("SORVETH CONTROLLED PAGE FAULT: recovered");
+                return;
             }
         }
     }
@@ -328,6 +374,11 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(address: u64, error: u6
         }
     }
     halt_fault()
+}
+
+#[cfg(feature = "qemu-fault")]
+pub unsafe fn run_controlled_page_fault_probe(address: u64) -> bool {
+    unsafe { sorveth_controlled_fault_probe(address) == 1 }
 }
 
 #[cfg(target_arch = "x86_64")]
