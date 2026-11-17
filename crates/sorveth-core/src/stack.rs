@@ -622,7 +622,7 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     #[cfg(not(feature = "qemu-user"))]
     {
         if unsafe { crate::process_roots::teardown_address_spaces(&crate::FRAME_POOL) }.is_err() {
-            crate::serial.write_line("FATAL: final ordered process address-space teardown failed");
+            crate::serial::write_line("FATAL: final ordered process address-space teardown failed");
             crate::halt_forever();
         }
         crate::serial::write_line(
