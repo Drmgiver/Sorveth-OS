@@ -636,10 +636,19 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
                 crate::halt_forever();
             }
         };
-        unsafe {
-            ptr::read_volatile(address as *const u64);
+        if !unsafe { crate::interrupts::run_controlled_page_fault_probe(address) } {
+            crate::serial::write_line("FATAL: controlled page fault did not recover");
+            crate::halt_forever();
         }
-        crate::serial::write_line("FATAL: intentional page fault returned unexpectedly");
+        crate::serial::write_line("SORVETH CONTROLLED PAGE FAULT RECOVERY: resumed in kernel");
+        unsafe {
+            asm!(
+                "out dx, al",
+                in("dx") 0xf4u16,
+                in("al") 0x10u8,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
         crate::halt_forever();
     }
 
