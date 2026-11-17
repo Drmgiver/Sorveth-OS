@@ -1158,7 +1158,6 @@ unsafe fn map_dynamic_user_buffer_inner(
         || (2..2 + page_count as usize)
             .any(|index| read_registered_table_word(table, index) != Some(0))
     {
-        crate::serial::write_line("DEBUG: dynamic map leaf preflight mismatch");
         return Err(Error::VerificationFailed);
     }
     let owner = match process {
@@ -1284,7 +1283,6 @@ pub unsafe fn unmap_dynamic_user_buffer(
         || mapping.generation != claim.handle.generation()
         || mapping.physical_address & (PAGE - 1) != 0
     {
-        crate::serial::write_line("DEBUG: dynamic unmap descriptor mismatch");
         return Err(Error::VerificationFailed);
     }
     let owner = match process {
@@ -1301,7 +1299,6 @@ pub unsafe fn unmap_dynamic_user_buffer(
         || record.mappings() != mapping.page_count as u32
         || record.is_quarantined()
     {
-        crate::serial::write_line("DEBUG: dynamic unmap ledger identity mismatch");
         return Err(Error::VerificationFailed);
     }
     if record.references() != 1 {
@@ -1311,11 +1308,14 @@ pub unsafe fn unmap_dynamic_user_buffer(
     let table = tables[table_index];
     if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
         || (0..mapping.page_count).any(|index| {
-            read_registered_table_word(table, 2 + index as usize)
-                != Some(claim.span.start + index as u64 * PAGE | USER_DATA_FLAGS)
+            !matches!(
+                read_registered_table_word(table, 2 + index as usize),
+                Some(entry)
+                    if entry & !(ACCESSED | DIRTY)
+                        == ((claim.span.start + index as u64 * PAGE) | USER_DATA_FLAGS)
+            )
         })
     {
-        crate::serial::write_line("DEBUG: dynamic unmap PTE mismatch");
         return Err(Error::VerificationFailed);
     }
     for index in 0..mapping.page_count {
