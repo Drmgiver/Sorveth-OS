@@ -337,15 +337,18 @@ pub extern "efiapi" fn sorveth_exception_page_fault_rust(
     }
     #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
     {
-        if crate::isolation::expected_foreign_fault(address, error) {
-            crate::serial::write_line(crate::isolation::success_marker());
-            unsafe {
-                core::arch::asm!(
-                    "out dx, al",
-                    in("dx") 0xf4u16,
-                    in("al") 0x10u8,
-                    options(nomem, nostack, preserves_flags),
-                );
+        if !frame.is_null() {
+            let frame = unsafe { &mut *frame };
+            if frame.cs & 3 == 3
+                && crate::isolation::expected_foreign_fault(address, error, frame.rip)
+            {
+                if let Some(recovery_rip) = crate::isolation::recovery_rip() {
+                    frame.rip = recovery_rip;
+                    crate::serial::write_line(
+                        "SORVETH USER PAGE FAULT: resumed at trusted recovery continuation",
+                    );
+                    return;
+                }
             }
         }
     }
@@ -522,13 +525,22 @@ pub extern "efiapi" fn sorveth_user_int80_rust(
     #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
     {
         let _ = (handle, value);
-        match crate::isolation::confirm_own_page(number, caller_cs) {
-            Some(reply) => return reply,
-            None => {
-                crate::serial::write_line("FATAL: invalid ring-3 isolation test call");
-                halt_fault();
-            }
+        if let Some(reply) = crate::isolation::confirm_own_page(number, caller_cs) {
+            return reply;
         }
+        if let Some(reply) = crate::isolation::confirm_fault_recovery(number, caller_cs) {
+            unsafe {
+                core::arch::asm!(
+                    "out dx, al",
+                    in("dx") 0xf4u16,
+                    in("al") 0x10u8,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            return reply;
+        }
+        crate::serial::write_line("FATAL: invalid ring-3 isolation test call");
+        halt_fault();
     }
     if number == 7 && USER_TRAP_PHASE.load(Ordering::Acquire) == 0 {
         USER_TRAP_PHASE.store(1, Ordering::Release);

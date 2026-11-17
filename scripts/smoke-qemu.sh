@@ -398,6 +398,8 @@ for side in a b; do
     'SORVETH EXCEPTION: PAGE FAULT' \
     'Sorveth page fault IST1: active' \
     'Page fault error code: 0x0000000000000004' \
+    'SORVETH USER PAGE FAULT: resumed at trusted recovery continuation' \
+    'SORVETH USER PAGE FAULT RECOVERY: resumed in ring 3' \
     "$isolation_marker"; do
     if ! grep -Fq "$marker" "$TMP/isolation-$side-serial.log"; then
       echo "QEMU process $side isolation failed: missing marker: $marker" >&2
