@@ -232,6 +232,12 @@ four-page spans remain covered by the K.4f kernel copy/lifetime proof. Host,
 UEFI, ABI, formatting, normal-root QEMU, and independent-root QEMU gates
 passed. Evidence: [run 43991339117](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43991339117).
 
+**K.4h in progress:** the capability-checked A/B ring-3 copy proof is being
+extended to the full four-page dynamic buffer. The bounded transfer length is
+16 KiB, with full-span integrity checks and an oversize denial at 16 KiB plus
+one byte. The 256-byte cross-boundary case and the existing two-page behavior
+remain in the same regression matrix.
+
 **Still pending:** general K.3 creation and teardown, remaining K.4 work and
 K.5, production process scheduling, general physical page reclamation, and
 safe arbitrary user mappings. K.1's independent root is a QEMU-verified
