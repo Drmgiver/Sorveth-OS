@@ -1417,8 +1417,9 @@ pub unsafe fn verify_dynamic_user_buffer_spans(pool: &sorveth_frames::FramePool<
             Ok(count) => count,
             Err(_) => return false,
         };
-        let rollback_result =
-            unsafe { map_dynamic_user_buffer_inner(process, MAX_DYNAMIC_USER_BUFFER_PAGES, pool, true) };
+        let rollback_result = unsafe {
+            map_dynamic_user_buffer_inner(process, MAX_DYNAMIC_USER_BUFFER_PAGES, pool, true)
+        };
         let dynamic_claim_empty = match process {
             Process::First => unsafe { FIRST_DYNAMIC_CLAIM }.is_none(),
             Process::Second => unsafe { SECOND_DYNAMIC_CLAIM }.is_none(),
@@ -1453,7 +1454,9 @@ pub unsafe fn verify_dynamic_user_buffer_spans(pool: &sorveth_frames::FramePool<
                 .claim_record_at(original_claim.handle.slot() as usize)
                 .ok()
                 .flatten()
-                .is_none_or(|record| record.references() != 1 || record.mappings() != page_count as u32)
+                .is_none_or(|record| {
+                    record.references() != 1 || record.mappings() != page_count as u32
+                })
             {
                 return false;
             }
@@ -1502,16 +1505,9 @@ pub unsafe fn verify_dynamic_user_buffer_spans(pool: &sorveth_frames::FramePool<
             let last_page = original.virtual_address + (page_count as u64 - 1) * PAGE;
             let tail = [0x96; 31];
             let mut observed_tail = [0u8; 31];
-            if unsafe {
-                crate::user_copy::copy_to_process(process, last_page + 37, &tail)
-            }
-            .is_err()
+            if unsafe { crate::user_copy::copy_to_process(process, last_page + 37, &tail) }.is_err()
                 || unsafe {
-                    crate::user_copy::copy_from_process(
-                        process,
-                        last_page + 37,
-                        &mut observed_tail,
-                    )
+                    crate::user_copy::copy_from_process(process, last_page + 37, &mut observed_tail)
                 }
                 .is_err()
                 || observed_tail != tail
