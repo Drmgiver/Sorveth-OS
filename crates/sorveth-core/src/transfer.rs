@@ -312,6 +312,14 @@ pub fn initialize() -> Option<(u64, u64)> {
     Some((read_handle, foreign_handle))
 }
 
+/// Address of the dynamically mapped buffer used by the transfer probe.
+pub fn buffer_mapping() -> Option<process_roots::Mapping> {
+    if !READY.load(Ordering::Acquire) {
+        return None;
+    }
+    unsafe { (*ptr::addr_of!(STATE)).as_ref().map(|state| state.buffer) }
+}
+
 /// Only test-machine-code generation uses this kernel-initialized token.
 pub fn write_handle() -> Option<u64> {
     if !READY.load(Ordering::Acquire) {
