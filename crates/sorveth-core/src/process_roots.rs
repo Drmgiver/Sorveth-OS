@@ -23,6 +23,8 @@ const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 #[cfg(target_arch = "x86_64")]
 const PAGE: u64 = 4096;
 #[cfg(target_arch = "x86_64")]
+const MAX_DYNAMIC_USER_BUFFER_PAGES: u16 = 4;
+#[cfg(target_arch = "x86_64")]
 const WRITE: u64 = 1 << 1;
 #[cfg(target_arch = "x86_64")]
 const NO_EXECUTE: u64 = 1 << 63;
@@ -903,6 +905,7 @@ pub(crate) unsafe fn audit_inherited_page_tables(
 pub struct Mapping {
     pub virtual_address: u64,
     pub physical_address: u64,
+    pub page_count: u16,
     generation: u32,
 }
 
@@ -1085,6 +1088,7 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
     Some(Mapping {
         virtual_address: user_base(slot)?,
         physical_address,
+        page_count: 2,
         generation: match process {
             Process::First => unsafe { FIRST_CLAIM }?.handle.generation(),
             Process::Second => unsafe { SECOND_CLAIM }?.handle.generation(),
@@ -1092,29 +1096,45 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
     })
 }
 
-/// Allocate, zero, and install one independently owned user buffer page at
-/// leaf index 2 in the process's private page table. The original two-page
-/// bootstrap mapping remains intact at indices 0 and 1.
+/// Allocate, zero, and install a bounded dynamic user-buffer span in the
+/// process's private page table, beginning at leaf index 2. The original
+/// two-page bootstrap mapping remains at leaf indices 0 and 1.
 ///
-/// This bounded K.4e operation supports one dynamic page per bootstrap
-/// process. It requires the kernel root, IRQs off, one CPU, and no running
-/// process. It is a kernel acceptance API, not a user mapping syscall.
+/// At most four pages can be mapped at once per bootstrap process. This is a
+/// kernel acceptance API, not a user mapping syscall.
+///
+/// # Safety
+/// Kernel CR3 active, IRQs masked, one CPU, and no running process.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn map_dynamic_user_buffer(
+    process: Process,
+    page_count: u16,
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<Mapping, Error> {
+    unsafe { map_dynamic_user_buffer_inner(process, page_count, pool, false) }
+}
+
+/// Compatibility entry point for the K.4e one-page buffer check.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn map_dynamic_user_buffer_page(
     process: Process,
     pool: &sorveth_frames::FramePool<256>,
 ) -> Result<Mapping, Error> {
-    unsafe { map_dynamic_user_buffer_page_inner(process, pool, false) }
+    unsafe { map_dynamic_user_buffer(process, 1, pool) }
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn map_dynamic_user_buffer_page_inner(
+unsafe fn map_dynamic_user_buffer_inner(
     process: Process,
+    page_count: u16,
     pool: &sorveth_frames::FramePool<256>,
     inject_failure_after_pte: bool,
 ) -> Result<Mapping, Error> {
     if !MAPPED.load(Ordering::Acquire) {
         return Err(Error::NotMapped);
+    }
+    if page_count == 0 || page_count > MAX_DYNAMIC_USER_BUFFER_PAGES {
+        return Err(Error::VerificationFailed);
     }
     let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
     let active: u64;
@@ -1135,7 +1155,8 @@ unsafe fn map_dynamic_user_buffer_page_inner(
     let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
     let table = tables[table_index];
     if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
-        || read_registered_table_word(table, 2) != Some(0)
+        || (2..2 + page_count as usize)
+            .any(|index| read_registered_table_word(table, index) != Some(0))
     {
         return Err(Error::VerificationFailed);
     }
@@ -1144,52 +1165,70 @@ unsafe fn map_dynamic_user_buffer_page_inner(
         Process::Second => sorveth_frames::FrameOwner::PROCESS_SECOND_DATA,
     };
     let claim = pool
-        .claim_unmapped_for(1, owner)
+        .claim_unmapped_for(page_count as u64, owner)
         .map_err(|_| Error::FrameUnavailable)?;
-    let frame = claim.span.start;
-    if frame == 0 || frame & (PAGE - 1) != 0 {
-        rollback_dynamic_claim(pool, claim, owner, false)?;
-        return Err(Error::FrameUnavailable);
-    }
-    let initialized = crate::root::with_physical_window(frame, |window| {
-        ptr::write_bytes(window, 0, PAGE as usize);
-        ptr::read_volatile(window as *const u64) == 0
-    });
-    let initialized = match initialized {
-        Ok(initialized) => initialized,
-        Err(_) => {
-            rollback_dynamic_claim(pool, claim, owner, false)?;
-            return Err(Error::FrameUnavailable);
+    let mut mapping_refs = 0u16;
+    for index in 0..page_count as u64 {
+        let frame = claim.span.start + index * PAGE;
+        let initialized = crate::root::with_physical_window(frame, |window| {
+            ptr::write_bytes(window, 0, PAGE as usize);
+            ptr::read_volatile(window as *const u64) == 0
+        });
+        match initialized {
+            Ok(true) => {}
+            Ok(false) => {
+                rollback_dynamic_claim(pool, claim, owner, mapping_refs)?;
+                return Err(Error::VerificationFailed);
+            }
+            Err(_) => {
+                rollback_dynamic_claim(pool, claim, owner, mapping_refs)?;
+                return Err(Error::FrameUnavailable);
+            }
         }
-    };
-    if !initialized {
-        rollback_dynamic_claim(pool, claim, owner, false)?;
+    }
+    for expected in 1..=page_count as u32 {
+        let result = pool.retain_mapping(claim.handle, owner);
+        if let Ok(actual) = result {
+            mapping_refs += 1;
+            if actual == expected {
+                continue;
+            }
+        }
+        rollback_dynamic_claim(pool, claim, owner, mapping_refs)?;
         return Err(Error::VerificationFailed);
     }
-    let retained = pool.retain_mapping(claim.handle, owner);
-    if !matches!(retained, Ok(1)) {
-        rollback_dynamic_claim(pool, claim, owner, false)?;
-        return Err(Error::VerificationFailed);
-    }
-    if write_registered_table_word(table, 2, frame | USER_DATA_FLAGS).is_none()
-        || read_registered_table_word(table, 2) != Some(frame | USER_DATA_FLAGS)
-    {
-        let _ = write_registered_table_word(table, 2, 0);
-        asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
-        asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-        rollback_dynamic_claim(pool, claim, owner, true)?;
-        return Err(Error::PageTableStorageUnavailable);
+    let mut published = 0u16;
+    for index in 0..page_count {
+        let leaf = 2 + index as usize;
+        let frame = claim.span.start + index as u64 * PAGE;
+        if write_registered_table_word(table, leaf, frame | USER_DATA_FLAGS).is_none()
+            || read_registered_table_word(table, leaf) != Some(frame | USER_DATA_FLAGS)
+        {
+            for clear_index in 0..page_count {
+                if write_registered_table_word(table, 2 + clear_index as usize, 0).is_none() {
+                    crate::halt_forever();
+                }
+            }
+            compiler_fence(Ordering::SeqCst);
+            asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+            asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
+            rollback_dynamic_claim(pool, claim, owner, mapping_refs)?;
+            return Err(Error::PageTableStorageUnavailable);
+        }
+        published += 1;
     }
     if inject_failure_after_pte {
-        if write_registered_table_word(table, 2, 0).is_none()
-            || read_registered_table_word(table, 2) != Some(0)
-        {
-            crate::halt_forever();
+        for index in 0..published {
+            if write_registered_table_word(table, 2 + index as usize, 0).is_none()
+                || read_registered_table_word(table, 2 + index as usize) != Some(0)
+            {
+                crate::halt_forever();
+            }
         }
         compiler_fence(Ordering::SeqCst);
         asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
         asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-        rollback_dynamic_claim(pool, claim, owner, true)?;
+        rollback_dynamic_claim(pool, claim, owner, mapping_refs)?;
         return Err(Error::SetupFailureInjected);
     }
     compiler_fence(Ordering::SeqCst);
@@ -1199,23 +1238,29 @@ unsafe fn map_dynamic_user_buffer_page_inner(
     }
     Ok(Mapping {
         virtual_address: user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE,
-        physical_address: frame,
+        physical_address: claim.span.start,
+        page_count,
         generation: claim.handle.generation(),
     })
 }
 
-/// Unmap and recycle the dynamic page identified by its exact descriptor.
-/// An active copy pin (or stale descriptor) makes this fail before the PTE is
-/// changed. TLB translations are flushed on this CPU before releasing the
-/// mapping reference and zeroing the page.
+/// Unmap and recycle a dynamic span identified by its exact descriptor.
+/// Outstanding copy pins or stale descriptors are rejected before any PTE
+/// changes. The selected root is reloaded before releasing mapping references.
+///
+/// # Safety
+/// Kernel CR3 active, IRQs masked, one CPU, and no running process.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn unmap_dynamic_user_buffer_page(
+pub unsafe fn unmap_dynamic_user_buffer(
     process: Process,
     mapping: Mapping,
     pool: &sorveth_frames::FramePool<256>,
 ) -> Result<(), Error> {
     if !MAPPED.load(Ordering::Acquire) {
         return Err(Error::NotMapped);
+    }
+    if mapping.page_count == 0 || mapping.page_count > MAX_DYNAMIC_USER_BUFFER_PAGES {
+        return Err(Error::VerificationFailed);
     }
     let kernel = crate::root::kernel_root_physical().ok_or(Error::KernelUnavailable)?;
     let active: u64;
@@ -1234,6 +1279,7 @@ pub unsafe fn unmap_dynamic_user_buffer_page(
     let expected_virtual = user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE;
     if mapping.virtual_address != expected_virtual
         || mapping.physical_address != claim.span.start
+        || mapping.page_count as u64 != claim.span.pages
         || mapping.generation != claim.handle.generation()
         || mapping.physical_address & (PAGE - 1) != 0
     {
@@ -1251,7 +1297,7 @@ pub unsafe fn unmap_dynamic_user_buffer_page(
         || record.owner() != owner
         || record.span() != claim.span
         || record.references() != 1
-        || record.mappings() != 1
+        || record.mappings() != mapping.page_count as u32
         || record.is_quarantined()
     {
         return Err(Error::VerificationFailed);
@@ -1259,22 +1305,32 @@ pub unsafe fn unmap_dynamic_user_buffer_page(
     let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
     let table = tables[table_index];
     if !matches!(read_registered_table_word(root, slot as usize), Some(entry) if entry & PRESENT != 0)
-        || read_registered_table_word(table, 2) != Some(claim.span.start | USER_DATA_FLAGS)
+        || (0..mapping.page_count).any(|index| {
+            read_registered_table_word(table, 2 + index as usize)
+                != Some(claim.span.start + index as u64 * PAGE | USER_DATA_FLAGS)
+        })
     {
         return Err(Error::VerificationFailed);
     }
-    write_registered_table_word(table, 2, 0).ok_or(Error::PageTableStorageUnavailable)?;
+    for index in 0..mapping.page_count {
+        write_registered_table_word(table, 2 + index as usize, 0)
+            .ok_or(Error::PageTableStorageUnavailable)?;
+    }
     compiler_fence(Ordering::SeqCst);
-    // Load the selected root while still in CPL0, then return to the kernel
-    // root. This flushes any non-global cached translation for its user page.
     asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
     asm!("mov cr3, {}", in(reg) kernel, options(nostack, preserves_flags));
-    if unsafe { pool.release_mapping(claim.handle, owner) }.map_err(|_| Error::FrameUnavailable)?
-        != 0
-        || pool
-            .release_claim_reference(claim.handle, owner)
+    for expected_remaining in (0..mapping.page_count as u32).rev() {
+        if unsafe { pool.release_mapping(claim.handle, owner) }
             .map_err(|_| Error::FrameUnavailable)?
-            != 0
+            != expected_remaining
+        {
+            return Err(Error::VerificationFailed);
+        }
+    }
+    if pool
+        .release_claim_reference(claim.handle, owner)
+        .map_err(|_| Error::FrameUnavailable)?
+        != 0
     {
         return Err(Error::VerificationFailed);
     }
@@ -1290,19 +1346,33 @@ pub unsafe fn unmap_dynamic_user_buffer_page(
     Ok(())
 }
 
+/// K.4e compatibility entry point for one dynamic page.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn unmap_dynamic_user_buffer_page(
+    process: Process,
+    mapping: Mapping,
+    pool: &sorveth_frames::FramePool<256>,
+) -> Result<(), Error> {
+    if mapping.page_count != 1 {
+        return Err(Error::VerificationFailed);
+    }
+    unsafe { unmap_dynamic_user_buffer(process, mapping, pool) }
+}
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn rollback_dynamic_claim(
     pool: &sorveth_frames::FramePool<256>,
     claim: sorveth_frames::OwnedSpan,
     owner: sorveth_frames::FrameOwner,
-    mapped: bool,
+    mapping_refs: u16,
 ) -> Result<(), Error> {
-    if mapped
-        && unsafe { pool.release_mapping(claim.handle, owner) }
+    for expected_remaining in (0..mapping_refs as u32).rev() {
+        if unsafe { pool.release_mapping(claim.handle, owner) }
             .map_err(|_| Error::FrameUnavailable)?
-            != 0
-    {
-        return Err(Error::VerificationFailed);
+            != expected_remaining
+        {
+            return Err(Error::VerificationFailed);
+        }
     }
     if pool
         .release_claim_reference(claim.handle, owner)
@@ -1318,18 +1388,27 @@ unsafe fn rollback_dynamic_claim(
         .map_err(|_| Error::FrameUnavailable)
 }
 
-/// QEMU proof for a bounded dynamic buffer lifetime: allocate and zero a page,
-/// copy through its user VA, prove a live copy pin blocks unmapping, remove
-/// and recycle it, then reject a stale descriptor after the same VA is reused.
+/// QEMU proof for variable-length dynamic buffers. Setup rollback, full-span
+/// zeroing, cross-page copies, pin-protected unmap, teardown denial, reuse,
+/// and stale-descriptor rejection are checked in both process roots.
 ///
 /// # Safety
 /// Kernel root active, interrupts disabled, and only the bootstrap CPU can
 /// mutate these process roots or the frame ledger.
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FramePool<256>) -> bool {
+pub unsafe fn verify_dynamic_user_buffer_spans(pool: &sorveth_frames::FramePool<256>) -> bool {
     use sorveth_paging::{user_range::validate_user_range, user_walk::UserAccess};
 
+    let pattern: [u8; 256] =
+        core::array::from_fn(|index| (index as u8).wrapping_mul(19).wrapping_add(0x6d));
     for process in [Process::First, Process::Second] {
+        let table_index = match process {
+            Process::First => 2,
+            Process::Second => 5,
+        };
+        let Some(tables) = process_table_frames() else {
+            return false;
+        };
         let pages_before = match pool.status() {
             Ok(status) => status.available_pages,
             Err(_) => return false,
@@ -1338,14 +1417,8 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FrameP
             Ok(count) => count,
             Err(_) => return false,
         };
-        let table_index = match process {
-            Process::First => 2,
-            Process::Second => 5,
-        };
-        let Some(tables) = process_table_frames() else {
-            return false;
-        };
-        let rollback_result = unsafe { map_dynamic_user_buffer_page_inner(process, pool, true) };
+        let rollback_result =
+            unsafe { map_dynamic_user_buffer_inner(process, MAX_DYNAMIC_USER_BUFFER_PAGES, pool, true) };
         let dynamic_claim_empty = match process {
             Process::First => unsafe { FIRST_DYNAMIC_CLAIM }.is_none(),
             Process::Second => unsafe { SECOND_DYNAMIC_CLAIM }.is_none(),
@@ -1358,108 +1431,159 @@ pub unsafe fn verify_dynamic_user_buffer_lifecycle(pool: &sorveth_frames::FrameP
             || !pages_unchanged
             || !claims_unchanged
             || !dynamic_claim_empty
-            || read_registered_table_word(tables[table_index], 2) != Some(0)
+            || (2..2 + MAX_DYNAMIC_USER_BUFFER_PAGES as usize)
+                .any(|index| read_registered_table_word(tables[table_index], index) != Some(0))
         {
             return false;
         }
-        let original = match unsafe { map_dynamic_user_buffer_page(process, pool) } {
-            Ok(mapping) => mapping,
-            Err(_) => return false,
-        };
-        if unsafe { teardown_private_pages(pool) } != Err(Error::ProcessMappingsStillActive) {
-            return false;
-        }
-        let original_claim = claim_for_data_frame(process, original.physical_address);
-        let (Some(original_claim), Some(primary)) = (
-            original_claim,
-            match process {
-                Process::First => unsafe { FIRST_CLAIM },
-                Process::Second => unsafe { SECOND_CLAIM },
-            },
-        ) else {
-            return false;
-        };
-        if original_claim.span.start != original.physical_address {
-            return false;
-        }
-        let payload: [u8; 31] = core::array::from_fn(|index| (index as u8).wrapping_mul(37) ^ 0xa6);
-        let mut observed = [0u8; 31];
-        if unsafe {
-            crate::user_copy::copy_from_process(process, original.virtual_address, &mut observed)
-        }
-        .is_err()
-            || observed.iter().any(|byte| *byte != 0)
-        {
-            return false;
-        }
-        if unsafe {
-            crate::user_copy::copy_to_process(process, original.virtual_address + 19, &payload)
-        }
-        .is_err()
-            || unsafe {
-                crate::user_copy::copy_from_process(
+
+        for page_count in [1, 2, MAX_DYNAMIC_USER_BUFFER_PAGES] {
+            let original = match unsafe { map_dynamic_user_buffer(process, page_count, pool) } {
+                Ok(mapping) => mapping,
+                Err(_) => return false,
+            };
+            if unsafe { teardown_private_pages(pool) } != Err(Error::ProcessMappingsStillActive) {
+                return false;
+            }
+            let original_claim = match claim_for_data_frame(process, original.physical_address) {
+                Some(claim) if claim.span.pages == page_count as u64 => claim,
+                _ => return false,
+            };
+            if pool
+                .claim_record_at(original_claim.handle.slot() as usize)
+                .ok()
+                .flatten()
+                .is_none_or(|record| record.references() != 1 || record.mappings() != page_count as u32)
+            {
+                return false;
+            }
+
+            // Every page starts zeroed, including the last page in a multi-page span.
+            for index in 0..page_count {
+                let mut observed = [0xffu8; 31];
+                if unsafe {
+                    crate::user_copy::copy_from_process(
+                        process,
+                        original.virtual_address + index as u64 * PAGE,
+                        &mut observed,
+                    )
+                }
+                .is_err()
+                    || observed.iter().any(|byte| *byte != 0)
+                {
+                    return false;
+                }
+            }
+
+            if page_count >= 2 {
+                let mut observed = [0u8; 256];
+                let boundary = original.virtual_address + PAGE - 128;
+                if unsafe { crate::user_copy::copy_to_process(process, boundary, &pattern) }
+                    .is_err()
+                    || unsafe {
+                        crate::user_copy::copy_from_process(process, boundary, &mut observed)
+                    }
+                    .is_err()
+                    || observed != pattern
+                {
+                    return false;
+                }
+            } else if unsafe {
+                crate::user_copy::copy_to_process(
                     process,
-                    original.virtual_address + 19,
-                    &mut observed,
+                    original.virtual_address + PAGE - 31,
+                    &pattern[..31],
                 )
             }
             .is_err()
-            || observed != payload
-        {
-            return false;
-        }
-        let range = match validate_user_range(original.virtual_address, 1) {
-            Ok(range) => range,
-            Err(_) => return false,
-        };
-        let pages = match unsafe { walk_process_user_range(process, range, UserAccess::Read) } {
-            Ok(pages) => pages,
-            Err(_) => return false,
-        };
-        let pin = match pin_user_pages(process, &pages) {
-            Ok(pin) => pin,
-            Err(_) => return false,
-        };
-        if unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }
-            != Err(Error::VerificationFailed)
-        {
-            return false;
-        }
-        drop(pin);
-        if unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }.is_err()
-            || claim_for_data_frame(process, original.physical_address).is_some()
-        {
-            return false;
-        }
-        let recycled = match unsafe { map_dynamic_user_buffer_page(process, pool) } {
-            Ok(mapping) => mapping,
-            Err(_) => return false,
-        };
-        let recycled_claim = match claim_for_data_frame(process, recycled.physical_address) {
-            Some(claim) => claim,
-            None => return false,
-        };
-        observed.fill(0xff);
-        if unsafe {
-            crate::user_copy::copy_from_process(process, recycled.virtual_address, &mut observed)
-        }
-        .is_err()
-            || observed.iter().any(|byte| *byte != 0)
-        {
-            return false;
-        }
-        if recycled.virtual_address != original.virtual_address
-            || (recycled.physical_address == original.physical_address
-                && recycled_claim.handle.generation() != original_claim.handle.generation() + 1)
-            || unsafe { unmap_dynamic_user_buffer_page(process, original, pool) }
+            {
+                return false;
+            }
+            let last_page = original.virtual_address + (page_count as u64 - 1) * PAGE;
+            let tail = [0x96; 31];
+            let mut observed_tail = [0u8; 31];
+            if unsafe {
+                crate::user_copy::copy_to_process(process, last_page + 37, &tail)
+            }
+            .is_err()
+                || unsafe {
+                    crate::user_copy::copy_from_process(
+                        process,
+                        last_page + 37,
+                        &mut observed_tail,
+                    )
+                }
+                .is_err()
+                || observed_tail != tail
+            {
+                return false;
+            }
+
+            let bytes = page_count as u64 * PAGE;
+            let range = match validate_user_range(original.virtual_address, bytes) {
+                Ok(range) => range,
+                Err(_) => return false,
+            };
+            let pages = match unsafe { walk_process_user_range(process, range, UserAccess::Read) } {
+                Ok(pages) if pages.page_count() == page_count as usize => pages,
+                _ => return false,
+            };
+            let pin = match pin_user_pages(process, &pages) {
+                Ok(pin) => pin,
+                Err(_) => return false,
+            };
+            if unsafe { unmap_dynamic_user_buffer(process, original, pool) }
                 != Err(Error::VerificationFailed)
-        {
-            return false;
-        }
-        if unsafe { unmap_dynamic_user_buffer_page(process, recycled, pool) }.is_err()
-            || primary.span.start == recycled.physical_address
-        {
-            return false;
+            {
+                return false;
+            }
+            drop(pin);
+            if unsafe { unmap_dynamic_user_buffer(process, original, pool) }.is_err()
+                || claim_for_data_frame(process, original.physical_address).is_some()
+            {
+                return false;
+            }
+
+            let recycled = match unsafe { map_dynamic_user_buffer(process, page_count, pool) } {
+                Ok(mapping) => mapping,
+                Err(_) => return false,
+            };
+            let recycled_claim = match claim_for_data_frame(process, recycled.physical_address) {
+                Some(claim) if claim.span.pages == page_count as u64 => claim,
+                _ => return false,
+            };
+            for index in 0..page_count {
+                let mut observed = [0xffu8; 31];
+                if unsafe {
+                    crate::user_copy::copy_from_process(
+                        process,
+                        recycled.virtual_address + index as u64 * PAGE,
+                        &mut observed,
+                    )
+                }
+                .is_err()
+                    || observed.iter().any(|byte| *byte != 0)
+                {
+                    return false;
+                }
+            }
+            if recycled.virtual_address != original.virtual_address
+                || recycled.page_count != original.page_count
+                || (recycled.physical_address == original.physical_address
+                    && recycled_claim.handle.generation() != original_claim.handle.generation() + 1)
+                || unsafe { unmap_dynamic_user_buffer(process, original, pool) }
+                    != Err(Error::VerificationFailed)
+                || unsafe { unmap_dynamic_user_buffer(process, recycled, pool) }.is_err()
+            {
+                return false;
+            }
+            let pages_restored = pool
+                .status()
+                .is_ok_and(|status| status.available_pages == pages_before);
+            let claims_restored = pool.claim_count().is_ok_and(|count| count == claims_before);
+            if !pages_restored || !claims_restored {
+                return false;
+            }
         }
     }
     true
