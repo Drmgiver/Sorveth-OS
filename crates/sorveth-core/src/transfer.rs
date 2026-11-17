@@ -6,7 +6,7 @@
 //! are opaque, generation-bound memory capabilities.
 //!
 //! This QEMU gateway exercises bounded 8-byte, 256-byte and full-span
-//! transfers to the two permanent private bootstrap pages. Not a production
+//! transfers to a four-page dynamic buffer. Not a production
 //! ABI: no preemption, SMP, page reclaim, arbitrary pageable buffers, or fault
 //! recovery exists.
 
@@ -29,7 +29,7 @@ const OBJECT_B: ObjectId = ObjectId(0x5a02);
 const PATTERN: [u8; 8] = [0xd5, 0x31, 0x28, 0x7b, 0x9a, 0xee, 0x40, 0x16];
 pub const BOUNDARY_COPY_BYTES: usize = 256;
 pub const BOUNDARY_COPY_OFFSET: u64 = PAGE_BYTES - (BOUNDARY_COPY_BYTES as u64 / 2);
-pub const FULL_SPAN_COPY_BYTES: usize = (2 * PAGE_BYTES) as usize;
+pub const FULL_SPAN_COPY_BYTES: usize = (4 * PAGE_BYTES) as usize;
 
 pub const SYS_COPY_IN: u64 = 0x70;
 pub const SYS_COPY_OUT: u64 = 0x71;
@@ -110,9 +110,13 @@ fn object(process: Process) -> ObjectId {
 /// # Safety
 /// Kernel CR3 active, CPL0 on the only CPU, maskable IRQs off, and the
 /// ledger-owned frame is never unmapped or reclaimed during this operation.
-unsafe fn span_checksum(physical: u64, replacements: &[(usize, &[u8])]) -> Option<u64> {
+unsafe fn span_checksum(
+    physical: u64,
+    replacements: &[(usize, &[u8])],
+    page_count: usize,
+) -> Option<u64> {
     let mut checksum = 0xcbf2_9ce4_8422_2325u64;
-    for page_index in 0..2usize {
+    for page_index in 0..page_count {
         let page = physical + page_index as u64 * PAGE_BYTES;
         crate::root::with_physical_window(page, |window| {
             for page_offset in 0..PAGE_BYTES as usize {
@@ -134,10 +138,14 @@ unsafe fn span_checksum(physical: u64, replacements: &[(usize, &[u8])]) -> Optio
     Some(checksum)
 }
 
-unsafe fn frame_checksum(physical: u64, override_word: Option<[u8; 8]>) -> Option<u64> {
+unsafe fn frame_checksum(
+    physical: u64,
+    override_word: Option<[u8; 8]>,
+    page_count: usize,
+) -> Option<u64> {
     match override_word.as_ref() {
-        Some(word) => span_checksum(physical, &[(0, &word[..])]),
-        None => span_checksum(physical, &[]),
+        Some(word) => span_checksum(physical, &[(0, &word[..])], page_count),
+        None => span_checksum(physical, &[], page_count),
     }
 }
 
@@ -181,8 +189,8 @@ unsafe fn integrity_holds(state: &State, expected_owner: u64) -> bool {
         Some(page) => page,
         None => return false,
     };
-    frame_checksum(own.physical_address, None) == Some(expected_owner)
-        && frame_checksum(foreign.physical_address, None) == Some(state.foreign_checksum)
+    frame_checksum(own.physical_address, None, own.page_count as usize) == Some(expected_owner)
+        && frame_checksum(foreign.physical_address, None, 2) == Some(state.foreign_checksum)
         && process_roots::checked_process_root(state.process) == Some(state.root)
         && process_roots::checked_process_root(other()).is_some()
         && state
@@ -235,7 +243,7 @@ pub fn initialize() -> Option<(u64, u64)> {
     let process = owner();
     let root = unsafe { process_roots::checked_process_root(process) }?;
     let own =
-        unsafe { process_roots::map_dynamic_user_buffer(process, 2, &crate::FRAME_POOL).ok()? };
+        unsafe { process_roots::map_dynamic_user_buffer(process, 4, &crate::FRAME_POOL).ok()? };
     let foreign = process_roots::mapped_page(other())?;
     if own.physical_address == foreign.physical_address {
         return None;
@@ -257,8 +265,8 @@ pub fn initialize() -> Option<(u64, u64)> {
         .raw();
     let original = unsafe { process_word(own.physical_address) }?;
     let foreign_original = unsafe { process_word(foreign.physical_address) }?;
-    let original_checksum = unsafe { frame_checksum(own.physical_address, None) }?;
-    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN)) }?;
+    let original_checksum = unsafe { frame_checksum(own.physical_address, None, own.page_count as usize) }?;
+    let written_checksum = unsafe { frame_checksum(own.physical_address, Some(PATTERN), own.page_count as usize) }?;
     unsafe {
         crate::user_copy::copy_from_process(
             process,
@@ -276,15 +284,17 @@ pub fn initialize() -> Option<(u64, u64)> {
                 (0, &PATTERN),
                 (BOUNDARY_COPY_OFFSET as usize, &boundary_pattern),
             ],
+            own.page_count as usize,
         )
     }?;
     let full_written_checksum = unsafe {
         span_checksum(
             own.physical_address,
             &[(0, &*ptr::addr_of!(FULL_SPAN_PATTERN))],
+            own.page_count as usize,
         )
     }?;
-    let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None) }?;
+    let foreign_checksum = unsafe { frame_checksum(foreign.physical_address, None, 2) }?;
     unsafe {
         ptr::write(
             ptr::addr_of_mut!(STATE),
@@ -683,7 +693,8 @@ pub unsafe fn dispatch(
             )
             .is_err()
                 || process_word(mapped.physical_address) != Some(state.original)
-                || frame_checksum(mapped.physical_address, None) != Some(state.original_checksum)
+                || frame_checksum(mapped.physical_address, None, mapped.page_count as usize)
+                    != Some(state.original_checksum)
             {
                 fatal();
             }
@@ -741,7 +752,7 @@ pub unsafe fn dispatch(
             fatal();
         }
         crate::serial::write_line(
-            "SORVETH M2-K.4g: ring-3 copy gateway verified on a dynamic two-page buffer span",
+            "SORVETH M2-K.4h: ring-3 copy gateway verified on a dynamic four-page buffer span",
         );
         crate::serial::write_line("SORVETH M2-J.5: ring-3 memory syscalls authorized and denied");
         crate::serial::write_line(
