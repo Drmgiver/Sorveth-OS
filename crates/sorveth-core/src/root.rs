@@ -979,6 +979,7 @@ static mut USER_PT: RootPage = RootPage([0; 512]);
 struct ProbeProgram {
     bytes: [u8; 2048],
     len: usize,
+    fault_recovery: Option<(usize, usize)>,
 }
 
 #[cfg(feature = "qemu-user")]
@@ -987,6 +988,7 @@ impl ProbeProgram {
         Self {
             bytes: [0; 2048],
             len: 0,
+            fault_recovery: None,
         }
     }
 
@@ -1001,6 +1003,10 @@ impl ProbeProgram {
         self.bytes[self.len..end].copy_from_slice(bytes);
         self.len = end;
         Ok(())
+    }
+
+    fn set_fault_recovery(&mut self, fault_offset: usize, recovery_offset: usize) {
+        self.fault_recovery = Some((fault_offset, recovery_offset));
     }
 
     fn set_rax(&mut self, value: u32) -> Result<(), Error> {
@@ -1212,7 +1218,16 @@ fn build_isolation_probe() -> Result<ProbeProgram, Error> {
     )?;
     program.emit(&[0x48, 0xb8])?; // movabs rax, foreign virtual address
     program.emit(&foreign.virtual_address.to_le_bytes())?;
-    program.emit(&[0x48, 0x8b, 0x00, 0xeb, 0xfe])?; // mov rax,[rax]; spin
+    let fault_offset = program.len;
+    program.emit(&[0x48, 0x8b, 0x00])?; // mov rax,[rax] faults on the foreign page
+    program.emit(&[0xeb, 0xfe])?; // a successful foreign read must never reach recovery
+    let recovery_offset = program.len;
+    program.trap(
+        crate::isolation::RECOVERY_SIGNAL as u32,
+        crate::isolation::RECOVERY_REPLY as u32,
+    )?;
+    program.emit(&[0xeb, 0xfe])?; // no return to unknown code after confirmation
+    program.set_fault_recovery(fault_offset, recovery_offset);
     Ok(program)
 }
 
@@ -1288,6 +1303,18 @@ pub fn prepare_user_probe(
             })
         })?
         .ok_or(Error::NoFreeVirtualSlot)?;
+        let entry = (slot as u64) << 39;
+        #[cfg(any(feature = "qemu-isolate-a", feature = "qemu-isolate-b"))]
+        {
+            let (fault_offset, recovery_offset) =
+                code_bytes.fault_recovery.ok_or(Error::VerificationFailed)?;
+            if !crate::isolation::configure_fault_recovery(
+                entry + fault_offset as u64,
+                entry + recovery_offset as u64,
+            ) {
+                return Err(Error::VerificationFailed);
+            }
+        }
         let pdpt = ptr::addr_of_mut!(USER_PDPT).cast::<u64>() as u64;
         let pd = ptr::addr_of_mut!(USER_PD).cast::<u64>() as u64;
         let pt = ptr::addr_of_mut!(USER_PT).cast::<u64>() as u64;
@@ -1349,7 +1376,6 @@ pub fn prepare_user_probe(
         with_physical_window(root, |window| {
             ptr::write_volatile((window as *mut u64).add(slot), pdpt | PRESENT | WRITE | U);
         })?;
-        let entry = (slot as u64) << 39;
         let user_stack = entry + 8192 - 16;
         core::arch::asm!("invlpg [{}]", in(reg) entry, options(nostack, preserves_flags));
         core::arch::asm!(
