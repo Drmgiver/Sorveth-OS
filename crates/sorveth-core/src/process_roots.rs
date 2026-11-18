@@ -490,7 +490,7 @@ pub(crate) fn release_root_identity(identity: ProcessIdentity) -> Result<(), Err
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn root_reference_count(process: Process) -> Option<u32> {
-    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(process)]?;
+    let claim = unsafe { PROCESS_ROOTS[process_index(process)] }.claim?;
     crate::FRAME_POOL
         .claim_record_at(claim.handle.slot() as usize)
         .ok()?
