@@ -162,6 +162,17 @@ run 43793651438](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43793651438
 
 **K.3j accepted:** a single per-slot `ProcessRecord` now owns each bootstrap root, root claim, primary user-data frame and generation, primary data claim, and dynamic-buffer claim. Root retirement clears live roots and claims but preserves the last data-frame generation so the next allocation can be checked against the exact next generation. Host, UEFI, ABI, formatting, normal-root QEMU, independent-root QEMU, and monitor checks passed on [feature run 44395462587](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44395462587). The runtime remains a fixed two-slot bootstrap; general process registration and SMP support remain pending.
 
+**K.3k accepted:** generation-safe scheduler tasks can now share one process
+address space. Each task binding retains a separate reference to that root, and
+the teardown preflight leaves mappings intact until all bindings exit. The QEMU
+lifecycle probe schedules two tasks on process A and one on B, checks blocked,
+stale, and replacement task behavior, and confirms the root reference count
+returns to the owner-only value. Host, UEFI, ABI, formatting, normal-root QEMU,
+independent-root QEMU, and both monitor checks passed on [feature run
+44397828045](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44397828045).
+This remains scheduler bookkeeping on two bootstrap address spaces; per-task
+CPU contexts, preemption, and general process creation remain pending.
+
 **K.4a accepted:** each bounded user copy now pins every resolved process
 data-frame claim for its full operation and releases the generation-bound
 references on every return path. Teardown rejects an outstanding copy pin;

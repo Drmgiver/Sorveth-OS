@@ -9,7 +9,7 @@ Status as of 2026-11-18. Each milestone is accepted only on observable evidence.
 | M0-C | Interactive monitor | COM1 input, bounded editor, five built-in commands, QEMU-driven replies | Verified in QEMU CI |
 | M1 | Memory/CPU foundation | Persistent frame allocation, page tables, IDT, interrupts, dedicated stack | Frame ledger, owned PML4/private pages, IDT/TSS/IST and dedicated stack verified in QEMU; most firmware mappings remain shared |
 | M2 | Real microkernel separation | User-mode process, kernel syscalls, message IPC, scheduler and capability-checked mediation | M2-A..J accepted as bounded host/QEMU proofs; actual generic process runtime and preemptive scheduling still pending |
-| M2-K | Managed memory and process lifetime | Firmware-independent mapping, dynamic frames, process lifecycle and generalized transfers | K.1 partial; K.2 accepted; K.3 accepted for two fixed bootstrap slots through K.3j; K.4 accepted through K.4j; K.5 bounded regression matrix accepted |
+| M2-K | Managed memory and process lifetime | Firmware-independent mapping, dynamic frames, process lifecycle and generalized transfers | K.1 partial; K.2 accepted; K.3 accepted for two fixed bootstrap slots through K.3k; K.4 accepted through K.4j; K.5 bounded regression matrix accepted |
 | M3 | User-space system services | Separate storage/input/display driver services and initial resource persistence | Pending |
 | M4 | Sorveth Space desktop | Window manager, compositor, keyboard/mouse, native resource explorer, desktop runs without AI | Pending |
 | M5 | Native app platform | Manifests, action contracts, editable resources, Forge, Atlas, Frame, Script | Pending |
