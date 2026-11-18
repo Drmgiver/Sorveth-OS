@@ -450,7 +450,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     if scheduler.authorize(old, resolve) != Err(Error::Task(TaskError::InvalidTask)) {
         return Err(Error::IncorrectSelection);
     }
-    let replacement = scheduler.spawn(ObjectId(0x1_403), Process::First)?;
+    let replacement = scheduler.spawn(ObjectId(0x1_404), Process::First)?;
     if replacement == old
         || scheduler.authorize(old, resolve) != Err(Error::Task(TaskError::InvalidTask))
         || scheduler.authorize(replacement, resolve)?.root != root_a
