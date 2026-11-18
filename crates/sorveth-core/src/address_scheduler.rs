@@ -70,7 +70,8 @@ impl KernelRootGuard {
         if active & CR3_ADDRESS_MASK != kernel {
             return Err(Error::HardwareMismatch);
         }
-        if process_roots::process_root_for_identity(identity).map(|(root, _)| root) != Some(target) {
+        if process_roots::process_root_for_identity(identity).map(|(root, _)| root) != Some(target)
+        {
             return Err(Error::InvalidRoot);
         }
         process_roots::retain_root_identity(identity)
@@ -127,8 +128,8 @@ impl<const N: usize> AddressScheduler<N> {
             return Err(Error::DuplicateProcess);
         }
         let identity = if self.owns_root_references {
-            let identity = process_roots::process_identity(process)
-                .ok_or(Error::RootReferenceUnavailable)?;
+            let identity =
+                process_roots::process_identity(process).ok_or(Error::RootReferenceUnavailable)?;
             process_roots::retain_root_identity(identity)
                 .map_err(|_| Error::RootReferenceUnavailable)?;
             identity
@@ -541,8 +542,14 @@ mod tests {
         assert_eq!(s.block(old), Err(Error::Task(TaskError::InvalidTask)));
         let replacement = s.spawn(ObjectId(21), Process::First).unwrap();
         assert_ne!(old, replacement);
-        assert_eq!(s.lookup(replacement).map(ProcessIdentity::process), Ok(Process::First));
-        assert_eq!(s.lookup(other).map(ProcessIdentity::process), Ok(Process::Second));
+        assert_eq!(
+            s.lookup(replacement).map(ProcessIdentity::process),
+            Ok(Process::First)
+        );
+        assert_eq!(
+            s.lookup(other).map(ProcessIdentity::process),
+            Ok(Process::Second)
+        );
         assert_eq!(s.lookup(old), Err(Error::Task(TaskError::InvalidTask)));
     }
 
