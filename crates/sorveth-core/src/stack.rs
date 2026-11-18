@@ -459,6 +459,9 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     crate::serial::write_line("SORVETH M2-I HARDENING: blocked, stale and damaged mappings denied");
     crate::serial::write_line(
+        "SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks",
+    );
+    crate::serial::write_line(
         "SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified",
     );
     crate::serial::write_line(
