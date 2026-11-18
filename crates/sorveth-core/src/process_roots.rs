@@ -1081,8 +1081,12 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
 #[cfg(target_arch = "x86_64")]
 fn claim_for_data_frame(process: Process, frame: u64) -> Option<sorveth_frames::OwnedSpan> {
     let (primary, dynamic) = match process {
-        Process::First => (unsafe { PROCESS_RECORDS[0].data_claim }, unsafe { PROCESS_RECORDS[0].dynamic_claim }),
-        Process::Second => (unsafe { PROCESS_RECORDS[1].data_claim }, unsafe { PROCESS_RECORDS[1].dynamic_claim }),
+        Process::First => (unsafe { PROCESS_RECORDS[0].data_claim }, unsafe {
+            PROCESS_RECORDS[0].dynamic_claim
+        }),
+        Process::Second => (unsafe { PROCESS_RECORDS[1].data_claim }, unsafe {
+            PROCESS_RECORDS[1].dynamic_claim
+        }),
     };
     [primary, dynamic]
         .into_iter()
@@ -1173,8 +1177,12 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
         physical_address,
         page_count: 2,
         generation: match process {
-            Process::First => unsafe { PROCESS_RECORDS[0].data_claim }?.handle.generation(),
-            Process::Second => unsafe { PROCESS_RECORDS[1].data_claim }?.handle.generation(),
+            Process::First => unsafe { PROCESS_RECORDS[0].data_claim }?
+                .handle
+                .generation(),
+            Process::Second => unsafe { PROCESS_RECORDS[1].data_claim }?
+                .handle
+                .generation(),
         },
     })
 }
@@ -2229,7 +2237,9 @@ unsafe fn map_private_pages_inner(
         if MAPPED.load(Ordering::Acquire) {
             return Err(Error::AlreadyMapped);
         }
-        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some() || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         let (first_root, first_slot) =
@@ -2601,7 +2611,9 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
         }
-        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some() || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         let pages_before = pool
@@ -2820,7 +2832,9 @@ pub unsafe fn teardown_address_spaces(pool: &sorveth_frames::FramePool<256>) -> 
         {
             return Err(Error::RootReferenceUnavailable);
         }
-        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some() || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         if MAPPED.load(Ordering::Acquire) {
