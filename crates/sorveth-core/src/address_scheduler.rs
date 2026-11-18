@@ -21,7 +21,6 @@ const SENTINEL_SALT: u64 = 0x4949_4900_0000_0000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Task(TaskError),
-    DuplicateProcess,
     MissingBinding,
     MissingAddressSpace,
     IncorrectSelection,
@@ -119,14 +118,6 @@ impl<const N: usize> AddressScheduler<N> {
     }
 
     fn spawn(&mut self, object: ObjectId, process: Process) -> Result<TaskId, Error> {
-        if self
-            .bindings
-            .iter()
-            .flatten()
-            .any(|(_, identity)| identity.process() == process)
-        {
-            return Err(Error::DuplicateProcess);
-        }
         let identity = if self.owns_root_references {
             let identity =
                 process_roots::process_identity(process).ok_or(Error::RootReferenceUnavailable)?;
@@ -426,10 +417,11 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     if resolve(identity_a) != Some(root_a) || resolve(identity_b) != Some(root_b) {
         return Err(Error::MissingAddressSpace);
     }
-    let mut scheduler = AddressScheduler::<2>::new();
+    let mut scheduler = AddressScheduler::<3>::new();
     let old = scheduler.spawn(ObjectId(0x1_401), Process::First)?;
+    let sibling = scheduler.spawn(ObjectId(0x1_403), Process::First)?;
     let other = scheduler.spawn(ObjectId(0x1_402), Process::Second)?;
-    if process_roots::root_reference_count(Process::First) != Some(2)
+    if process_roots::root_reference_count(Process::First) != Some(3)
         || process_roots::root_reference_count(Process::Second) != Some(2)
     {
         return Err(Error::RootReferenceUnavailable);
@@ -448,6 +440,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     }
     scheduler.block(old)?;
     if scheduler.authorize(old, resolve) != Err(Error::BlockedTask)
+        || scheduler.select_next()? != Some((sibling, Process::First))
         || scheduler.select_next()? != Some((other, Process::Second))
     {
         return Err(Error::IncorrectSelection);
@@ -477,7 +470,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
     let decision = scheduler.authorize(replacement, resolve)?;
     {
         let _guard = KernelRootGuard::enter(kernel, decision.root, decision.identity)?;
-        if process_roots::root_reference_count(Process::First) != Some(3) {
+        if process_roots::root_reference_count(Process::First) != Some(4) {
             return Err(Error::RootReferenceUnavailable);
         }
         let current: u64;
@@ -492,6 +485,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
         return Err(Error::HardwareMismatch);
     }
     scheduler.exit(replacement)?;
+    scheduler.exit(sibling)?;
     scheduler.exit(other)?;
     if scheduler.authorize(replacement, resolve) != Err(Error::Task(TaskError::InvalidTask))
         || scheduler.authorize(other, resolve) != Err(Error::Task(TaskError::InvalidTask))
@@ -525,18 +519,16 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_stale_generation_and_capacity_fail_closed() {
-        let mut s = AddressScheduler::<2>::new_without_root_references();
+    fn multiple_tasks_share_a_process_and_stale_ids_fail_closed() {
+        let mut s = AddressScheduler::<3>::new_without_root_references();
         let old = s.spawn(ObjectId(17), Process::First).unwrap();
-        assert_eq!(
-            s.spawn(ObjectId(18), Process::First),
-            Err(Error::DuplicateProcess)
-        );
+        let sibling = s.spawn(ObjectId(18), Process::First).unwrap();
         let other = s.spawn(ObjectId(19), Process::Second).unwrap();
-        assert_eq!(
-            s.spawn(ObjectId(20), Process::First),
-            Err(Error::DuplicateProcess)
-        );
+        assert_ne!(old, sibling);
+        assert_eq!(s.select_next(), Ok(Some((old, Process::First))));
+        assert_eq!(s.select_next(), Ok(Some((sibling, Process::First))));
+        assert_eq!(s.select_next(), Ok(Some((other, Process::Second))));
+
         s.exit(old).unwrap();
         assert_eq!(s.lookup(old), Err(Error::Task(TaskError::InvalidTask)));
         assert_eq!(s.block(old), Err(Error::Task(TaskError::InvalidTask)));
@@ -544,6 +536,10 @@ mod tests {
         assert_ne!(old, replacement);
         assert_eq!(
             s.lookup(replacement).map(ProcessIdentity::process),
+            Ok(Process::First)
+        );
+        assert_eq!(
+            s.lookup(sibling).map(ProcessIdentity::process),
             Ok(Process::First)
         );
         assert_eq!(
