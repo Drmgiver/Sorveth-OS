@@ -178,7 +178,9 @@ impl ProcessIdentity {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", test))]
+/// Synthetic identity for the scheduler's resolver-only unit-test model.
+/// Generation zero cannot resolve a real frame claim.
+#[cfg(target_arch = "x86_64")]
 pub(crate) const fn test_process_identity(process: Process) -> ProcessIdentity {
     ProcessIdentity { process, generation: 0 }
 }
