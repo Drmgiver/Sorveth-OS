@@ -349,8 +349,16 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
         };
         unsafe {
             PROCESS_ROOTS = [
-                ProcessRootRecord { physical: a, slot: slot_a, claim: claims[0] },
-                ProcessRootRecord { physical: b, slot: slot_b, claim: claims[1] },
+                ProcessRootRecord {
+                    physical: a,
+                    slot: slot_a,
+                    claim: claims[0],
+                },
+                ProcessRootRecord {
+                    physical: b,
+                    slot: slot_b,
+                    claim: claims[1],
+                },
             ];
         }
         ROOTS_RETIRED.store(false, Ordering::Release);
