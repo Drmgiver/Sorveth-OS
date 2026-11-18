@@ -47,23 +47,31 @@ const INHERITED_TABLE_CAPACITY: usize = 8192;
 // generation-bound claims. Root claims remain pinned while bootstrap
 // scheduler slots can still select these address spaces.
 #[cfg(target_arch = "x86_64")]
-const PROCESS_ROOT_COUNT: usize = 2;
+const PROCESS_RECORD_COUNT: usize = 2;
 #[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy)]
-struct ProcessRootRecord {
-    physical: u64,
+struct ProcessRecord {
+    root_physical: u64,
     slot: u16,
-    claim: Option<sorveth_frames::OwnedSpan>,
+    root_claim: Option<sorveth_frames::OwnedSpan>,
+    data_frame: u64,
+    data_generation: u64,
+    data_claim: Option<sorveth_frames::OwnedSpan>,
+    dynamic_claim: Option<sorveth_frames::OwnedSpan>,
 }
 #[cfg(target_arch = "x86_64")]
-const EMPTY_PROCESS_ROOT: ProcessRootRecord = ProcessRootRecord {
-    physical: 0,
+const EMPTY_PROCESS_RECORD: ProcessRecord = ProcessRecord {
+    root_physical: 0,
     slot: 0,
-    claim: None,
+    root_claim: None,
+    data_frame: 0,
+    data_generation: 0,
+    data_claim: None,
+    dynamic_claim: None,
 };
 #[cfg(target_arch = "x86_64")]
-static mut PROCESS_ROOTS: [ProcessRootRecord; PROCESS_ROOT_COUNT] =
-    [EMPTY_PROCESS_ROOT; PROCESS_ROOT_COUNT];
+static mut PROCESS_RECORDS: [ProcessRecord; PROCESS_RECORD_COUNT] =
+    [EMPTY_PROCESS_RECORD; PROCESS_RECORD_COUNT];
 // Retain the last retired root handles long enough to verify safe frame reuse.
 #[cfg(target_arch = "x86_64")]
 static mut RETIRED_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
@@ -76,34 +84,17 @@ static READY: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
 static MAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
-static FIRST_FRAME: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
-static SECOND_FRAME: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
-static FIRST_GENERATION: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
-static SECOND_GENERATION: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
 static RECLAIMED_ONCE: AtomicBool = AtomicBool::new(false);
-#[cfg(target_arch = "x86_64")]
-static mut FIRST_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
-#[cfg(target_arch = "x86_64")]
-static mut SECOND_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 // K.4e acceptance uses one independently allocated page per process as a
 // dynamically mapped user buffer. The bootstrap's original two-page span is
 // retained at offsets 0..2; these pages occupy leaf index 2 and have their
 // own generation-bound claims and pin counts.
-#[cfg(target_arch = "x86_64")]
-static mut FIRST_DYNAMIC_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
-#[cfg(target_arch = "x86_64")]
-static mut SECOND_DYNAMIC_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
-
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
     READY.load(Ordering::Acquire)
-        && unsafe { PROCESS_ROOTS }
+        && unsafe { PROCESS_RECORDS }
             .iter()
-            .any(|record| record.physical == frame && frame != 0)
+            .any(|record| record.root_physical == frame && frame != 0)
 }
 
 // The inventory runs on the retained bootstrap stack, but its bounded
@@ -347,17 +338,26 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
                 return Err(error);
             }
         };
+        let previous_records = unsafe { PROCESS_RECORDS };
         unsafe {
-            PROCESS_ROOTS = [
-                ProcessRootRecord {
-                    physical: a,
+            PROCESS_RECORDS = [
+                ProcessRecord {
+                    root_physical: a,
                     slot: slot_a,
-                    claim: claims[0],
+                    root_claim: claims[0],
+                    data_frame: previous_records[0].data_frame,
+                    data_generation: previous_records[0].data_generation,
+                    data_claim: None,
+                    dynamic_claim: None,
                 },
-                ProcessRootRecord {
-                    physical: b,
+                ProcessRecord {
+                    root_physical: b,
                     slot: slot_b,
-                    claim: claims[1],
+                    root_claim: claims[1],
+                    data_frame: previous_records[1].data_frame,
+                    data_generation: previous_records[1].data_generation,
+                    data_claim: None,
+                    dynamic_claim: None,
                 },
             ];
         }
@@ -406,11 +406,11 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     if !READY.load(Ordering::Acquire) {
         return None;
     }
-    let record = unsafe { PROCESS_ROOTS[process_index(process)] };
-    if record.physical == 0 || record.slot == 0 {
+    let record = unsafe { PROCESS_RECORDS[process_index(process)] };
+    if record.root_physical == 0 || record.slot == 0 {
         None
     } else {
-        Some((record.physical, record.slot))
+        Some((record.root_physical, record.slot))
     }
 }
 
@@ -424,7 +424,7 @@ fn process_index(process: Process) -> usize {
 
 #[cfg(target_arch = "x86_64")]
 fn current_root_claim(identity: ProcessIdentity) -> Option<sorveth_frames::OwnedSpan> {
-    let claim = unsafe { PROCESS_ROOTS[process_index(identity.process)] }.claim?;
+    let claim = unsafe { PROCESS_RECORDS[process_index(identity.process)] }.root_claim?;
     if claim.handle.generation() != identity.generation {
         return None;
     }
@@ -447,7 +447,7 @@ fn current_root_claim(identity: ProcessIdentity) -> Option<sorveth_frames::Owned
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn process_identity(process: Process) -> Option<ProcessIdentity> {
     process_root(process)?;
-    let claim = unsafe { PROCESS_ROOTS[process_index(process)] }.claim?;
+    let claim = unsafe { PROCESS_RECORDS[process_index(process)] }.root_claim?;
     current_root_claim(ProcessIdentity {
         process,
         generation: claim.handle.generation(),
@@ -498,7 +498,7 @@ pub(crate) fn release_root_identity(identity: ProcessIdentity) -> Result<(), Err
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn root_reference_count(process: Process) -> Option<u32> {
-    let claim = unsafe { PROCESS_ROOTS[process_index(process)] }.claim?;
+    let claim = unsafe { PROCESS_RECORDS[process_index(process)] }.root_claim?;
     crate::FRAME_POOL
         .claim_record_at(claim.handle.slot() as usize)
         .ok()?
@@ -533,9 +533,9 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
         }
-        let roots = unsafe { PROCESS_ROOTS };
-        let claims = [roots[0].claim, roots[1].claim];
-        let root_frames = [roots[0].physical, roots[1].physical];
+        let roots = unsafe { PROCESS_RECORDS };
+        let claims = [roots[0].root_claim, roots[1].root_claim];
+        let root_frames = [roots[0].root_physical, roots[1].root_physical];
         if claims.iter().any(Option::is_none)
             || root_frames[0] == 0
             || root_frames[1] == 0
@@ -571,7 +571,18 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         // Disable future task resolution before dropping the address-space
         // owner's claim references. The kernel root is already active.
         READY.store(false, Ordering::Release);
-        unsafe { PROCESS_ROOTS = [EMPTY_PROCESS_ROOT; PROCESS_ROOT_COUNT] };
+        unsafe {
+            PROCESS_RECORDS[0].root_physical = 0;
+            PROCESS_RECORDS[0].slot = 0;
+            PROCESS_RECORDS[0].root_claim = None;
+            PROCESS_RECORDS[0].data_claim = None;
+            PROCESS_RECORDS[0].dynamic_claim = None;
+            PROCESS_RECORDS[1].root_physical = 0;
+            PROCESS_RECORDS[1].slot = 0;
+            PROCESS_RECORDS[1].root_claim = None;
+            PROCESS_RECORDS[1].data_claim = None;
+            PROCESS_RECORDS[1].dynamic_claim = None;
+        }
 
         let retired_claims = claims;
         for claim in claims.into_iter().flatten() {
@@ -1026,11 +1037,11 @@ pub(crate) fn pin_user_pages(
     }
     let owner = match process {
         Process::First => {
-            unsafe { FIRST_CLAIM }.ok_or(())?;
+            unsafe { PROCESS_RECORDS[0].data_claim }.ok_or(())?;
             sorveth_frames::FrameOwner::PROCESS_FIRST_DATA
         }
         Process::Second => {
-            unsafe { SECOND_CLAIM }.ok_or(())?;
+            unsafe { PROCESS_RECORDS[1].data_claim }.ok_or(())?;
             sorveth_frames::FrameOwner::PROCESS_SECOND_DATA
         }
     };
@@ -1077,8 +1088,12 @@ pub(crate) fn owns_data_frame(process: Process, frame: u64) -> bool {
 #[cfg(target_arch = "x86_64")]
 fn claim_for_data_frame(process: Process, frame: u64) -> Option<sorveth_frames::OwnedSpan> {
     let (primary, dynamic) = match process {
-        Process::First => (unsafe { FIRST_CLAIM }, unsafe { FIRST_DYNAMIC_CLAIM }),
-        Process::Second => (unsafe { SECOND_CLAIM }, unsafe { SECOND_DYNAMIC_CLAIM }),
+        Process::First => (unsafe { PROCESS_RECORDS[0].data_claim }, unsafe {
+            PROCESS_RECORDS[0].dynamic_claim
+        }),
+        Process::Second => (unsafe { PROCESS_RECORDS[1].data_claim }, unsafe {
+            PROCESS_RECORDS[1].dynamic_claim
+        }),
     };
     [primary, dynamic]
         .into_iter()
@@ -1113,7 +1128,7 @@ pub unsafe fn verify_copy_pin_blocks_teardown(pool: &sorveth_frames::FramePool<2
         Ok(pins) => pins,
         Err(_) => return false,
     };
-    let claim = match unsafe { FIRST_CLAIM } {
+    let claim = match unsafe { PROCESS_RECORDS[0].data_claim } {
         Some(claim) => claim,
         None => return false,
     };
@@ -1158,8 +1173,8 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
     }
     let (_, slot) = process_root(process)?;
     let physical_address = match process {
-        Process::First => FIRST_FRAME.load(Ordering::Acquire),
-        Process::Second => SECOND_FRAME.load(Ordering::Acquire),
+        Process::First => unsafe { PROCESS_RECORDS[0].data_frame },
+        Process::Second => unsafe { PROCESS_RECORDS[1].data_frame },
     };
     if physical_address == 0 || physical_address & 4095 != 0 {
         return None;
@@ -1169,8 +1184,12 @@ pub fn mapped_page(process: Process) -> Option<Mapping> {
         physical_address,
         page_count: 2,
         generation: match process {
-            Process::First => unsafe { FIRST_CLAIM }?.handle.generation(),
-            Process::Second => unsafe { SECOND_CLAIM }?.handle.generation(),
+            Process::First => unsafe { PROCESS_RECORDS[0].data_claim }?
+                .handle
+                .generation(),
+            Process::Second => unsafe { PROCESS_RECORDS[1].data_claim }?
+                .handle
+                .generation(),
         },
     })
 }
@@ -1225,8 +1244,8 @@ unsafe fn map_dynamic_user_buffer_inner(
     }
     let (root, slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
     let (table_index, dynamic_claim) = match process {
-        Process::First => (2, unsafe { FIRST_DYNAMIC_CLAIM }),
-        Process::Second => (5, unsafe { SECOND_DYNAMIC_CLAIM }),
+        Process::First => (2, unsafe { PROCESS_RECORDS[0].dynamic_claim }),
+        Process::Second => (5, unsafe { PROCESS_RECORDS[1].dynamic_claim }),
     };
     if dynamic_claim.is_some() {
         return Err(Error::AlreadyMapped);
@@ -1312,8 +1331,8 @@ unsafe fn map_dynamic_user_buffer_inner(
     }
     compiler_fence(Ordering::SeqCst);
     match process {
-        Process::First => unsafe { FIRST_DYNAMIC_CLAIM = Some(claim) },
-        Process::Second => unsafe { SECOND_DYNAMIC_CLAIM = Some(claim) },
+        Process::First => unsafe { PROCESS_RECORDS[0].dynamic_claim = Some(claim) },
+        Process::Second => unsafe { PROCESS_RECORDS[1].dynamic_claim = Some(claim) },
     }
     Ok(Mapping {
         virtual_address: user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE,
@@ -1351,8 +1370,8 @@ pub unsafe fn unmap_dynamic_user_buffer(
     }
     let (root, slot) = process_root(process).ok_or(Error::KernelUnavailable)?;
     let (table_index, claim) = match process {
-        Process::First => (2, unsafe { FIRST_DYNAMIC_CLAIM }),
-        Process::Second => (5, unsafe { SECOND_DYNAMIC_CLAIM }),
+        Process::First => (2, unsafe { PROCESS_RECORDS[0].dynamic_claim }),
+        Process::Second => (5, unsafe { PROCESS_RECORDS[1].dynamic_claim }),
     };
     let claim = claim.ok_or(Error::NotMapped)?;
     let expected_virtual = user_base(slot).ok_or(Error::VerificationFailed)? + 2 * PAGE;
@@ -1425,8 +1444,8 @@ pub unsafe fn unmap_dynamic_user_buffer(
     unsafe { crate::root::zero_quarantined_span(pool, ticket, owner) }
         .map_err(|_| Error::FrameUnavailable)?;
     match process {
-        Process::First => unsafe { FIRST_DYNAMIC_CLAIM = None },
-        Process::Second => unsafe { SECOND_DYNAMIC_CLAIM = None },
+        Process::First => unsafe { PROCESS_RECORDS[0].dynamic_claim = None },
+        Process::Second => unsafe { PROCESS_RECORDS[1].dynamic_claim = None },
     }
     Ok(())
 }
@@ -1506,8 +1525,8 @@ pub unsafe fn verify_dynamic_user_buffer_spans(pool: &sorveth_frames::FramePool<
             map_dynamic_user_buffer_inner(process, MAX_DYNAMIC_USER_BUFFER_PAGES, pool, true)
         };
         let dynamic_claim_empty = match process {
-            Process::First => unsafe { FIRST_DYNAMIC_CLAIM }.is_none(),
-            Process::Second => unsafe { SECOND_DYNAMIC_CLAIM }.is_none(),
+            Process::First => unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_none(),
+            Process::Second => unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_none(),
         };
         let pages_unchanged = pool
             .status()
@@ -1738,8 +1757,8 @@ fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> 
 #[cfg(target_arch = "x86_64")]
 fn registered_table_frames() -> Option<[u64; 9]> {
     let kernel = crate::root::kernel_root_physical()?;
-    let root_records = unsafe { PROCESS_ROOTS };
-    let root_claims = [root_records[0].claim, root_records[1].claim];
+    let root_records = unsafe { PROCESS_RECORDS };
+    let root_claims = [root_records[0].root_claim, root_records[1].root_claim];
     let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
     Some([
         kernel,
@@ -2225,7 +2244,9 @@ unsafe fn map_private_pages_inner(
         if MAPPED.load(Ordering::Acquire) {
             return Err(Error::AlreadyMapped);
         }
-        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         let (first_root, first_slot) =
@@ -2321,11 +2342,11 @@ unsafe fn map_private_pages_inner(
             let frame_a = claim_a.span.start;
             let frame_b = claim_b.span.start;
             if RECLAIMED_ONCE.load(Ordering::Acquire)
-                && (frame_a != FIRST_FRAME.load(Ordering::Acquire)
-                    || frame_b != SECOND_FRAME.load(Ordering::Acquire)
-                    || FIRST_GENERATION.load(Ordering::Acquire).checked_add(1)
+                && (frame_a != unsafe { PROCESS_RECORDS[0].data_frame }
+                    || frame_b != unsafe { PROCESS_RECORDS[1].data_frame }
+                    || unsafe { PROCESS_RECORDS[0].data_generation }.checked_add(1)
                         != Some(claim_a.handle.generation() as u64)
-                    || SECOND_GENERATION.load(Ordering::Acquire).checked_add(1)
+                    || unsafe { PROCESS_RECORDS[1].data_generation }.checked_add(1)
                         != Some(claim_b.handle.generation() as u64))
             {
                 return Err(Error::VerificationFailed);
@@ -2469,13 +2490,15 @@ unsafe fn map_private_pages_inner(
             {
                 return Err(Error::VerificationFailed);
             }
-            FIRST_FRAME.store(frame_a, Ordering::Release);
-            SECOND_FRAME.store(frame_b, Ordering::Release);
-            FIRST_GENERATION.store(claim_a.handle.generation() as u64, Ordering::Release);
-            SECOND_GENERATION.store(claim_b.handle.generation() as u64, Ordering::Release);
             unsafe {
-                FIRST_CLAIM = Some(claim_a);
-                SECOND_CLAIM = Some(claim_b);
+                PROCESS_RECORDS[0].data_frame = frame_a;
+                PROCESS_RECORDS[1].data_frame = frame_b;
+                PROCESS_RECORDS[0].data_generation = claim_a.handle.generation() as u64;
+                PROCESS_RECORDS[1].data_generation = claim_b.handle.generation() as u64;
+            }
+            unsafe {
+                PROCESS_RECORDS[0].data_claim = Some(claim_a);
+                PROCESS_RECORDS[1].data_claim = Some(claim_b);
             }
             RECLAIMED_ONCE.store(false, Ordering::Release);
             MAPPED.store(true, Ordering::Release);
@@ -2565,10 +2588,10 @@ unsafe fn rollback_private_claims(
             .map_err(|_| Error::FrameUnavailable)?;
     }
     unsafe {
-        FIRST_CLAIM = None;
-        SECOND_CLAIM = None;
-        FIRST_DYNAMIC_CLAIM = None;
-        SECOND_DYNAMIC_CLAIM = None;
+        PROCESS_RECORDS[0].data_claim = None;
+        PROCESS_RECORDS[1].data_claim = None;
+        PROCESS_RECORDS[0].dynamic_claim = None;
+        PROCESS_RECORDS[1].dynamic_claim = None;
         PROCESS_TABLE_CLAIMS = [None; 6];
     }
     MAPPED.store(false, Ordering::Release);
@@ -2595,7 +2618,9 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
         }
-        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         let pages_before = pool
@@ -2604,8 +2629,8 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
             .available_pages;
         let claims_before = pool.claim_count().map_err(|_| Error::FrameUnavailable)?;
 
-        let claim_a = unsafe { FIRST_CLAIM }.ok_or(Error::FrameUnavailable)?;
-        let claim_b = unsafe { SECOND_CLAIM }.ok_or(Error::FrameUnavailable)?;
+        let claim_a = unsafe { PROCESS_RECORDS[0].data_claim }.ok_or(Error::FrameUnavailable)?;
+        let claim_b = unsafe { PROCESS_RECORDS[1].data_claim }.ok_or(Error::FrameUnavailable)?;
         let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
         let tables = process_table_frames().ok_or(Error::PageTableStorageUnavailable)?;
         let owner_a = sorveth_frames::FrameOwner::PROCESS_FIRST_DATA;
@@ -2770,10 +2795,10 @@ pub unsafe fn teardown_private_pages(pool: &sorveth_frames::FramePool<256>) -> R
         }
 
         unsafe {
-            FIRST_CLAIM = None;
-            SECOND_CLAIM = None;
-            FIRST_DYNAMIC_CLAIM = None;
-            SECOND_DYNAMIC_CLAIM = None;
+            PROCESS_RECORDS[0].data_claim = None;
+            PROCESS_RECORDS[1].data_claim = None;
+            PROCESS_RECORDS[0].dynamic_claim = None;
+            PROCESS_RECORDS[1].dynamic_claim = None;
             PROCESS_TABLE_CLAIMS = [None; 6];
         }
         MAPPED.store(false, Ordering::Release);
@@ -2814,7 +2839,9 @@ pub unsafe fn teardown_address_spaces(pool: &sorveth_frames::FramePool<256>) -> 
         {
             return Err(Error::RootReferenceUnavailable);
         }
-        if unsafe { FIRST_DYNAMIC_CLAIM }.is_some() || unsafe { SECOND_DYNAMIC_CLAIM }.is_some() {
+        if unsafe { PROCESS_RECORDS[0].dynamic_claim }.is_some()
+            || unsafe { PROCESS_RECORDS[1].dynamic_claim }.is_some()
+        {
             return Err(Error::ProcessMappingsStillActive);
         }
         if MAPPED.load(Ordering::Acquire) {
