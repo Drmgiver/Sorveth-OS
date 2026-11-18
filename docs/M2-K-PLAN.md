@@ -270,11 +270,23 @@ process fault policy. Host, UEFI, ABI, formatting, normal-root QEMU, and
 independent-root QEMU gates passed. Evidence: [run
 44008219923](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44008219923).
 
-**Still pending:** general multi-process K.3 creation and teardown, remaining
-K.4 work and K.5, production process scheduling, general physical page
-reclamation, and safe arbitrary user mappings. K.1's independent root is a QEMU-verified
+**Still pending:** K.3 remains a two-slot bootstrap instead of a general
+dynamic process lifecycle. Production process scheduling, a complete runtime
+memory manager with general physical page reclamation, and safe arbitrary user
+mappings remain future work. K.1's independent root is a QEMU-verified
 bootstrap mapping set, not yet a production memory manager.
 
+
+**K.5 accepted:** the complete bounded regression matrix now covers normal
+boot, controlled kernel and ring-3 faults, capability-checked IPC and task
+exchange, A/B isolation and syscall-transfer directions, forced dynamic-buffer
+rollback in both processes, host tests, and interactive monitor behavior on
+both inherited and independent Sorveth roots. Host, UEFI, ABI, formatting,
+both QEMU matrices, and both monitor checks passed on [feature run
+44395462587](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44395462587).
+This accepts the tested single-CPU bootstrap boundary only; it does not claim
+SMP, physical hardware support, production scheduling, or an arbitrary-program
+ABI.
 
 ### K.1b intermediate checkpoint: user-copy frame access
 
