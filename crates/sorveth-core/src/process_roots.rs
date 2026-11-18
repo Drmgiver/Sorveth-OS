@@ -398,6 +398,7 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 fn process_index(process: Process) -> usize {
     match process {
         Process::First => 0,
