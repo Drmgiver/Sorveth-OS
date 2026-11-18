@@ -160,6 +160,8 @@ run 43793651438](https://github.com/Drmgiver/Sorveth-OS/actions/runs/43793651438
 
 **K.3i accepted:** each bootstrap process slot now stores its root frame, PML4 slot, and generation-bound ownership claim in one `ProcessRootRecord`. Identity resolution, ownership checks, reference counts, registration, and retirement read the same record, removing duplicate root/slot/claim state. Host, UEFI, ABI, formatting, normal-root QEMU, independent-root QEMU, and monitor checks passed on [feature run 44393534568](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44393534568). This still supports exactly two bootstrap process slots; dynamic multi-process registration and SMP lifecycle remain pending.
 
+**K.3j accepted:** a single per-slot `ProcessRecord` now owns each bootstrap root, root claim, primary user-data frame and generation, primary data claim, and dynamic-buffer claim. Root retirement clears live roots and claims but preserves the last data-frame generation so the next allocation can be checked against the exact next generation. Host, UEFI, ABI, formatting, normal-root QEMU, independent-root QEMU, and monitor checks passed on [feature run 44395462587](https://github.com/Drmgiver/Sorveth-OS/actions/runs/44395462587). The runtime remains a fixed two-slot bootstrap; general process registration and SMP support remain pending.
+
 **K.4a accepted:** each bounded user copy now pins every resolved process
 data-frame claim for its full operation and releases the generation-bound
 references on every return path. Teardown rejects an outstanding copy pin;
