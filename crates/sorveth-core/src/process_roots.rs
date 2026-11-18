@@ -338,14 +338,15 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
                 return Err(error);
             }
         };
+        let previous_records = unsafe { PROCESS_RECORDS };
         unsafe {
             PROCESS_RECORDS = [
                 ProcessRecord {
                     root_physical: a,
                     slot: slot_a,
                     root_claim: claims[0],
-                    data_frame: 0,
-                    data_generation: 0,
+                    data_frame: previous_records[0].data_frame,
+                    data_generation: previous_records[0].data_generation,
                     data_claim: None,
                     dynamic_claim: None,
                 },
@@ -353,8 +354,8 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
                     root_physical: b,
                     slot: slot_b,
                     root_claim: claims[1],
-                    data_frame: 0,
-                    data_generation: 0,
+                    data_frame: previous_records[1].data_frame,
+                    data_generation: previous_records[1].data_generation,
                     data_claim: None,
                     dynamic_claim: None,
                 },
@@ -570,7 +571,18 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         // Disable future task resolution before dropping the address-space
         // owner's claim references. The kernel root is already active.
         READY.store(false, Ordering::Release);
-        unsafe { PROCESS_RECORDS = [EMPTY_PROCESS_RECORD; PROCESS_RECORD_COUNT] };
+        unsafe {
+            PROCESS_RECORDS[0].root_physical = 0;
+            PROCESS_RECORDS[0].slot = 0;
+            PROCESS_RECORDS[0].root_claim = None;
+            PROCESS_RECORDS[0].data_claim = None;
+            PROCESS_RECORDS[0].dynamic_claim = None;
+            PROCESS_RECORDS[1].root_physical = 0;
+            PROCESS_RECORDS[1].slot = 0;
+            PROCESS_RECORDS[1].root_claim = None;
+            PROCESS_RECORDS[1].data_claim = None;
+            PROCESS_RECORDS[1].dynamic_claim = None;
+        }
 
         let retired_claims = claims;
         for claim in claims.into_iter().flatten() {
