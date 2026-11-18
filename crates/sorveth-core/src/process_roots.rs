@@ -85,15 +85,10 @@ static READY: AtomicBool = AtomicBool::new(false);
 static MAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
 static RECLAIMED_ONCE: AtomicBool = AtomicBool::new(false);
-#[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
 // K.4e acceptance uses one independently allocated page per process as a
 // dynamically mapped user buffer. The bootstrap's original two-page span is
 // retained at offsets 0..2; these pages occupy leaf index 2 and have their
 // own generation-bound claims and pin counts.
-#[cfg(target_arch = "x86_64")]
-#[cfg(target_arch = "x86_64")]
-
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
     READY.load(Ordering::Acquire)
