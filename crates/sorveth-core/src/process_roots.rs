@@ -47,7 +47,23 @@ const INHERITED_TABLE_CAPACITY: usize = 8192;
 // generation-bound claims. Root claims remain pinned while bootstrap
 // scheduler slots can still select these address spaces.
 #[cfg(target_arch = "x86_64")]
-static mut PROCESS_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
+const PROCESS_ROOT_COUNT: usize = 2;
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+struct ProcessRootRecord {
+    physical: u64,
+    slot: u16,
+    claim: Option<sorveth_frames::OwnedSpan>,
+}
+#[cfg(target_arch = "x86_64")]
+const EMPTY_PROCESS_ROOT: ProcessRootRecord = ProcessRootRecord {
+    physical: 0,
+    slot: 0,
+    claim: None,
+};
+#[cfg(target_arch = "x86_64")]
+static mut PROCESS_ROOTS: [ProcessRootRecord; PROCESS_ROOT_COUNT] =
+    [EMPTY_PROCESS_ROOT; PROCESS_ROOT_COUNT];
 // Retain the last retired root handles long enough to verify safe frame reuse.
 #[cfg(target_arch = "x86_64")]
 static mut RETIRED_ROOT_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 2] = [None; 2];
@@ -57,10 +73,6 @@ static ROOTS_RETIRED: AtomicBool = AtomicBool::new(false);
 static mut PROCESS_TABLE_CLAIMS: [Option<sorveth_frames::OwnedSpan>; 6] = [None; 6];
 #[cfg(target_arch = "x86_64")]
 static READY: AtomicBool = AtomicBool::new(false);
-#[cfg(target_arch = "x86_64")]
-static FIRST_ROOT: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
-static SECOND_ROOT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_arch = "x86_64")]
 static MAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_arch = "x86_64")]
@@ -88,12 +100,11 @@ static mut SECOND_DYNAMIC_CLAIM: Option<sorveth_frames::OwnedSpan> = None;
 
 #[cfg(all(target_arch = "x86_64", feature = "qemu-independent-root"))]
 pub(crate) fn is_owned_process_root_frame(frame: u64) -> bool {
-    frame == FIRST_ROOT.load(Ordering::Acquire) || frame == SECOND_ROOT.load(Ordering::Acquire)
+    READY.load(Ordering::Acquire)
+        && unsafe { PROCESS_ROOTS }
+            .iter()
+            .any(|record| record.physical == frame && frame != 0)
 }
-#[cfg(target_arch = "x86_64")]
-static FIRST_SLOT: AtomicU64 = AtomicU64::new(0);
-#[cfg(target_arch = "x86_64")]
-static SECOND_SLOT: AtomicU64 = AtomicU64::new(0);
 
 // The inventory runs on the retained bootstrap stack, but its bounded
 // deduplication set lives in BSS so it does not consume several KiB of that
@@ -336,12 +347,21 @@ pub unsafe fn prepare_and_verify(pool: &sorveth_frames::FramePool<256>) -> Resul
                 return Err(error);
             }
         };
-        unsafe { PROCESS_ROOT_CLAIMS = claims };
+        unsafe {
+            PROCESS_ROOTS = [
+                ProcessRootRecord {
+                    physical: a,
+                    slot: slot_a,
+                    claim: claims[0],
+                },
+                ProcessRootRecord {
+                    physical: b,
+                    slot: slot_b,
+                    claim: claims[1],
+                },
+            ];
+        }
         ROOTS_RETIRED.store(false, Ordering::Release);
-        FIRST_ROOT.store(a, Ordering::Release);
-        SECOND_ROOT.store(b, Ordering::Release);
-        FIRST_SLOT.store(slot_a as u64, Ordering::Release);
-        SECOND_SLOT.store(slot_b as u64, Ordering::Release);
         READY.store(true, Ordering::Release);
         Ok(())
     }
@@ -386,20 +406,11 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     if !READY.load(Ordering::Acquire) {
         return None;
     }
-    let (root, slot) = match process {
-        Process::First => (
-            FIRST_ROOT.load(Ordering::Acquire),
-            FIRST_SLOT.load(Ordering::Acquire),
-        ),
-        Process::Second => (
-            SECOND_ROOT.load(Ordering::Acquire),
-            SECOND_SLOT.load(Ordering::Acquire),
-        ),
-    };
-    if root == 0 || slot == 0 {
+    let record = unsafe { PROCESS_ROOTS[process_index(process)] };
+    if record.physical == 0 || record.slot == 0 {
         None
     } else {
-        Some((root, slot as u16))
+        Some((record.physical, record.slot))
     }
 }
 
@@ -413,7 +424,7 @@ fn process_index(process: Process) -> usize {
 
 #[cfg(target_arch = "x86_64")]
 fn current_root_claim(identity: ProcessIdentity) -> Option<sorveth_frames::OwnedSpan> {
-    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(identity.process)]?;
+    let claim = unsafe { PROCESS_ROOTS[process_index(identity.process)] }.claim?;
     if claim.handle.generation() != identity.generation {
         return None;
     }
@@ -436,7 +447,7 @@ fn current_root_claim(identity: ProcessIdentity) -> Option<sorveth_frames::Owned
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn process_identity(process: Process) -> Option<ProcessIdentity> {
     process_root(process)?;
-    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(process)]?;
+    let claim = unsafe { PROCESS_ROOTS[process_index(process)] }.claim?;
     current_root_claim(ProcessIdentity {
         process,
         generation: claim.handle.generation(),
@@ -487,7 +498,7 @@ pub(crate) fn release_root_identity(identity: ProcessIdentity) -> Result<(), Err
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn root_reference_count(process: Process) -> Option<u32> {
-    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(process)]?;
+    let claim = unsafe { PROCESS_ROOTS[process_index(process)] }.claim?;
     crate::FRAME_POOL
         .claim_record_at(claim.handle.slot() as usize)
         .ok()?
@@ -522,15 +533,13 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         if active & ADDRESS_MASK != kernel || flags & (1 << 9) != 0 {
             return Err(Error::KernelUnavailable);
         }
-        let claims = unsafe { PROCESS_ROOT_CLAIMS };
-        let roots = [
-            FIRST_ROOT.load(Ordering::Acquire),
-            SECOND_ROOT.load(Ordering::Acquire),
-        ];
+        let roots = unsafe { PROCESS_ROOTS };
+        let claims = [roots[0].claim, roots[1].claim];
+        let root_frames = [roots[0].physical, roots[1].physical];
         if claims.iter().any(Option::is_none)
-            || roots[0] == 0
-            || roots[1] == 0
-            || roots[0] == roots[1]
+            || root_frames[0] == 0
+            || root_frames[1] == 0
+            || root_frames[0] == root_frames[1]
         {
             return Err(Error::VerificationFailed);
         }
@@ -544,7 +553,7 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
                 .claim_record_at(claim.handle.slot() as usize)
                 .map_err(|_| Error::FrameUnavailable)?
                 .ok_or(Error::FrameUnavailable)?;
-            if claim.span.start != roots[index]
+            if claim.span.start != root_frames[index]
                 || record.generation() != claim.handle.generation()
                 || record.owner() != sorveth_frames::FrameOwner::PROCESS_ROOTS
                 || record.span() != claim.span
@@ -562,11 +571,7 @@ pub unsafe fn retire_process_roots(pool: &sorveth_frames::FramePool<256>) -> Res
         // Disable future task resolution before dropping the address-space
         // owner's claim references. The kernel root is already active.
         READY.store(false, Ordering::Release);
-        FIRST_ROOT.store(0, Ordering::Release);
-        SECOND_ROOT.store(0, Ordering::Release);
-        FIRST_SLOT.store(0, Ordering::Release);
-        SECOND_SLOT.store(0, Ordering::Release);
-        unsafe { PROCESS_ROOT_CLAIMS = [None; 2] };
+        unsafe { PROCESS_ROOTS = [EMPTY_PROCESS_ROOT; PROCESS_ROOT_COUNT] };
 
         let retired_claims = claims;
         for claim in claims.into_iter().flatten() {
@@ -1733,7 +1738,8 @@ fn registered_table_word_allowed(frame: u64, index: usize, pages: &[u64; 9]) -> 
 #[cfg(target_arch = "x86_64")]
 fn registered_table_frames() -> Option<[u64; 9]> {
     let kernel = crate::root::kernel_root_physical()?;
-    let root_claims = unsafe { PROCESS_ROOT_CLAIMS };
+    let root_records = unsafe { PROCESS_ROOTS };
+    let root_claims = [root_records[0].claim, root_records[1].claim];
     let table_claims = unsafe { PROCESS_TABLE_CLAIMS };
     Some([
         kernel,
