@@ -131,6 +131,7 @@ for marker in \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
   'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.3h: stale process-root identities rejected after generation change' \
+  'SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -215,6 +216,7 @@ for marker in \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
   'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.3h: stale process-root identities rejected after generation change' \
+  'SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -293,6 +295,7 @@ for marker in \
   'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
   'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
   'SORVETH M2-K.3h: stale process-root identities rejected after generation change' \
+  'SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -373,6 +376,7 @@ for side in a b; do
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
     'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
     'SORVETH M2-K.3h: stale process-root identities rejected after generation change' \
+  'SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
@@ -447,6 +451,7 @@ for side in a b; do
     'SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime' \
     'SORVETH M2-K.4f: dynamic buffer span rollback, copy, pin, unmap, and recycle verified' \
     'SORVETH M2-K.3h: stale process-root identities rejected after generation change' \
+  'SORVETH M2-K.3k: multiple tasks share a process root; teardown waits for all tasks' \
   'SORVETH M2-K.1d: user-copy integrity verified through owned frame aliases' \
   'SORVETH M2-K.1d: scheduler owned-frame audit and restored root denial verified' \
   'SORVETH M2-K.1d: live supervisor code stack IDT TSS mappings audited' \
