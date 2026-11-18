@@ -182,7 +182,10 @@ impl ProcessIdentity {
 /// Generation zero cannot resolve a real frame claim.
 #[cfg(target_arch = "x86_64")]
 pub(crate) const fn test_process_identity(process: Process) -> ProcessIdentity {
-    ProcessIdentity { process, generation: 0 }
+    ProcessIdentity {
+        process,
+        generation: 0,
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1939,9 +1942,7 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
 
 /// Audit a root only when the caller holds its current generation-bound identity.
 #[cfg(target_arch = "x86_64")]
-pub(crate) unsafe fn checked_process_root_identity(
-    identity: ProcessIdentity,
-) -> Option<u64> {
+pub(crate) unsafe fn checked_process_root_identity(identity: ProcessIdentity) -> Option<u64> {
     let expected = process_root_for_identity(identity)?.0;
     let audited = unsafe { checked_process_root(identity.process()) }?;
     (audited == expected).then_some(expected)
