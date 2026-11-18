@@ -512,6 +512,22 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     crate::serial::write_line(
         "SORVETH M2-K.4b: both pages remain pinned across a boundary-copy lifetime",
     );
+    let old_first_identity =
+        match crate::process_roots::process_identity(crate::process_roots::Process::First) {
+            Some(identity) => identity,
+            None => {
+                crate::serial::write_line("FATAL: first process-root identity unavailable");
+                crate::halt_forever();
+            }
+        };
+    let old_second_identity =
+        match crate::process_roots::process_identity(crate::process_roots::Process::Second) {
+            Some(identity) => identity,
+            None => {
+                crate::serial::write_line("FATAL: second process-root identity unavailable");
+                crate::halt_forever();
+            }
+        };
     if unsafe { crate::process_roots::teardown_address_spaces(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: ordered process address-space teardown failed");
         crate::halt_forever();
@@ -528,6 +544,15 @@ extern "efiapi" fn continue_on_owned_stack() -> ! {
     }
     crate::serial::write_line(
         "SORVETH M2-K.3f: retired PML4 frames reused only with next-generation claims",
+    );
+    if crate::process_roots::process_root_for_identity(old_first_identity).is_some()
+        || crate::process_roots::process_root_for_identity(old_second_identity).is_some()
+    {
+        crate::serial::write_line("FATAL: stale process-root identity resolved after reuse");
+        crate::halt_forever();
+    }
+    crate::serial::write_line(
+        "SORVETH M2-K.3h: stale process-root identities rejected after generation change",
     );
     if unsafe { crate::process_roots::map_private_pages(&crate::FRAME_POOL) }.is_err() {
         crate::serial::write_line("FATAL: process address-space recreation failed");

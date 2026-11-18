@@ -13,7 +13,7 @@ use core::{arch::asm, ptr};
 use sorveth_cap::ObjectId;
 use sorveth_task::{Error as TaskError, Scheduler, State, TaskId};
 
-use crate::process_roots::{self, Process};
+use crate::process_roots::{self, Process, ProcessIdentity};
 
 const CR3_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const SENTINEL_SALT: u64 = 0x4949_4900_0000_0000;
@@ -40,7 +40,7 @@ impl From<TaskError> for Error {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AuthorizedSpace {
     task: TaskId,
-    process: Process,
+    identity: ProcessIdentity,
     root: u64,
 }
 
@@ -52,11 +52,11 @@ struct AuthorizedSpace {
 /// kernel/stack mappings; one CPU, interrupts disabled, no user preemption.
 struct KernelRootGuard {
     kernel: u64,
-    process: Process,
+    identity: ProcessIdentity,
 }
 
 impl KernelRootGuard {
-    unsafe fn enter(kernel: u64, target: u64, process: Process) -> Result<Self, Error> {
+    unsafe fn enter(kernel: u64, target: u64, identity: ProcessIdentity) -> Result<Self, Error> {
         if kernel == 0
             || target == 0
             || target == kernel
@@ -70,13 +70,14 @@ impl KernelRootGuard {
         if active & CR3_ADDRESS_MASK != kernel {
             return Err(Error::HardwareMismatch);
         }
-        if process_roots::process_root(process).map(|(root, _)| root) != Some(target) {
+        if process_roots::process_root_for_identity(identity).map(|(root, _)| root) != Some(target)
+        {
             return Err(Error::InvalidRoot);
         }
-        process_roots::retain_root_reference(process)
+        process_roots::retain_root_identity(identity)
             .map_err(|_| Error::RootReferenceUnavailable)?;
         asm!("mov cr3, {}", in(reg) target, options(nostack, preserves_flags));
-        Ok(Self { kernel, process })
+        Ok(Self { kernel, identity })
     }
 }
 
@@ -87,7 +88,7 @@ impl Drop for KernelRootGuard {
         unsafe {
             asm!("mov cr3, {}", in(reg) self.kernel, options(nostack, preserves_flags));
         }
-        let _ = process_roots::release_root_reference(self.process);
+        let _ = process_roots::release_root_identity(self.identity);
     }
 }
 
@@ -95,7 +96,7 @@ impl Drop for KernelRootGuard {
 /// The scheduler decides the next task; callers may not provide a CR3 value.
 struct AddressScheduler<const N: usize> {
     tasks: Scheduler<N>,
-    bindings: [Option<(TaskId, Process)>; N],
+    bindings: [Option<(TaskId, ProcessIdentity)>; N],
     owns_root_references: bool,
 }
 
@@ -118,18 +119,28 @@ impl<const N: usize> AddressScheduler<N> {
     }
 
     fn spawn(&mut self, object: ObjectId, process: Process) -> Result<TaskId, Error> {
-        if self.bindings.iter().flatten().any(|(_, p)| *p == process) {
+        if self
+            .bindings
+            .iter()
+            .flatten()
+            .any(|(_, identity)| identity.process() == process)
+        {
             return Err(Error::DuplicateProcess);
         }
-        if self.owns_root_references {
-            process_roots::retain_root_reference(process)
+        let identity = if self.owns_root_references {
+            let identity =
+                process_roots::process_identity(process).ok_or(Error::RootReferenceUnavailable)?;
+            process_roots::retain_root_identity(identity)
                 .map_err(|_| Error::RootReferenceUnavailable)?;
-        }
+            identity
+        } else {
+            process_roots::test_process_identity(process)
+        };
         let id = match self.tasks.spawn(object) {
             Ok(id) => id,
             Err(error) => {
                 if self.owns_root_references {
-                    let _ = process_roots::release_root_reference(process);
+                    let _ = process_roots::release_root_identity(identity);
                 }
                 return Err(error.into());
             }
@@ -143,7 +154,7 @@ impl<const N: usize> AddressScheduler<N> {
             Err(error) => {
                 let _ = self.tasks.exit(id);
                 if self.owns_root_references {
-                    let _ = process_roots::release_root_reference(process);
+                    let _ = process_roots::release_root_identity(identity);
                 }
                 return Err(error);
             }
@@ -151,48 +162,47 @@ impl<const N: usize> AddressScheduler<N> {
         if slot.is_some() {
             let _ = self.tasks.exit(id);
             if self.owns_root_references {
-                let _ = process_roots::release_root_reference(process);
+                let _ = process_roots::release_root_identity(identity);
             }
             return Err(Error::MissingBinding);
         }
-        *slot = Some((id, process));
+        *slot = Some((id, identity));
         Ok(id)
     }
 
-    fn lookup(&self, id: TaskId) -> Result<Process, Error> {
+    fn lookup(&self, id: TaskId) -> Result<ProcessIdentity, Error> {
         self.tasks.inspect(id)?;
         match self.bindings.get(id.slot() as usize).copied().flatten() {
-            Some((owned, process)) if owned == id => Ok(process),
+            Some((owned, identity)) if owned == id => Ok(identity),
             _ => Err(Error::MissingBinding),
         }
     }
 
-    /// The task must still exist with its original generation and Ready
-    /// state. The resolver is privileged kernel code that audits a root;
-    /// unprivileged tasks cannot supply an arbitrary CR3 value.
+    /// The task and its address-space incarnation must still be current and
+    /// Ready. The resolver audits a root for the captured generation-bound ID.
     fn authorize(
         &self,
         id: TaskId,
-        resolve: impl FnOnce(Process) -> Option<u64>,
+        resolve: impl FnOnce(ProcessIdentity) -> Option<u64>,
     ) -> Result<AuthorizedSpace, Error> {
-        let process = self.lookup(id)?;
+        let identity = self.lookup(id)?;
         if self.tasks.inspect(id)?.state != State::Ready {
             return Err(Error::BlockedTask);
         }
-        let root = resolve(process).ok_or(Error::MissingAddressSpace)?;
+        let root = resolve(identity).ok_or(Error::MissingAddressSpace)?;
         if root == 0 || root & 4095 != 0 {
             return Err(Error::InvalidRoot);
         }
         Ok(AuthorizedSpace {
             task: id,
-            process,
+            identity,
             root,
         })
     }
 
     fn select_next(&mut self) -> Result<Option<(TaskId, Process)>, Error> {
         match self.tasks.select_next() {
-            Some(id) => Ok(Some((id, self.lookup(id)?))),
+            Some(id) => Ok(Some((id, self.lookup(id)?.process()))),
             None => Ok(None),
         }
     }
@@ -210,11 +220,11 @@ impl<const N: usize> AddressScheduler<N> {
     }
 
     fn exit(&mut self, id: TaskId) -> Result<(), Error> {
-        let process = self.lookup(id)?;
+        let identity = self.lookup(id)?;
         self.tasks.exit(id)?;
         self.bindings[id.slot() as usize] = None;
         if self.owns_root_references {
-            process_roots::release_root_reference(process)
+            process_roots::release_root_identity(identity)
                 .map_err(|_| Error::RootReferenceUnavailable)?;
         }
         Ok(())
@@ -301,9 +311,9 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
         // The task identity determines which of the two verified roots
         // the kernel loads. It is never specified by unprivileged code.
         let authorized = scheduler.authorize(selected_id, |p| unsafe {
-            process_roots::checked_process_root(p)
+            process_roots::checked_process_root_identity(p)
         })?;
-        if authorized.task != selected_id || authorized.process != selected_process {
+        if authorized.task != selected_id || authorized.identity.process() != selected_process {
             return Err(Error::IncorrectSelection);
         }
         let (root, own_page, expected_value) = if selected_process == Process::First {
@@ -331,7 +341,7 @@ pub unsafe fn verify_scheduled_switches() -> Result<(), Error> {
             process_roots::read_process_frame_word(other_process).ok_or(Error::HardwareMismatch)?;
         let next_value = expected_value ^ SENTINEL_SALT ^ ((round as u64) + 1);
 
-        let process_guard = KernelRootGuard::enter(kernel, authorized.root, authorized.process)?;
+        let process_guard = KernelRootGuard::enter(kernel, authorized.root, authorized.identity)?;
         if process_roots::root_reference_count(selected_process) != Some(3) {
             return Err(Error::RootReferenceUnavailable);
         }
@@ -408,8 +418,12 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
         process_roots::process_root(Process::First).ok_or(Error::MissingAddressSpace)?;
     let (root_b, _) =
         process_roots::process_root(Process::Second).ok_or(Error::MissingAddressSpace)?;
-    let resolve = |p| unsafe { process_roots::checked_process_root(p) };
-    if resolve(Process::First) != Some(root_a) || resolve(Process::Second) != Some(root_b) {
+    let identity_a =
+        process_roots::process_identity(Process::First).ok_or(Error::MissingAddressSpace)?;
+    let identity_b =
+        process_roots::process_identity(Process::Second).ok_or(Error::MissingAddressSpace)?;
+    let resolve = |identity| unsafe { process_roots::checked_process_root_identity(identity) };
+    if resolve(identity_a) != Some(root_a) || resolve(identity_b) != Some(root_b) {
         return Err(Error::MissingAddressSpace);
     }
     let mut scheduler = AddressScheduler::<2>::new();
@@ -462,7 +476,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
 
     let decision = scheduler.authorize(replacement, resolve)?;
     {
-        let _guard = KernelRootGuard::enter(kernel, decision.root, decision.process)?;
+        let _guard = KernelRootGuard::enter(kernel, decision.root, decision.identity)?;
         if process_roots::root_reference_count(Process::First) != Some(3) {
             return Err(Error::RootReferenceUnavailable);
         }
@@ -528,8 +542,14 @@ mod tests {
         assert_eq!(s.block(old), Err(Error::Task(TaskError::InvalidTask)));
         let replacement = s.spawn(ObjectId(21), Process::First).unwrap();
         assert_ne!(old, replacement);
-        assert_eq!(s.lookup(replacement), Ok(Process::First));
-        assert_eq!(s.lookup(other), Ok(Process::Second));
+        assert_eq!(
+            s.lookup(replacement).map(ProcessIdentity::process),
+            Ok(Process::First)
+        );
+        assert_eq!(
+            s.lookup(other).map(ProcessIdentity::process),
+            Ok(Process::Second)
+        );
         assert_eq!(s.lookup(old), Err(Error::Task(TaskError::InvalidTask)));
     }
 
@@ -559,14 +579,14 @@ mod tests {
         assert_eq!(s.authorize(id, |_| Some(0)), Err(Error::InvalidRoot));
         assert_eq!(s.authorize(id, |_| Some(0x1234)), Err(Error::InvalidRoot));
         assert_eq!(
-            s.authorize(id, |p| if p == Process::Second {
+            s.authorize(id, |p| if p.process() == Process::Second {
                 Some(0x5000)
             } else {
                 None
             }),
             Ok(AuthorizedSpace {
                 task: id,
-                process: Process::Second,
+                identity: process_roots::test_process_identity(Process::Second),
                 root: 0x5000
             })
         );

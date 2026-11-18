@@ -163,6 +163,31 @@ pub enum Process {
     Second,
 }
 
+/// Stable slot plus the frame-claim generation for one address-space lifetime.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ProcessIdentity {
+    process: Process,
+    generation: u32,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ProcessIdentity {
+    pub(crate) const fn process(self) -> Process {
+        self.process
+    }
+}
+
+/// Synthetic identity for the scheduler's resolver-only unit-test model.
+/// Generation zero cannot resolve a real frame claim.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const fn test_process_identity(process: Process) -> ProcessIdentity {
+    ProcessIdentity {
+        process,
+        generation: 0,
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 fn supervisor_entry(entry: u64) -> u64 {
     if entry & PRESENT == 0 {
@@ -378,49 +403,80 @@ pub fn process_root(process: Process) -> Option<(u64, u16)> {
     }
 }
 
-/// Retain one scheduler binding or active CR3 use of a process root.
-///
-/// The original claim reference belongs to the address-space record itself;
-/// these additional references prevent its ledger claim from being retired
-/// while a task can select it or the CPU is using it.
 #[cfg(target_arch = "x86_64")]
-pub(crate) fn retain_root_reference(process: Process) -> Result<(), Error> {
-    if process_root(process).is_none() {
-        return Err(Error::KernelUnavailable);
-    }
-    let index = match process {
+fn process_index(process: Process) -> usize {
+    match process {
         Process::First => 0,
         Process::Second => 1,
-    };
-    let claims = unsafe { PROCESS_ROOT_CLAIMS };
-    let claim = claims[index].ok_or(Error::RootReferenceUnavailable)?;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn current_root_claim(identity: ProcessIdentity) -> Option<sorveth_frames::OwnedSpan> {
+    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(identity.process)]?;
+    if claim.handle.generation() != identity.generation {
+        return None;
+    }
+    let record = crate::FRAME_POOL
+        .claim_record_at(claim.handle.slot() as usize)
+        .ok()??;
+    if record.generation() != identity.generation
+        || record.owner() != sorveth_frames::FrameOwner::PROCESS_ROOTS
+        || record.span() != claim.span
+        || record.references() == 0
+        || record.mappings() != 0
+        || record.is_quarantined()
+    {
+        return None;
+    }
+    Some(claim)
+}
+
+/// Capture the current incarnation of a bootstrap process slot.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn process_identity(process: Process) -> Option<ProcessIdentity> {
+    process_root(process)?;
+    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(process)]?;
+    current_root_claim(ProcessIdentity {
+        process,
+        generation: claim.handle.generation(),
+    })?;
+    Some(ProcessIdentity {
+        process,
+        generation: claim.handle.generation(),
+    })
+}
+
+/// Resolve only if the slot still names the same generation-bound root.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn process_root_for_identity(identity: ProcessIdentity) -> Option<(u64, u16)> {
+    let claim = current_root_claim(identity)?;
+    let root = process_root(identity.process)?;
+    (root.0 == claim.span.start).then_some(root)
+}
+
+/// Retain a scheduler binding or active CR3 use of this exact root lifetime.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn retain_root_identity(identity: ProcessIdentity) -> Result<(), Error> {
+    let claim = current_root_claim(identity).ok_or(Error::RootReferenceUnavailable)?;
+    if process_root(identity.process).map(|(root, _)| root) != Some(claim.span.start) {
+        return Err(Error::RootReferenceUnavailable);
+    }
     crate::FRAME_POOL
         .retain_claim(claim.handle, sorveth_frames::FrameOwner::PROCESS_ROOTS)
         .map(|_| ())
         .map_err(|_| Error::RootReferenceUnavailable)
 }
 
-/// Drop one scheduler binding or active CR3 reference while preserving the
-/// address-space record's original owner reference.
+/// Release one reference while preserving the address-space owner's claim.
 #[cfg(target_arch = "x86_64")]
-pub(crate) fn release_root_reference(process: Process) -> Result<(), Error> {
-    let index = match process {
-        Process::First => 0,
-        Process::Second => 1,
-    };
-    let claims = unsafe { PROCESS_ROOT_CLAIMS };
-    let claim = claims[index].ok_or(Error::RootReferenceUnavailable)?;
+pub(crate) fn release_root_identity(identity: ProcessIdentity) -> Result<(), Error> {
+    let claim = current_root_claim(identity).ok_or(Error::RootReferenceUnavailable)?;
     let record = crate::FRAME_POOL
         .claim_record_at(claim.handle.slot() as usize)
         .map_err(|_| Error::RootReferenceUnavailable)?
         .ok_or(Error::RootReferenceUnavailable)?;
-    if record.generation() != claim.handle.generation()
-        || record.owner() != sorveth_frames::FrameOwner::PROCESS_ROOTS
-        || record.span() != claim.span
-        || record.references() <= 1
-        || record.mappings() != 0
-        || record.is_quarantined()
-    {
+    if record.references() <= 1 {
         return Err(Error::RootReferenceUnavailable);
     }
     crate::FRAME_POOL
@@ -431,12 +487,7 @@ pub(crate) fn release_root_reference(process: Process) -> Result<(), Error> {
 
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn root_reference_count(process: Process) -> Option<u32> {
-    let index = match process {
-        Process::First => 0,
-        Process::Second => 1,
-    };
-    let claims = unsafe { PROCESS_ROOT_CLAIMS };
-    let claim = claims[index]?;
+    let claim = unsafe { PROCESS_ROOT_CLAIMS }[process_index(process)]?;
     crate::FRAME_POOL
         .claim_record_at(claim.handle.slot() as usize)
         .ok()?
@@ -1887,6 +1938,14 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
         Process::First => root_a,
         Process::Second => root_b,
     })
+}
+
+/// Audit a root only when the caller holds its current generation-bound identity.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn checked_process_root_identity(identity: ProcessIdentity) -> Option<u64> {
+    let expected = process_root_for_identity(identity)?.0;
+    let audited = unsafe { checked_process_root(identity.process()) }?;
+    (audited == expected).then_some(expected)
 }
 
 /// The processor sets A on page-table ancestors and A/D on data leaves
