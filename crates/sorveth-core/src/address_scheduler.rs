@@ -417,8 +417,12 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
         process_roots::process_root(Process::First).ok_or(Error::MissingAddressSpace)?;
     let (root_b, _) =
         process_roots::process_root(Process::Second).ok_or(Error::MissingAddressSpace)?;
+    let identity_a =
+        process_roots::process_identity(Process::First).ok_or(Error::MissingAddressSpace)?;
+    let identity_b =
+        process_roots::process_identity(Process::Second).ok_or(Error::MissingAddressSpace)?;
     let resolve = |identity| unsafe { process_roots::checked_process_root_identity(identity) };
-    if resolve(Process::First) != Some(root_a) || resolve(Process::Second) != Some(root_b) {
+    if resolve(identity_a) != Some(root_a) || resolve(identity_b) != Some(root_b) {
         return Err(Error::MissingAddressSpace);
     }
     let mut scheduler = AddressScheduler::<2>::new();
@@ -471,7 +475,7 @@ pub unsafe fn verify_lifecycle_hardening() -> Result<(), Error> {
 
     let decision = scheduler.authorize(replacement, resolve)?;
     {
-        let _guard = KernelRootGuard::enter(kernel, decision.root, decision.process)?;
+        let _guard = KernelRootGuard::enter(kernel, decision.root, decision.identity)?;
         if process_roots::root_reference_count(Process::First) != Some(3) {
             return Err(Error::RootReferenceUnavailable);
         }
