@@ -1934,6 +1934,16 @@ pub unsafe fn checked_process_root(process: Process) -> Option<u64> {
     })
 }
 
+/// Audit a root only when the caller holds its current generation-bound identity.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn checked_process_root_identity(
+    identity: ProcessIdentity,
+) -> Option<u64> {
+    let expected = process_root_for_identity(identity)?.0;
+    let audited = unsafe { checked_process_root(identity.process()) }?;
+    (audited == expected).then_some(expected)
+}
+
 /// The processor sets A on page-table ancestors and A/D on data leaves
 /// during legitimate reads and writes. Compare only the immutable address,
 /// permissions and NX policy; never forgive changes to P/W/U or the frame.
